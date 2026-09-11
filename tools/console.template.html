@@ -245,6 +245,14 @@ let searchQuery = "";
 // critic's (amber/right lane) — same palette, same "who is acting" convention.
 function isBuilderLike(agent){ return agent === "builder" || (typeof agent === "string" && agent.startsWith("worker:")); }
 function isCriticLike(agent){ return agent === "critic" || agent === "orchestrator"; }
+// summary.json's toolCalls is keyed by agent name — "builder"/"critic" in a dyad,
+// "orchestrator"/"worker:<id>" (one entry per spawned worker) under the
+// orchestrator pattern. The KPI strip only ever shows one combined total, so sum
+// every value rather than reading two fixed keys (which read undefined + undefined
+// -> NaN for any pattern that isn't a dyad).
+function toolCallsTotal(toolCalls){
+  return Object.values(toolCalls || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+}
 
 function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 function mailHtml(text){
@@ -300,14 +308,13 @@ function buildStats(){
   const cost = s ? s.costUsd : null;
   const mailN = s ? s.mail : r.events.filter(e=>e.kind==="mail").length;
   const wall = s ? s.wallSec : (r.events.length ? r.events[r.events.length-1].t : 0);
-  const toolsB = s ? s.toolCalls.builder : r.events.filter(e=>e.kind==="tool" && e.agent==="builder").length;
-  const toolsC = s ? s.toolCalls.critic : r.events.filter(e=>e.kind==="tool" && e.agent==="critic").length;
+  const toolsTotal = s ? toolCallsTotal(s.toolCalls) : r.events.filter(e=>e.kind==="tool").length;
   const items = [
     { k:"MODEL", v: meta.model },
     { k:"GATE", v: meta.gate },
     { k:"ELAPSED", v: fmtTime(wall) + (r.complete ? "" : "+") },
     { k:"COST", v: fmtCost(cost) },
-    { k:"TOOLS", v: (toolsB+toolsC) },
+    { k:"TOOLS", v: toolsTotal },
     { k:"MAIL", v: mailN },
     { k:"OUTCOME", v: s ? (s.reason.startsWith("SUCCESS") ? "PASSED" : "STOPPED") : "IN PROGRESS", cls: s ? (s.reason.startsWith("SUCCESS")?"text-braun-green":"text-vermilion") : "text-amber" },
   ];
@@ -443,6 +450,12 @@ function agentName(agent){
   const cls = isBuilderLike(agent) ? "text-klein-light" : "text-amber";
   return '<span class="font-sans font-black text-xs '+cls+' uppercase tracking-wide">'+esc(String(agent||"").toUpperCase())+'</span>';
 }
+// Mail's "other party" label (no badge, just a colour) needs a genuine neutral for
+// "supervisor" — the orchestrator pattern's mail is always orchestrator -> supervisor,
+// and supervisor is neither builder-like nor critic-like.
+function mailAgentColor(agent){
+  return isBuilderLike(agent) ? "text-klein-light" : isCriticLike(agent) ? "text-amber" : "text-stone-400";
+}
 function row(catClass, html, align){
   const div = document.createElement("div");
   div.className = "event-item " + catClass + " flex flex-col gap-1.5 max-w-[94%]" + (align ? " ml-auto" : "");
@@ -515,16 +528,16 @@ function renderMail(e){
   const long = e.text.length > 420;
   const body = long ? e.text.slice(0,420) + "…" : e.text;
   const html = mailHtml(body);
-  const el = row("mail", "", e.from === "critic");
+  const el = row("mail", "", isCriticLike(e.from));
   el.dataset.cat = "mail";
-  const other = e.from === "builder" ? "critic" : "builder";
+  const other = e.to; // the bus record already names the real recipient — no need to guess it
   const kindColor = e.mailKind === "done" ? "bg-braun-greendim text-braun-green border-braun-green/40" : "bg-stone-950 text-stone-400 border-stone-800";
   el.innerHTML =
     '<div class="flex items-center justify-between font-mono text-[11px] pb-1"><div class="flex items-center gap-2">'+
     agentBadge(e.from) + agentName(e.from) +
     '<span class="font-mono text-[10px] bg-stone-950 text-stone-300 px-1.5 py-0.5 border border-stone-800 font-bold flex items-center gap-1.5">'+
-    '<span class="'+(e.from==="builder"?"text-klein-light":"text-amber")+'">'+e.from.toUpperCase()+'</span>'+
-    '<span class="text-stone-500">→</span><span class="'+(other==="builder"?"text-klein-light":"text-amber")+'">'+other.toUpperCase()+'</span></span></div>'+
+    '<span class="'+mailAgentColor(e.from)+'">'+String(e.from||"").toUpperCase()+'</span>'+
+    '<span class="text-stone-500">→</span><span class="'+mailAgentColor(other)+'">'+String(other||"").toUpperCase()+'</span></span></div>'+
     '<span class="text-[10px] text-stone-500 font-mono">#'+e.n+' · '+fmtTime(e.t)+'</span></div>'+
     '<div class="bg-stone-900 border border-stone-800 p-3 space-y-2 shadow-lg">'+
     '<div class="flex items-center justify-between border-b border-stone-800 pb-1.5">'+
