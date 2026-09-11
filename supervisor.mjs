@@ -146,16 +146,6 @@ function hashDir(dir) {
 	return h.digest("hex");
 }
 
-// mail-ext.ts caps what an AGENT can put in a mail body (MAX_BODY = 8000 chars),
-// but probe results are supervisor-generated and go straight through deliver(),
-// bypassing that cap entirely. A task whose return values can be large (e.g. a
-// simulation result with thousands of samples) can produce a single probe-result
-// message of hundreds of KB — found live: two ~250KB untruncated echoes back to
-// back were enough to push a local model's context past what its own overflow
-// recovery could then summarize, an unrecoverable stall rather than a slowdown.
-// This caps only the DISPLAY string; comparisons for expect/match always use the
-// full untruncated value.
-
 function launch(name) {
 	const cfg = AGENTS[name];
 	const args = [
