@@ -1,0 +1,10 @@
+{
+  "task": "glob",
+  "pattern": "dyad",
+  "roles": {
+    "builder": { "provider": "llama.cpp", "model": "qwen3-27b" },
+    "critic":  { "provider": "llama.cpp", "model": "qwen3-27b" }
+  },
+  "caps": { "toolCalls": 200, "wallSec": 1500, "usd": 5, "doneAttempts": 5 },
+  "oracle": { "reportFailingInputs": false }
+}

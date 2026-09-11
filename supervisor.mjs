@@ -4,8 +4,9 @@
  * Deliberately contains no language model. It relays, counts, kills, and runs
  * the oracle. It is the one component in the system that cannot be argued with.
  *
- *   node supervisor.mjs            # fresh run under runs/<timestamp>/
- *   DUO_MODEL=claude-haiku-4-5 node supervisor.mjs
+ *   node supervisor.mjs            # fresh run under runs/<timestamp>/, uses arbiter.json
+ *   node supervisor.mjs --config configs/<name>.json
+ *   ROLE_builder_MODEL=claude-haiku-4-5 node supervisor.mjs
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -15,42 +16,27 @@ import { truncateForMail } from "./lib/text.mjs";
 import { decideApproval, QUIESCENCE_MS } from "./lib/gate.mjs";
 import { createAgentState, lastEditAcross, EDITING_TOOLS } from "./lib/agents.mjs";
 import { routeMail } from "./lib/routing.mjs";
+import { loadConfig, parseArgs } from "./lib/config.mjs";
+import { PATTERNS } from "./lib/patterns.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const REPO = "C:/Users/user/open_harnessess/pi/pi";
 const TSX = path.join(REPO, "node_modules/tsx/dist/cli.mjs");
 const PI = path.join(REPO, "packages/coding-agent/src/cli.ts");
 
-const MODEL = process.env.DUO_MODEL || "claude-sonnet-4-6";
-const PROVIDER = process.env.DUO_PROVIDER || "anthropic";
-// Per-agent overrides let BUILDER and CRITIC run on different models/providers
-// entirely (e.g. a local model as BUILDER, a hosted model as CRITIC). Falls
-// back to the shared MODEL/PROVIDER above when not set, so single-model runs
-// are unaffected.
-const BUILDER_MODEL = process.env.DUO_BUILDER_MODEL || MODEL;
-const BUILDER_PROVIDER = process.env.DUO_BUILDER_PROVIDER || PROVIDER;
-const CRITIC_MODEL = process.env.DUO_CRITIC_MODEL || MODEL;
-const CRITIC_PROVIDER = process.env.DUO_CRITIC_PROVIDER || PROVIDER;
-const TASK_NAME = process.env.DUO_TASK || "glob";
+const CONFIG = loadConfig(parseArgs(process.argv));
+const { task: TASK_NAME, pattern: PATTERN, roles: ROLES, caps: CAPS, oracle: ORACLE_OPTS } = CONFIG;
+const PDEF = PATTERNS[PATTERN];
 // N=1 ablation: no CRITIC at all. BUILDER gets the spec in its own prompt, and the
 // oracle fires on BUILDER's done mail or, failing that, on host-observed
 // quiescence. Everything else (workspace isolation, caps, hidden oracle, bash
 // watchdog) is identical, so a solo run isolates exactly one variable: whether
 // the adversarial dialogue is load-bearing, or the model-free gate alone is.
-const SOLO = process.env.DUO_SOLO === "1";
-const PATTERN = SOLO ? "solo" : "dyad";
-const CAPS = {
-	toolCalls: Number(process.env.DUO_CAP_TOOLS || 200), // combined, both agents
-	wallSec: Number(process.env.DUO_CAP_WALL || 1500),
-	usd: Number(process.env.DUO_CAP_USD || 5),
-	doneAttempts: Number(process.env.DUO_CAP_DONE || 5),
-	idleNudgeSec: Number(process.env.DUO_IDLE_NUDGE || 120),
-	maxNudges: 3,
-	// pi's bash tool has NO default timeout — a call only stops early if the model
-	// explicitly passes one. This is a model-free backstop: any bash call running
-	// longer than this gets force-aborted via RPC, regardless of what the model did.
-	bashTimeoutSec: Number(process.env.DUO_BASH_TIMEOUT_SEC || 90),
-};
+const SOLO = PATTERN === "solo";
+// The role whose approval is the oracle's trigger — "critic" for dyad,
+// "orchestrator" for the orchestrator pattern, null for solo (where the builder's
+// own done is the trigger instead, handled separately by routeMail's solo_done).
+const VERIFIER = PDEF.verifier;
 
 // ---------- run directory ----------
 const runId = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -100,30 +86,33 @@ if (SOLO) {
 	}
 }
 
-// A task may override BUILDER's brief (builder.md) when the generic
-// "implement the stub" framing doesn't fit (e.g. a review/analysis task).
-const builderPromptFile = fs.existsSync(path.join(TASK, "builder.md"))
-	? path.join(TASK, "builder.md")
-	: path.join(here, "prompts/builder.md");
 const contextHeading = TASK_CONTEXT_FILE === "spec.md" ? "SPECIFICATION" : "CONTEXT";
 const taskContext = fs.readFileSync(path.join(TASK, TASK_CONTEXT_FILE), "utf8");
-const prompts = {
-	builder: SOLO
-		? `${fs.readFileSync(path.join(here, "prompts/builder-solo.md"), "utf8")}\n\n# ${contextHeading}\n\n${taskContext}`
-		: fs.readFileSync(builderPromptFile, "utf8"),
-	critic: `${fs.readFileSync(path.join(here, "prompts/critic.md"), "utf8")}\n\n# ${contextHeading}\n\n${taskContext}`,
-};
+// A task may override BUILDER's brief (builder.md) when the generic
+// "implement the stub" framing doesn't fit (e.g. a review/analysis task) — dyad
+// builder only; a solo run always uses the ablation-specific builder-solo.md.
+const prompts = {};
+for (const role of PDEF.roles) {
+	const promptFile =
+		role === "builder" && !SOLO && fs.existsSync(path.join(TASK, "builder.md"))
+			? path.join(TASK, "builder.md")
+			: path.join(here, "prompts", PDEF.prompt[role]);
+	const base = fs.readFileSync(promptFile, "utf8");
+	const needsContext = role === "critic" || role === "orchestrator" || SOLO;
+	prompts[role] = needsContext ? `${base}\n\n# ${contextHeading}\n\n${taskContext}` : base;
+}
 
 // Role asymmetry is enforced by capability, not by prompt. A task may narrow
 // BUILDER's tools further (e.g. no bash for a read-only review task) via
 // builder-tools.txt; CRITIC always gets mail only, regardless of task.
-let builderTools = "read,bash,edit,write,ls,grep,find,send_mail";
 const toolsOverride = path.join(TASK, "builder-tools.txt");
-if (fs.existsSync(toolsOverride)) builderTools = fs.readFileSync(toolsOverride, "utf8").trim();
-const AGENTS = {
-	builder: { tools: builderTools, peer: SOLO ? "supervisor" : "critic", provider: BUILDER_PROVIDER, model: BUILDER_MODEL },
-	critic: { tools: "send_mail", peer: "builder", provider: CRITIC_PROVIDER, model: CRITIC_MODEL },
-};
+const AGENTS = {};
+for (const role of PDEF.roles) {
+	if (role === "worker") continue; // workers are pi-subagents children, not supervisor-launched processes
+	let tools = PDEF.tools[role];
+	if (role === "builder" && fs.existsSync(toolsOverride)) tools = fs.readFileSync(toolsOverride, "utf8").trim();
+	AGENTS[role] = { tools, peer: PDEF.peer[role], provider: ROLES[role].provider, model: ROLES[role].model };
+}
 
 // ---------- agent processes ----------
 const state = {};
@@ -250,7 +239,12 @@ function timeStatus(to) {
 }
 
 function deliver(to, text, why) {
+	if (to === null) return;
 	const s = state[to];
+	if (!s) {
+		log({ type: "warn", msg: `deliver to "${to}" dropped: no such agent in this run (${why})` });
+		return;
+	}
 	s.busy = true; // agent_start will confirm; this just prevents double-nudging
 	// "steer" delivers after the current turn's tool calls, before the next LLM call —
 	// not "followUp", which only delivers once the whole agent run fully settles.
@@ -405,14 +399,14 @@ function runProbe(msg) {
 	probeCount++;
 	const runner = path.join(TASK, "oracle", "probe.mjs");
 	if (!fs.existsSync(runner)) {
-		deliver("critic", `[SUPERVISOR] This task has no probe runner — kind="probe" isn't supported for "${TASK_NAME}".`, "probe unsupported");
+		deliver(VERIFIER, `[SUPERVISOR] This task has no probe runner — kind="probe" isn't supported for "${TASK_NAME}".`, "probe unsupported");
 		return;
 	}
 	const dir = path.join(RUN, `probe-${probeCount}`);
 	try {
 		fs.mkdirSync(dir, { recursive: true });
 		if (!fs.existsSync(path.join(WS.builder, "src"))) {
-			deliver("critic", "[SUPERVISOR] Probe failed: BUILDER's src/ does not exist yet.", "probe error");
+			deliver(VERIFIER, "[SUPERVISOR] Probe failed: BUILDER's src/ does not exist yet.", "probe error");
 			return;
 		}
 		// Parse CRITIC's own request up front, independent of what probe.mjs makes of
@@ -429,7 +423,7 @@ function runProbe(msg) {
 		}
 		if (requestParseError) {
 			deliver(
-				"critic",
+				VERIFIER,
 				`[SUPERVISOR] Probe #${probeCount} rejected: your probe body is not valid JSON (${requestParseError}). ` +
 					`Exact bytes received: ${JSON.stringify(msg.body)}\n` +
 					`Check for a stray/misplaced bracket or brace before re-sending — a single mistyped character here reads as a real result, not a JSON error, once it hits probe.mjs.`,
@@ -468,7 +462,7 @@ function runProbe(msg) {
 			// Nothing to execute — every case in this probe is a verbatim repeat.
 			log({ type: "probe", msg: `probe #${probeCount}: 0 executed, ${blocked.length} blocked (all repeats)` });
 			deliver(
-				"critic",
+				VERIFIER,
 				`[SUPERVISOR] Probe #${probeCount} was not run — every case in it is an exact repeat of a prior probe against this same, unchanged code:\n${blockedLines.join("\n")}\n\n` +
 					`If you're satisfied, send done. If not, send a genuinely different case, or a question to BUILDER — this exact probe is now a dead end.`,
 				"probe fully blocked (all repeats)",
@@ -488,7 +482,7 @@ function runProbe(msg) {
 		}
 		if (!Array.isArray(results)) {
 			deliver(
-				"critic",
+				VERIFIER,
 				`[SUPERVISOR] Probe run #${probeCount} produced no parseable result.${r.stderr ? ` stderr: ${r.stderr.slice(0, 500)}` : ""}`,
 				"probe error",
 			);
@@ -550,12 +544,12 @@ function runProbe(msg) {
 		if (withoutExpect.length) parts.push(`${expectById.size > 0 ? "Other cases (no expectation given):\n" : ""}${withoutExpect.join("\n")}`);
 		if (blockedLines.length) parts.push(`Blocked (exact repeats, not re-run):\n${blockedLines.join("\n")}`);
 		deliver(
-			"critic",
+			VERIFIER,
 			`[SUPERVISOR] Probe run #${probeCount} — executed directly against BUILDER's current src/, not self-reported. BUILDER did not see this; no reply to BUILDER is needed.\n${parts.join("\n\n")}`,
 			"probe results",
 		);
 	} catch (err) {
-		deliver("critic", `[SUPERVISOR] Probe run #${probeCount} crashed: ${err?.message ?? err}`, "probe crash");
+		deliver(VERIFIER, `[SUPERVISOR] Probe run #${probeCount} crashed: ${err?.message ?? err}`, "probe crash");
 	}
 }
 
@@ -581,7 +575,7 @@ function handleApproval() {
 		too_soon: `[SUPERVISOR] Approval not accepted yet: BUILDER edited code ${(verdict.sinceEditMs / 1000).toFixed(1)}s ago, too recent to be sure it's settled. Wait a few seconds and send done again — no need to re-probe unless BUILDER tells you something changed.`,
 	}[verdict.reason];
 	const label = { no_probe: "approval without probe", no_src: "approval error", stale: "approval stale (src changed since probe)", too_soon: "approval too soon after edit" }[verdict.reason];
-	deliver("critic", why, label);
+	deliver(VERIFIER, why, label);
 }
 
 // ---------- oracle (host-side; agents cannot touch it) ----------
@@ -632,7 +626,7 @@ function runOracle() {
 				log({ type: "oracle", msg: verdict0 });
 				timeline.push({ ts: Date.now(), from: "supervisor", to: "both", kind: "oracle", body: verdict0 });
 				deliver("builder", `[SUPERVISOR] ${verdict0} Nothing was found to check.`, "oracle verdict");
-				if (state.critic) deliver("critic", `[SUPERVISOR] ${verdict0}`, "oracle verdict");
+				if (VERIFIER) deliver(VERIFIER, `[SUPERVISOR] ${verdict0}`, "oracle verdict");
 				return;
 			}
 			fs.cpSync(path.join(WS.builder, "src"), path.join(dir, "src"), { recursive: true });
@@ -662,7 +656,7 @@ function runOracle() {
 			);
 		} else {
 			deliver("builder", `[SUPERVISOR] CRITIC approved your work. ${verdict} Not done. Work with CRITIC to find what you missed, then claim done again. (${CAPS.doneAttempts - doneAttempts} approvals left)`, "oracle verdict");
-			deliver("critic", `[SUPERVISOR] You approved BUILDER's work. ${verdict} Your approval was wrong. Find what you both missed; interrogate on inputs you have not yet asked about. (${CAPS.doneAttempts - doneAttempts} approvals left)`, "oracle verdict");
+			if (VERIFIER) deliver(VERIFIER, `[SUPERVISOR] You approved BUILDER's work. ${verdict} Your approval was wrong. Find what you both missed; interrogate on inputs you have not yet asked about. (${CAPS.doneAttempts - doneAttempts} approvals left)`, "oracle verdict");
 		}
 	} catch (err) {
 		log({ type: "oracle_crash", msg: `oracle threw: ${err?.stack ?? err}` });
@@ -764,13 +758,18 @@ function finish(reason) {
 	const t = totals();
 	const byKind = {};
 	for (const m of timeline) if (m.from !== "supervisor") byKind[m.kind] = (byKind[m.kind] ?? 0) + 1;
+	// Console/KPI tools read builderModel/criticModel for every run, old and new —
+	// "builder" falls back to "worker" and "critic" falls back to "orchestrator" so
+	// those tools keep working once the orchestrator pattern lands.
+	const builderRole = ROLES.builder ?? ROLES.worker;
+	const criticRole = ROLES.critic ?? ROLES.orchestrator;
 	const summary = {
 		runId,
 		reason,
-		model: SOLO || BUILDER_MODEL === CRITIC_MODEL ? BUILDER_MODEL : `${BUILDER_MODEL} + ${CRITIC_MODEL}`,
-		builderModel: `${BUILDER_PROVIDER}/${BUILDER_MODEL}`,
-		criticModel: SOLO ? "none (solo ablation)" : `${CRITIC_PROVIDER}/${CRITIC_MODEL}`,
-		solo: SOLO,
+		model: Object.values(ROLES).map((r) => r.model).join(" + "),
+		builderModel: builderRole ? `${builderRole.provider}/${builderRole.model}` : "none",
+		criticModel: criticRole ? `${criticRole.provider}/${criticRole.model}` : "none (solo ablation)",
+		config: CONFIG,
 		wallSec: Number(t.wallSec.toFixed(1)),
 		costUsd: Number(t.cost.toFixed(4)),
 		toolCalls: Object.fromEntries(Object.values(state).map((a) => [a.name, a.toolCalls])),
@@ -781,7 +780,7 @@ function finish(reason) {
 		nudges,
 		caps: CAPS,
 		task: TASK_NAME,
-		oracleGate: SOLO ? "solo: builder done, or src/ quiescent 60s" : "critic approval",
+		oracleGate: PDEF.verifier ? `${PDEF.verifier} approval (hash+quiescence)` : "solo: builder done or quiescence",
 		sandbox: "none (Gondolin requires QEMU; not installed). Controls: hardened flags, tool asymmetry, host-side oracle, budgets.",
 	};
 	fs.writeFileSync(path.join(RUN, "summary.json"), JSON.stringify(summary, null, 2));
@@ -827,14 +826,19 @@ process.on("SIGINT", () => finish("interrupted"));
 
 // ---------- go ----------
 console.log(`run: ${RUN}`);
-console.log(`builder: ${BUILDER_PROVIDER}/${BUILDER_MODEL} | critic: ${SOLO ? "none (solo ablation)" : `${CRITIC_PROVIDER}/${CRITIC_MODEL}`} | caps: ${JSON.stringify(CAPS)}`);
-launch("builder");
-if (!SOLO) launch("critic");
+console.log("config:", JSON.stringify(CONFIG));
+for (const role of Object.keys(AGENTS)) launch(role);
 for (const name of Object.keys(state)) send(name, { id: "hello", type: "get_state" });
 
 const readyTimer = setInterval(() => {
 	if (!Object.values(state).every((a) => a.ready)) return;
 	clearInterval(readyTimer);
+	if (PATTERN === "dyad") {
+		log({ type: "ready", msg: "both agents ready; kicking off" });
+		deliver("critic", "[SUPERVISOR] Session start. BUILDER is waiting. Open the conversation: tell BUILDER what they are building, at the level of a one-paragraph brief. Let them ask for details.", "kickoff");
+		deliver("builder", "[SUPERVISOR] Session start. Read README.md. CRITIC will mail you a brief shortly; you may also mail CRITIC first if you prefer.", "kickoff");
+		return;
+	}
 	if (SOLO) {
 		log({ type: "ready", msg: "builder ready; kicking off (solo)" });
 		deliver(
@@ -844,9 +848,9 @@ const readyTimer = setInterval(() => {
 		);
 		return;
 	}
-	log({ type: "ready", msg: "both agents ready; kicking off" });
-	deliver("critic", "[SUPERVISOR] Session start. BUILDER is waiting. Open the conversation: tell BUILDER what they are building, at the level of a one-paragraph brief. Let them ask for details.", "kickoff");
-	deliver("builder", "[SUPERVISOR] Session start. Read README.md. CRITIC will mail you a brief shortly; you may also mail CRITIC first if you prefer.", "kickoff");
+	// orchestrator: kickoff wording lands in Task 14, once the orchestrator has
+	// something (worker launching) to actually kick off.
+	log({ type: "ready", msg: "orchestrator ready; kickoff pending (Task 14)" });
 }, 250);
 
 setInterval(pumpBus, 200);
