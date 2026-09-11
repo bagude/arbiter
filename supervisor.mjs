@@ -14,6 +14,7 @@ import path from "node:path";
 import { truncateForMail } from "./lib/text.mjs";
 import { decideApproval, QUIESCENCE_MS } from "./lib/gate.mjs";
 import { createAgentState, lastEditAcross, EDITING_TOOLS } from "./lib/agents.mjs";
+import { routeMail } from "./lib/routing.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const REPO = "C:/Users/user/open_harnessess/pi/pi";
@@ -37,6 +38,7 @@ const TASK_NAME = process.env.DUO_TASK || "glob";
 // watchdog) is identical, so a solo run isolates exactly one variable: whether
 // the adversarial dialogue is load-bearing, or the model-free gate alone is.
 const SOLO = process.env.DUO_SOLO === "1";
+const PATTERN = SOLO ? "solo" : "dyad";
 const CAPS = {
 	toolCalls: Number(process.env.DUO_CAP_TOOLS || 200), // combined, both agents
 	wallSec: Number(process.env.DUO_CAP_WALL || 1500),
@@ -370,50 +372,20 @@ function pumpBus() {
 		lastActivity = Date.now();
 		timeline.push({ ts: Date.now(), ...msg });
 		log({ type: "mail", msg: `MAIL #${msg.n} ${msg.from} -> ${msg.to} [${msg.kind}] ${msg.body.replace(/\s+/g, " ").slice(0, 140)}` });
-		// Probes are intercepted here, never relayed: CRITIC verifies real values by
-		// asking the supervisor to run them against BUILDER's actual current code,
-		// instead of asking BUILDER to self-report — BUILDER never sees this exchange.
-		if (msg.kind === "probe" && msg.from === "critic") {
-			runProbe(msg);
-			continue;
+		const route = routeMail(PATTERN, msg);
+		switch (route.action) {
+			case "probe": runProbe(msg); break;
+			case "approval": handleApproval(); break;
+			case "bounce_probe":
+				deliver(route.to, '[SUPERVISOR] Your kind="probe" was not run — only the verifying role\'s probes are host-executed. Describe what you found as kind="status" instead.', "probe bounced");
+				break;
+			case "solo_done": runOracle(); break;
+			case "solo_ack":
+				deliver(route.to, '[SUPERVISOR] Acknowledged, but nobody will answer this — there is no counterpart in this run. When your implementation is complete and self-tested, send kind="done".', "ack (no counterpart)");
+				break;
+			case "deliver": deliver(route.to, frame(msg), `mail #${msg.n} from ${msg.from}`); break;
+			case "drop": log({ type: "warn", msg: `mail #${msg.n} to unknown recipient "${msg.to}" dropped` }); break;
 		}
-		// A probe from BUILDER is never executed (only CRITIC's are) — relaying it
-		// as ordinary mail produced a live mutual stall: CRITIC waited on a "run" of
-		// BUILDER's probe that was never going to happen. mail-ext.ts now drops the
-		// kind for BUILDER entirely; this is a backstop in case one still arrives.
-		if (msg.kind === "probe" && msg.from === "builder") {
-			deliver(
-				"builder",
-				'[SUPERVISOR] Your kind="probe" was not run — only CRITIC\'s probes are host-executed. If you have something CRITIC needs verified, ' +
-					'send it as kind="status" or kind="answer" describing what you found; CRITIC can re-verify it with its own probe.',
-				"probe from builder bounced",
-			);
-			continue;
-		}
-		// CRITIC's approval is also intercepted, never blind-relayed as raw "approved"
-		// text: BUILDER finding out "critic approved!" and then, a beat later, "actually
-		// that was rejected" is exactly the confusing sequence a stale relay produced.
-		// The real outcome (from runOracle, on success) is what BUILDER should see.
-		if (msg.kind === "done" && msg.from === "critic") {
-			handleCriticApproval();
-			continue;
-		}
-		// Solo: BUILDER's done is the trigger (the original builder-claim gate). Any
-		// other mail has no recipient — acknowledge it once so the model doesn't wait
-		// on an answer that will never come.
-		if (SOLO && msg.from === "builder") {
-			if (msg.kind === "done") {
-				runOracle();
-				continue;
-			}
-			deliver(
-				"builder",
-				'[SUPERVISOR] Acknowledged, but nobody will answer this — there is no counterpart in this run. The full specification is in your prompt under SPECIFICATION. When your implementation is complete and self-tested, send kind="done".',
-				"solo ack (no counterpart)",
-			);
-			continue;
-		}
-		if (state[msg.to]) deliver(msg.to, frame(msg), `mail #${msg.n} from ${msg.from}`);
 	}
 }
 
@@ -589,8 +561,9 @@ function runProbe(msg) {
 
 // ---------- approval gate (host-side; replaces the mail-based precondition) ----------
 // The accept/reject invariant lives in lib/gate.mjs's decideApproval(); this just
-// supplies the current hashes/timestamp, then formats the rejection for CRITIC.
-function handleCriticApproval() {
+// supplies the current hashes/timestamp, then formats the rejection for the
+// verifying role's kind="done".
+function handleApproval() {
 	const srcDir = path.join(WS.builder, "src");
 	const srcExists = fs.existsSync(srcDir);
 	const verdict = decideApproval({
