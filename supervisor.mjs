@@ -1,5 +1,5 @@
 /**
- * arbiter supervisor — owns two pi agents, relays mail, enforces budgets, judges.
+ * arbiter supervisor — owns the run's pi agents, relays mail, enforces budgets, judges.
  *
  * Deliberately contains no language model. It relays, counts, kills, and runs
  * the oracle. It is the one component in the system that cannot be argued with.
@@ -14,10 +14,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { truncateForMail } from "./lib/text.mjs";
 import { decideApproval, QUIESCENCE_MS } from "./lib/gate.mjs";
-import { createAgentState, lastEditAcross, EDITING_TOOLS } from "./lib/agents.mjs";
+import { createAgentState, lastEditAcross, liveWorkers, EDITING_TOOLS } from "./lib/agents.mjs";
 import { routeMail } from "./lib/routing.mjs";
 import { loadConfig, parseArgs } from "./lib/config.mjs";
-import { PATTERNS } from "./lib/patterns.mjs";
+import { PATTERNS, WORKER_TOOLS } from "./lib/patterns.mjs";
+import { writeWorkerDefinition } from "./lib/worker-def.mjs";
+import { childTranscriptDir, JsonlTailer, workerIdFromTranscript } from "./lib/child-transcripts.mjs";
+import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const REPO = "C:/Users/user/open_harnessess/pi/pi";
@@ -44,6 +47,11 @@ const RUN = path.join(here, "runs", runId);
 fs.mkdirSync(RUN, { recursive: true });
 const BUS = path.join(RUN, "bus.jsonl");
 const AUDIT = path.join(RUN, "audit.jsonl");
+// Workers are pi-subagents children of the orchestrator's own pi process — they are
+// not on the supervisor's RPC stream at all. ext/subagents-bridge.ts runs inside that
+// process and appends one line per lifecycle event here, which the supervisor tails
+// exactly like it tails the mail bus.
+const LIFECYCLE = path.join(RUN, "lifecycle.jsonl");
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
 const startedAt = Date.now();
@@ -55,29 +63,31 @@ function log(entry) {
 	console.log(line.length > 200 ? `${line.slice(0, 200)}…` : line);
 }
 
-// Fresh workspace per run. Critic's is empty on purpose.
+// Fresh workspace per run — one shared workspace, whatever the pattern. In a dyad
+// only BUILDER can write to it; in a solo run only BUILDER exists; under the
+// orchestrator pattern the orchestrator reads it and its workers write to it.
 const TASK = path.join(here, "tasks", TASK_NAME);
 // A task supplies CRITIC's brief either as spec.md (a spec to implement against,
 // heading "SPECIFICATION") or critic-context.md (background + a goal, for tasks
 // that aren't implement-to-spec — heading "CONTEXT"). Exactly one must exist.
 const TASK_CONTEXT_FILE = ["spec.md", "critic-context.md"].find((f) => fs.existsSync(path.join(TASK, f)));
 if (!TASK_CONTEXT_FILE) throw new Error(`no such task: ${TASK} (needs spec.md or critic-context.md)`);
-// Workspaces live OUTSIDE RUN, not under it. BUILDER's bash cwd is WS.builder;
-// a single `cd ..` from a workspace nested directly in RUN reaches bus.jsonl,
-// probe-N/, oracle-N/ and audit.jsonl — confirmed as a real leak in a live run
-// (BUILDER read bus.jsonl and probe result files via `cd .. && grep`). One `..`
-// from here instead lands in WSROOT, which holds only the two workspaces.
-// finish() copies the final ws-builder/ws-critic into RUN afterward so every
-// downstream tool (extract-runs.mjs, the console, transcript.md) still finds
-// the delivered source exactly where it always has.
+// The workspace lives OUTSIDE RUN, not under it. The writing agent's bash cwd is
+// WS.workspace; a single `cd ..` from a workspace nested directly in RUN reaches
+// bus.jsonl, probe-N/, oracle-N/ and audit.jsonl — confirmed as a real leak in a
+// live run (BUILDER read bus.jsonl and probe result files via `cd .. && grep`). One
+// `..` from here instead lands in WSROOT, which holds only the workspace.
+// The on-disk directory name stays ws-builder, and finish() archives it into RUN as
+// ws-builder, so every downstream tool (extract-runs.mjs, the console,
+// transcript.md) still finds the delivered source exactly where it always has —
+// including for orchestrator runs, where no agent is called "builder" at all.
 const WSROOT = path.join(here, "runs", `.ws-${runId}`);
-const WS = { builder: path.join(WSROOT, "ws-builder"), critic: path.join(WSROOT, "ws-critic") };
-fs.cpSync(path.join(TASK, "ws-builder"), WS.builder, { recursive: true });
-fs.mkdirSync(WS.critic, { recursive: true });
+const WS = { workspace: path.join(WSROOT, "ws-builder") };
+fs.cpSync(path.join(TASK, "ws-builder"), WS.workspace, { recursive: true });
 if (SOLO) {
 	// Task READMEs describe a counterpart that does not exist in a solo run; a small
 	// model reading both the README and the prompt should not have to reconcile them.
-	const readme = path.join(WS.builder, "README.md");
+	const readme = path.join(WS.workspace, "README.md");
 	if (fs.existsSync(readme)) {
 		fs.writeFileSync(
 			readme,
@@ -160,9 +170,23 @@ function launch(name) {
 		"--system-prompt",
 		prompts[name],
 	];
+	// The orchestrator is the only role that spawns children, so it is the only one
+	// that loads pi-subagents (which supplies the subagent/steer_subagent/
+	// get_subagent_result tools) and the bridge that forwards their lifecycle events
+	// to LIFECYCLE. Both go in front of mail-ext's "-e" so the subagents extension is
+	// registered before the bridge subscribes to its channels.
+	if (name === "orchestrator") {
+		const idx = args.indexOf("-e");
+		args.splice(idx, 0,
+			"-e", path.join(here, "node_modules/@gotgenes/pi-subagents/src/index.ts"),
+			"-e", path.join(here, "ext", "subagents-bridge.ts"),
+		);
+	}
 	const child = spawn(process.execPath, args, {
-		cwd: WS[name],
-		env: { ...process.env, AGENT_NAME: name, PEER: cfg.peer, BUS_FILE: BUS },
+		// One shared workspace for every role: the orchestrator reads it, and its
+		// workers inherit this cwd, which is also where .pi/agents/worker.md lives.
+		cwd: WS.workspace,
+		env: { ...process.env, AGENT_NAME: name, PEER: cfg.peer, BUS_FILE: BUS, ARBITER_LIFECYCLE_FILE: LIFECYCLE },
 		stdio: ["pipe", "pipe", "pipe"],
 	});
 	const raw = fs.createWriteStream(path.join(RUN, `raw-${name}.jsonl`), { flags: "a" });
@@ -201,7 +225,9 @@ function launch(name) {
 
 function send(name, cmd) {
 	const s = state[name];
-	if (!s || s.child.exitCode !== null) return;
+	// Workers have no child process of their own — they run inside the orchestrator's
+	// pi process, so there is no stdin to write an RPC command to.
+	if (!s || !s.child || s.child.exitCode !== null) return;
 	s.child.stdin.write(`${JSON.stringify(cmd)}\n`);
 }
 
@@ -216,22 +242,23 @@ function timeStatus(to) {
 	let line = `[time: ${elapsed.toFixed(0)}s elapsed / ${CAPS.wallSec}s wall-clock budget — ${pct}% used, ~${remaining.toFixed(0)}s left]`;
 	if (pct >= 85) line += " ⚠ Budget nearly exhausted. Stop exploring further edge cases — reach a decision now with what you already know.";
 	else if (pct >= 60) line += " More than half the budget is gone. Start converging toward done/approval rather than opening new lines of inquiry.";
-	// CRITIC's approval is unreachable with zero probes no matter how it's worded
-	// elsewhere — say so directly once time pressure is real, instead of leaving
-	// it to be inferred from the prompt alone.
-	if (to === "critic" && lastProbeHash === null && pct >= 60) {
+	// The verifying role's approval is unreachable with zero probes no matter how it's
+	// worded elsewhere — say so directly once time pressure is real, instead of
+	// leaving it to be inferred from the prompt alone. Applies to the orchestrator
+	// for the same reason it applies to CRITIC: it is the role the gate answers to.
+	if (to === VERIFIER && lastProbeHash === null && pct >= 60) {
 		line += ' You have not sent a single kind="probe" yet — approval cannot go through without one. Send a probe now.';
 	}
 	// The opposite case matters just as much near the deadline: if the gate would
 	// already accept an approval right now, say so plainly instead of leaving CRITIC
 	// to spend the run's last stretch re-probing settled ground out of caution — a
 	// pattern seen live (a run's last ~1400s re-checked cases already confirmed).
-	if (to === "critic" && pct >= 85 && lastProbeHash !== null) {
-		const srcDir = path.join(WS.builder, "src");
+	if (to === VERIFIER && pct >= 85 && lastProbeHash !== null) {
+		const srcDir = path.join(WS.workspace, "src");
 		const sinceEdit = Date.now() - lastEditAcross(Object.values(state));
 		if (fs.existsSync(srcDir) && hashDir(srcDir) === lastProbeHash && sinceEdit >= QUIESCENCE_MS) {
 			line +=
-				" The approval gate is satisfiable right now: your last probe matches BUILDER's current, quiescent code. " +
+				" The approval gate is satisfiable right now: your last probe matches the current, quiescent workspace. " +
 				'If nothing in it looked wrong, send kind="done" now rather than re-probing the same ground again.';
 		}
 	}
@@ -245,6 +272,10 @@ function deliver(to, text, why) {
 		log({ type: "warn", msg: `deliver to "${to}" dropped: no such agent in this run (${why})` });
 		return;
 	}
+	// A worker is not addressable by the supervisor at all: it has no RPC stdin, and
+	// by design the orchestrator is the only thing that steers it. Anything the
+	// supervisor needs a worker to know goes to the orchestrator instead.
+	if (s.role === "worker") return;
 	s.busy = true; // agent_start will confirm; this just prevents double-nudging
 	// "steer" delivers after the current turn's tool calls, before the next LLM call —
 	// not "followUp", which only delivers once the whole agent run fully settles.
@@ -272,6 +303,21 @@ function handle(name, ev) {
 			log({ agent: name, type: "settled", msg: "settled (idle)" });
 			break;
 		case "tool_execution_start": {
+			// What the orchestrator does immediately after a worker's report is the one
+			// thing a delegation run is actually being measured on — accept it, probe it,
+			// or delegate again. Recording it as its own audit event means that decision
+			// is readable without reconstructing it from interleaved tool lines.
+			if (name === "orchestrator" && pendingDecisionFor) {
+				log({ agent: "orchestrator", type: "decide", msg: `after ${pendingDecisionFor}: ${ev.toolName}${ev.toolName === "send_mail" ? `(${(ev.args ?? {}).kind})` : ""}` });
+				pendingDecisionFor = null;
+			}
+			// The worker's actual brief exists nowhere in the lifecycle stream — those
+			// events carry only the short `description`. The full prompt is visible only
+			// here, as the orchestrator's own subagent call, so capture it for
+			// transcript.md while it is in hand.
+			if (name === "orchestrator" && ev.toolName === "subagent") {
+				timeline.push({ ts: Date.now(), from: "orchestrator", to: "worker", kind: "spawn", body: String(ev.args?.prompt ?? "") });
+			}
 			s.toolCalls++;
 			lastActivity = Date.now();
 			const a = ev.args ?? {};
@@ -301,7 +347,11 @@ function handle(name, ev) {
 				const textLen = (m.content || [])
 					.filter((c) => c.type === "text")
 					.reduce((n, c) => n + (c.text?.length ?? 0), 0);
-				if (m.stopReason === "stop" && !hasToolCall && textLen > 40) {
+				// Not a worker, though: a worker's final turn is *supposed* to be text with
+				// no tool call — that text is the report pi-subagents hands back to the
+				// orchestrator. Nudging it would be nudging correct behaviour, and the
+				// supervisor cannot deliver to a worker anyway.
+				if (m.stopReason === "stop" && !hasToolCall && textLen > 40 && s.role !== "worker") {
 					log({ agent: name, type: "silent_turn", msg: `turn ended with text (${textLen} chars) but no tool call — nothing was sent` });
 					deliver(
 						name,
@@ -383,12 +433,138 @@ function pumpBus() {
 	}
 }
 
+// ---------- workers (orchestrator pattern only) ----------
+// A worker is a pi-subagents child of the orchestrator's pi process. The supervisor
+// never launches it and cannot talk to it; it observes it through two host-side
+// files. LIFECYCLE (written by ext/subagents-bridge.ts) says when a worker starts,
+// reports and ends; the child's own session transcript says what it actually did.
+// Both feed the same state[] and the same handle(), so tool counts, edit timestamps,
+// the bash watchdog and cost accounting work for a worker exactly as for an agent.
+
+// pi-subagents emits onSubagentCreated only for background (queued) spawns — in the
+// foreground flow this pattern uses, subagents:started is the first event a worker
+// ever produces, and is therefore what counts as the spawn. Both events route here
+// so whichever arrives first creates the state, and the other is a no-op.
+function ensureWorker(wid) {
+	if (!state[wid]) {
+		const s = createAgentState({ id: wid, role: "worker" });
+		s.name = wid; // read by the summary's per-agent maps and every log line
+		// There is no RPC handshake for a child, so nothing would ever set ready — and
+		// checkIdle() refuses to act until every agent is ready. A worker is live from
+		// the moment it first appears.
+		s.ready = true;
+		s.status = "running";
+		state[wid] = s;
+	}
+	return state[wid];
+}
+
+const lifecycleTail = PATTERN === "orchestrator" ? new JsonlTailer(LIFECYCLE) : null;
+let pendingDecisionFor = null; // worker id whose report the orchestrator has just received
+// The two views of a worker do not share an identifier, and nothing in either one
+// joins them: a lifecycle id is randomUUID().slice(0, 17) (subagent-manager.ts's
+// create()), while the child's transcript is named <timestamp>_<pi session id> — two
+// unrelated UUIDs, confirmed live (lifecycle "c3f607ae-1b74-400" alongside transcript
+// "2026-09-11T18-39-03-340Z_01a091c4-…"). Keyed separately they would be two agents
+// for one worker: the count in summary.json doubles, and — the real damage — the
+// transcript-derived half never receives a terminal lifecycle event, so it sits at
+// status "running" forever and liveWorkers() blocks the quiescence oracle for the
+// whole run. Spawns are sequential, so the ids are matched in arrival order instead.
+const unboundWorkers = []; // lifecycle worker ids awaiting their transcript file
+const boundTranscripts = new Map(); // transcript path -> worker id
+function pumpLifecycle() {
+	if (!lifecycleTail || finished || !fs.existsSync(LIFECYCLE)) return;
+	for (const { ev, data } of lifecycleTail.readNew()) {
+		const wid = data?.id ? `worker:${data.id}` : null;
+		lastActivity = Date.now();
+		switch (ev) {
+			case "subagents:created":
+				if (wid && !state[wid]) {
+					ensureWorker(wid);
+					unboundWorkers.push(wid);
+				}
+				break;
+			case "subagents:started": {
+				if (!wid) break;
+				const fresh = !state[wid];
+				ensureWorker(wid).status = "running";
+				// Only announce a spawn once: a started that follows a created (background
+				// queueing) is the same worker reaching the front of the queue, not a new one.
+				if (fresh) {
+					unboundWorkers.push(wid);
+					const label = String(data.description ?? data.prompt ?? data.brief ?? "").replace(/\s+/g, " ").slice(0, 300);
+					log({ agent: "orchestrator", type: "spawn", msg: `spawn ${wid}: ${label}` });
+					timeline.push({ ts: Date.now(), from: "orchestrator", to: wid, kind: "spawn", body: label });
+				}
+				break;
+			}
+			case "subagents:resuming": case "subagents:resumed": case "subagents:steered":
+				if (wid) ensureWorker(wid).status = "running";
+				log({ agent: "orchestrator", type: "resume", msg: `${ev.slice("subagents:".length)} ${wid}` });
+				timeline.push({ ts: Date.now(), from: "orchestrator", to: wid, kind: "resume", body: String(data.message ?? data.description ?? data.prompt ?? "") });
+				break;
+			case "subagents:update":
+				log({ agent: wid, type: "report", msg: `update: ${String(data.message ?? data.text ?? JSON.stringify(data)).replace(/\s+/g, " ").slice(0, 300)}` });
+				timeline.push({ ts: Date.now(), from: wid, to: "orchestrator", kind: "report", body: String(data.message ?? data.text ?? "") });
+				break;
+			case "subagents:completed":
+				if (wid) ensureWorker(wid).status = "completed";
+				log({ agent: wid, type: "report", msg: `completed: ${String(data.result ?? "").replace(/\s+/g, " ").slice(0, 300)}` });
+				timeline.push({ ts: Date.now(), from: wid, to: "orchestrator", kind: "report", body: String(data.result ?? "") });
+				pendingDecisionFor = wid;
+				break;
+			case "subagents:failed":
+				if (wid) ensureWorker(wid).status = "failed";
+				log({ agent: wid, type: "worker_failed", msg: `failed: ${String(data.error ?? data.reason ?? JSON.stringify(data)).slice(0, 300)}` });
+				pendingDecisionFor = wid;
+				break;
+		}
+	}
+}
+
+// The lifecycle stream says a worker exists; only the transcript says what it did.
+// pi persists each child in the parent session's tasks/ directory in pi's own JSONL
+// format, which lib/session-adapter.mjs turns back into the RPC event shapes handle()
+// already understands.
+const childTails = new Map(); // transcript path -> JsonlTailer
+function pumpChildTranscripts() {
+	if (PATTERN !== "orchestrator" || finished) return;
+	const dir = childTranscriptDir(path.join(RUN, "sessions", "orchestrator"));
+	if (!dir || !fs.existsSync(dir)) return;
+	for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"))) {
+		const p = path.join(dir, f);
+		if (!childTails.has(p)) childTails.set(p, new JsonlTailer(p));
+		if (!boundTranscripts.has(p)) {
+			// Claim the oldest lifecycle worker still waiting for a transcript. The
+			// fallback keeps a worker's activity rather than dropping it if the transcript
+			// file somehow lands before its subagents:started (the two pumps run on
+			// different intervals); it just shows up under the transcript's own id.
+			boundTranscripts.set(p, unboundWorkers.shift() ?? `worker:${workerIdFromTranscript(p)}`);
+		}
+		const wid = boundTranscripts.get(p);
+		const s = ensureWorker(wid);
+		// Same raw-*.jsonl record an RPC agent gets, so a worker's stream is replayable
+		// and diffable the same way. ":" is not a legal Windows filename character.
+		if (!s.raw) s.raw = fs.createWriteStream(path.join(RUN, `raw-${wid.replace(":", "_")}.jsonl`), { flags: "a" });
+		for (const entry of childTails.get(p).readNew()) {
+			for (const ev of sessionEntryToEvents(entry)) {
+				s.raw.write(`${JSON.stringify(ev)}\n`);
+				handle(wid, ev);
+			}
+		}
+	}
+}
+
 // ---------- probes (host-side; CRITIC's real-value verification channel) ----------
 // Executes CRITIC-supplied {id, args} calls against BUILDER's current src/, in a
 // fresh copy (same isolation the oracle uses), and replies to CRITIC only.
 // Silently no-ops (with a clear error reply) on tasks that have no probe.mjs —
 // e.g. intercom-review, which isn't a call-a-function task.
 let probeCount = 0;
+// Snapshotted the first time the oracle runs, so summary.json can answer a question
+// the orchestrator pattern exists to test: did the orchestrator verify the workspace
+// itself before claiming done, or did it just relay a worker's own claim?
+let probeCountAtFirstOracle = null;
 // Keyed by JSON.stringify(args) + the src hash at the time — lets a repeat probe
 // against unchanged code get flagged as "you already saw this" instead of
 // silently re-running an identical check with nothing new to learn from. Found
@@ -405,7 +581,7 @@ function runProbe(msg) {
 	const dir = path.join(RUN, `probe-${probeCount}`);
 	try {
 		fs.mkdirSync(dir, { recursive: true });
-		if (!fs.existsSync(path.join(WS.builder, "src"))) {
+		if (!fs.existsSync(path.join(WS.workspace, "src"))) {
 			deliver(VERIFIER, "[SUPERVISOR] Probe failed: BUILDER's src/ does not exist yet.", "probe error");
 			return;
 		}
@@ -441,7 +617,7 @@ function runProbe(msg) {
 		// rest of arbiter works — BUILDER doesn't get a "please don't probe" reminder, it
 		// doesn't have the tool at all; CRITIC doesn't get "please don't re-probe this",
 		// it can't.
-		const currentSrcHash = hashDir(path.join(WS.builder, "src"));
+		const currentSrcHash = hashDir(path.join(WS.workspace, "src"));
 		const blocked = [];
 		const novelCases = [];
 		for (const c of requestCases) {
@@ -470,7 +646,7 @@ function runProbe(msg) {
 			return;
 		}
 
-		fs.cpSync(path.join(WS.builder, "src"), path.join(dir, "src"), { recursive: true });
+		fs.cpSync(path.join(WS.workspace, "src"), path.join(dir, "src"), { recursive: true });
 		const r = spawnSync(process.execPath, [runner, dir], { input: JSON.stringify(novelCases), encoding: "utf8", timeout: 30_000 });
 		fs.writeFileSync(path.join(dir, "result.txt"), `${r.stdout ?? ""}\n${r.stderr ?? ""}`);
 		const lastLine = (r.stdout ?? "").trim().split("\n").filter(Boolean).pop();
@@ -558,7 +734,7 @@ function runProbe(msg) {
 // supplies the current hashes/timestamp, then formats the rejection for the
 // verifying role's kind="done".
 function handleApproval() {
-	const srcDir = path.join(WS.builder, "src");
+	const srcDir = path.join(WS.workspace, "src");
 	const srcExists = fs.existsSync(srcDir);
 	const verdict = decideApproval({
 		lastProbeHash,
@@ -590,12 +766,15 @@ function handleApproval() {
 // Either way this never touches agent-supplied code as anything but data:
 // no eval, no require of builder output.
 function runOracle() {
+	// Before the try, and before anything that can reach finish(): a first oracle that
+	// passes never returns here.
+	if (probeCountAtFirstOracle === null) probeCountAtFirstOracle = probeCount;
 	doneAttempts++;
 	const dir = path.join(RUN, `oracle-${doneAttempts}`);
 	try {
 		fs.mkdirSync(dir, { recursive: true });
 		{
-			const srcDir = path.join(WS.builder, "src");
+			const srcDir = path.join(WS.workspace, "src");
 			lastOracleHash = fs.existsSync(srcDir) ? hashDir(srcDir) : null;
 		}
 		const validator = path.join(TASK, "oracle", "validate.mjs");
@@ -604,7 +783,7 @@ function runOracle() {
 		let note = "";
 		let out = "";
 		if (fs.existsSync(validator)) {
-			const r = spawnSync(process.execPath, [validator, WS.builder], { encoding: "utf8", timeout: 60_000 });
+			const r = spawnSync(process.execPath, [validator, WS.workspace], { encoding: "utf8", timeout: 60_000 });
 			out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
 			const lastLine = (r.stdout ?? "").trim().split("\n").filter(Boolean).pop();
 			let result = null;
@@ -620,7 +799,7 @@ function runOracle() {
 				note = " validator produced no parseable result — treating as 0/0 (fail-closed).";
 			}
 		} else {
-			if (!fs.existsSync(path.join(WS.builder, "src"))) {
+			if (!fs.existsSync(path.join(WS.workspace, "src"))) {
 				fs.writeFileSync(path.join(dir, "result.txt"), "no src/ in builder workspace; nothing to test");
 				const verdict0 = `Oracle run #${doneAttempts}: 0/0 — BUILDER's src/ is missing.`;
 				log({ type: "oracle", msg: verdict0 });
@@ -629,7 +808,7 @@ function runOracle() {
 				if (VERIFIER) deliver(VERIFIER, `[SUPERVISOR] ${verdict0}`, "oracle verdict");
 				return;
 			}
-			fs.cpSync(path.join(WS.builder, "src"), path.join(dir, "src"), { recursive: true });
+			fs.cpSync(path.join(WS.workspace, "src"), path.join(dir, "src"), { recursive: true });
 			const tests = fs.readdirSync(path.join(TASK, "oracle")).filter((f) => f.endsWith(".test.mjs"));
 			for (const f of tests) fs.copyFileSync(path.join(TASK, "oracle", f), path.join(dir, f));
 			const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", ...tests], {
@@ -690,9 +869,13 @@ let lastOracleHash = null;
 function maybeQuiescentOracle() {
 	const lastEdit = lastEditAcross(Object.values(state));
 	if (lastEdit === 0) return false;
-	const srcDir = path.join(WS.builder, "src");
+	const srcDir = path.join(WS.workspace, "src");
 	if (!fs.existsSync(srcDir)) return false;
 	if (Date.now() - lastEdit < SOLO_QUIET_MS) return false;
+	// Under the orchestrator pattern the orchestrator itself is idle for the whole of
+	// a worker's run — it is blocked on the subagent call. A running worker is work in
+	// progress, so quiescence has not been reached no matter how still the host looks.
+	if (liveWorkers(Object.values(state)).length > 0) return false;
 	if (hashDir(srcDir) === lastOracleHash) return false;
 	log({ type: "oracle_trigger", msg: `quiescence: src/ unchanged for ${SOLO_QUIET_MS / 1000}s and not yet tested — running oracle` });
 	lastActivity = Date.now();
@@ -703,16 +886,25 @@ function checkIdle() {
 	if (finished) return;
 	const agents = Object.values(state);
 	if (!agents.every((a) => a.ready && !a.busy)) return;
-	if (SOLO && maybeQuiescentOracle()) return;
+	// An orchestrator run has the same host-derived terminal signal a solo run does:
+	// nobody is waiting on its mail, so a quiet, settled workspace is the only
+	// reliable sign the work has actually stopped.
+	if ((SOLO || PATTERN === "orchestrator") && maybeQuiescentOracle()) return;
 	if (Date.now() - lastActivity < CAPS.idleNudgeSec * 1000) return;
 	nudges++;
 	lastActivity = Date.now();
 	if (nudges > CAPS.maxNudges) return finish(`stalled: ${nudges - 1} nudges without progress`);
-	const text = SOLO
-		? `[SUPERVISOR] You have been idle for ${CAPS.idleNudgeSec}s. Either keep working, or send kind="done" if your implementation is complete.`
-		: `[SUPERVISOR] Both agents have been idle for ${CAPS.idleNudgeSec}s. Either continue working, ask CRITIC something, or send kind="done".`;
-	timeline.push({ ts: Date.now(), from: "supervisor", to: "builder", kind: "nudge", body: text });
-	deliver("builder", text, `idle nudge ${nudges}`);
+	// The nudge goes to whoever can actually act on it — the orchestrator, not a
+	// worker (workers are unreachable) and not a "builder" that does not exist.
+	const to = PATTERN === "orchestrator" ? "orchestrator" : "builder";
+	const text =
+		PATTERN === "orchestrator"
+			? `[SUPERVISOR] You have been idle for ${CAPS.idleNudgeSec}s with no worker running. Either start or steer a worker, probe the workspace, or send kind="done" if it is complete.`
+			: SOLO
+				? `[SUPERVISOR] You have been idle for ${CAPS.idleNudgeSec}s. Either keep working, or send kind="done" if your implementation is complete.`
+				: `[SUPERVISOR] Both agents have been idle for ${CAPS.idleNudgeSec}s. Either continue working, ask CRITIC something, or send kind="done".`;
+	timeline.push({ ts: Date.now(), from: "supervisor", to, kind: "nudge", body: text });
+	deliver(to, text, `idle nudge ${nudges}`);
 }
 
 // Model-free backstop for pi's bash tool having no default timeout (verified in
@@ -729,6 +921,23 @@ function checkBashTimeout() {
 			const ranMs = Date.now() - info.startedAt;
 			if (ranMs < limitMs) continue;
 			s.pendingBash.delete(toolCallId);
+			// A worker has no RPC channel, so there is nothing to send "abort" to. The
+			// orchestrator owns it and is the only thing that can act, so tell it instead —
+			// the watchdog degrades from a force-abort to a notification, which is the most
+			// the host can honestly do here.
+			if (s.role === "worker") {
+				log({
+					agent: s.name,
+					type: "bash_timeout",
+					msg: `worker bash call running ${(ranMs / 1000).toFixed(0)}s (limit ${CAPS.bashTimeoutSec}s), no RPC channel to abort it: ${String(info.command).slice(0, 150)}`,
+				});
+				deliver(
+					"orchestrator",
+					`[SUPERVISOR] Worker ${s.name} has had a bash command running for ${(ranMs / 1000).toFixed(0)}s; steer it to stop or wait.`,
+					"worker bash timeout",
+				);
+				continue;
+			}
 			log({
 				agent: s.name,
 				type: "bash_timeout",
@@ -778,6 +987,11 @@ function finish(reason) {
 		mailByKind: byKind,
 		doneAttempts,
 		nudges,
+		// How many pi-subagents children the run produced, and — the question the
+		// pattern exists to answer — whether the orchestrator had verified the workspace
+		// host-side at least once before the first oracle, or just relayed a claim.
+		workers: Object.values(state).filter((s) => s.role === "worker").length,
+		...(PATTERN === "orchestrator" ? { orchestratorProbedBeforeDone: probeCountAtFirstOracle > 0 } : {}),
 		caps: CAPS,
 		task: TASK_NAME,
 		oracleGate: PDEF.verifier ? `${PDEF.verifier} approval (hash+quiescence)` : "solo: builder done or quiescence",
@@ -794,14 +1008,21 @@ function finish(reason) {
 	// Kill the agent processes before touching WSROOT — on Windows, removing a
 	// directory that's still a live process's cwd fails with EPERM (found live:
 	// killTree ran after the archive attempt and the rmSync below failed every time).
-	for (const a of Object.values(state)) killTree(a.child);
-	// Workspaces lived outside RUN for the run's duration (see WSROOT above); copy
+	// Workers have no process of their own (they live inside the orchestrator's, which
+	// this loop kills); their only handle is the raw stream the transcript tailer
+	// opened, so close that instead. pumpChildTranscripts() already returned early on
+	// `finished`, so nothing can write to it after this point.
+	for (const a of Object.values(state)) {
+		if (a.child) killTree(a.child);
+		else a.raw?.end();
+	}
+	// The workspace lived outside RUN for the run's duration (see WSROOT above); copy
 	// the final state in now so the run directory is a complete, self-contained
-	// record, then drop the now-redundant out-of-tree copy.
+	// record, then drop the now-redundant out-of-tree copy. The archive name stays
+	// ws-builder regardless of pattern — tools/extract-runs.mjs resolves ws-builder/src
+	// for every run in the corpus, old and new.
 	try {
-		for (const [agent, dir] of Object.entries(WS)) {
-			if (fs.existsSync(dir)) fs.cpSync(dir, path.join(RUN, `ws-${agent}`), { recursive: true });
-		}
+		if (fs.existsSync(WS.workspace)) fs.cpSync(WS.workspace, path.join(RUN, "ws-builder"), { recursive: true });
 		// Windows can hold the just-killed process's cwd handle open for a moment
 		// after taskkill returns; retry the removal briefly rather than failing once.
 		for (let attempt = 0; ; attempt++) {
@@ -827,6 +1048,21 @@ process.on("SIGINT", () => finish("interrupted"));
 // ---------- go ----------
 console.log(`run: ${RUN}`);
 console.log("config:", JSON.stringify(CONFIG));
+// pi-subagents reads its agent definitions from <cwd>/.pi/agents/*.md at launch, and
+// the orchestrator's cwd is the shared workspace — so the worker's tools, model and
+// prompt are fixed on disk by the host before the orchestrator process exists. The
+// orchestrator writes the brief; it does not get to widen what a worker may do.
+if (PATTERN === "orchestrator") {
+	writeWorkerDefinition(WS.workspace, {
+		provider: ROLES.worker.provider,
+		model: ROLES.worker.model,
+		tools: WORKER_TOOLS,
+		prompt: fs.readFileSync(path.join(here, "prompts", "worker.md"), "utf8"),
+		maxTurns: 60,
+		background: ROLES.worker.background,
+		max: ROLES.worker.max,
+	});
+}
 for (const role of Object.keys(AGENTS)) launch(role);
 for (const name of Object.keys(state)) send(name, { id: "hello", type: "get_state" });
 
@@ -848,12 +1084,19 @@ const readyTimer = setInterval(() => {
 		);
 		return;
 	}
-	// orchestrator: kickoff wording lands in Task 14, once the orchestrator has
-	// something (worker launching) to actually kick off.
-	log({ type: "ready", msg: "orchestrator ready; kickoff pending (Task 14)" });
+	log({ type: "ready", msg: "orchestrator ready; kicking off" });
+	deliver(
+		"orchestrator",
+		'[SUPERVISOR] Session start. The specification is in your system prompt. Read README.md and src/, decide how to split the work, and start a worker with subagent_type "worker". Verify with kind="probe" before you claim kind="done".',
+		"kickoff",
+	);
 }, 250);
 
 setInterval(pumpBus, 200);
+// Faster than the bus poll for the lifecycle (a spawn/report is the run's structure)
+// and slower for transcripts (whole turns, and a readdir per tick).
+setInterval(pumpLifecycle, 200);
+setInterval(pumpChildTranscripts, 500);
 setInterval(checkIdle, 5000);
 setInterval(checkCaps, 5000);
 setInterval(checkBashTimeout, 5000);
