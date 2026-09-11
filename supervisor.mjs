@@ -883,7 +883,7 @@ function runOracle() {
 				// probes and a worker, not interrogating a counterpart that does not exist.
 				const text =
 					PATTERN === "orchestrator"
-						? `[SUPERVISOR] Your done claim was wrong. The workspace fails the hidden test. Find what was missed with probes and brief a worker on the fix. (${CAPS.doneAttempts - doneAttempts} claims left)`
+						? `[SUPERVISOR] Your done claim was wrong. ${verdict} Find what was missed with probes and brief a worker on the fix. (${CAPS.doneAttempts - doneAttempts} claims left)`
 						: `[SUPERVISOR] You approved BUILDER's work. ${verdict} Your approval was wrong. Find what you both missed; interrogate on inputs you have not yet asked about. (${CAPS.doneAttempts - doneAttempts} approvals left)`;
 				deliver(VERIFIER, text, "oracle verdict");
 			}
