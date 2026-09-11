@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { truncateForMail } from "./lib/text.mjs";
+import { decideApproval, QUIESCENCE_MS } from "./lib/gate.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const REPO = "C:/Users/user/open_harnessess/pi/pi";
@@ -130,15 +131,7 @@ let nudges = 0;
 let lastActivity = Date.now();
 let finished = false;
 
-// The gate used to require BUILDER's own kind="done" before CRITIC's approval
-// could trigger the oracle. Evidence from six straight local-model runs (see
-// arbiter/runs/2026-09-10T1[4-7]-*) showed BUILDER simply never sends it — not once,
-// across any of them — no matter how directly CRITIC or the supervisor asked.
-// The precondition was standing in for a real invariant: the code CRITIC is
-// approving must be the code that gets tested, and it must not be mid-edit.
-// That invariant is checkable directly, so it replaces the mail-based one.
 let lastProbeHash = null; // hash of ws-builder/src as of CRITIC's most recent probe
-const QUIESCENCE_MS = 15_000; // BUILDER must be edit-quiet this long before an approval lands
 function hashDir(dir) {
 	const files = fs.readdirSync(dir).sort();
 	const h = createHash("sha256");
@@ -593,43 +586,27 @@ function runProbe(msg) {
 }
 
 // ---------- approval gate (host-side; replaces the mail-based precondition) ----------
-// CRITIC's kind="done" only triggers the oracle when the code it verified is
-// provably the code that would be tested: hashes must match CRITIC's most
-// recent probe, and BUILDER must not have touched src/ in the last few
-// seconds. No message from BUILDER is required or waited on.
+// The accept/reject invariant lives in lib/gate.mjs's decideApproval(); this just
+// supplies the current hashes/timestamp, then formats the rejection for CRITIC.
 function handleCriticApproval() {
 	const srcDir = path.join(WS.builder, "src");
-	if (lastProbeHash === null) {
-		deliver(
-			"critic",
-			'[SUPERVISOR] Approval not accepted: you have not run a single kind="probe" yet, so nothing confirms this matches BUILDER\'s real code. Probe first, then approve.',
-			"approval without probe",
-		);
-		return;
-	}
-	if (!fs.existsSync(srcDir)) {
-		deliver("critic", "[SUPERVISOR] Approval not accepted: BUILDER's src/ no longer exists.", "approval error");
-		return;
-	}
-	const currentHash = hashDir(srcDir);
-	if (currentHash !== lastProbeHash) {
-		deliver(
-			"critic",
-			'[SUPERVISOR] Approval not accepted: BUILDER\'s src/ has changed since your last probe — the code you verified is not the code that would be tested. Send a fresh kind="probe" against the current code, then approve.',
-			"approval stale (src changed since probe)",
-		);
-		return;
-	}
-	const sinceEdit = Date.now() - (state.builder.lastEditTs || 0);
-	if (sinceEdit < QUIESCENCE_MS) {
-		deliver(
-			"critic",
-			`[SUPERVISOR] Approval not accepted yet: BUILDER edited code ${(sinceEdit / 1000).toFixed(1)}s ago, too recent to be sure it's settled. Wait a few seconds and send done again — no need to re-probe unless BUILDER tells you something changed.`,
-			"approval too soon after edit",
-		);
-		return;
-	}
-	runOracle();
+	const srcExists = fs.existsSync(srcDir);
+	const verdict = decideApproval({
+		lastProbeHash,
+		currentHash: srcExists ? hashDir(srcDir) : null,
+		srcExists,
+		lastEditTs: state.builder.lastEditTs,
+		now: Date.now(),
+	});
+	if (verdict.ok) return runOracle();
+	const why = {
+		no_probe: '[SUPERVISOR] Approval not accepted: you have not run a single kind="probe" yet, so nothing confirms this matches BUILDER\'s real code. Probe first, then approve.',
+		no_src: "[SUPERVISOR] Approval not accepted: BUILDER's src/ no longer exists.",
+		stale: '[SUPERVISOR] Approval not accepted: BUILDER\'s src/ has changed since your last probe — the code you verified is not the code that would be tested. Send a fresh kind="probe" against the current code, then approve.',
+		too_soon: `[SUPERVISOR] Approval not accepted yet: BUILDER edited code ${(verdict.sinceEditMs / 1000).toFixed(1)}s ago, too recent to be sure it's settled. Wait a few seconds and send done again — no need to re-probe unless BUILDER tells you something changed.`,
+	}[verdict.reason];
+	const label = { no_probe: "approval without probe", no_src: "approval error", stale: "approval stale (src changed since probe)", too_soon: "approval too soon after edit" }[verdict.reason];
+	deliver("critic", why, label);
 }
 
 // ---------- oracle (host-side; agents cannot touch it) ----------
