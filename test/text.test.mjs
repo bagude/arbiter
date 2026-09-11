@@ -6,10 +6,10 @@ test("short strings pass through untouched", () => {
 	assert.equal(truncateForMail("abc"), "abc");
 });
 test("long strings are cut at the cap with a note carrying the original length", () => {
-	const s = "x".repeat(PROBE_VALUE_MAX + 100);
+	const s = "x".repeat(PROBE_VALUE_MAX + 500);
 	const out = truncateForMail(s);
 	assert.ok(out.startsWith("x".repeat(PROBE_VALUE_MAX)));
-	assert.match(out, /truncated, 1600 chars total/);
+	assert.match(out, /truncated, 2000 chars total/);
 	assert.ok(out.length < s.length);
 });
 test("a custom cap is honoured", () => {
