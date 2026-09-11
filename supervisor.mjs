@@ -134,8 +134,22 @@ let lastActivity = Date.now();
 let finished = false;
 
 let lastProbeHash = null; // hash of ws-builder/src as of CRITIC's most recent probe
+// Walks subdirectories. The flat version read every entry of src/ with readFileSync and
+// threw EISDIR the moment anything created a src/lib/ — survivable in runProbe's try, but
+// the gate and the quiescence interval call this with no catch, so one worker deciding to
+// organise its code would have taken the supervisor down. Relative paths are hashed
+// alongside contents (forward slashes, sorted) so a rename is a change, not a collision.
 function hashDir(dir) {
-	const files = fs.readdirSync(dir).sort();
+	const files = [];
+	const walk = (rel) => {
+		for (const entry of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
+			const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+			if (entry.isDirectory()) walk(childRel);
+			else files.push(childRel);
+		}
+	};
+	walk("");
+	files.sort();
 	const h = createHash("sha256");
 	for (const f of files) h.update(f).update(fs.readFileSync(path.join(dir, f)));
 	return h.digest("hex");
@@ -314,7 +328,8 @@ function handle(name, ev) {
 			// The worker's actual brief exists nowhere in the lifecycle stream — those
 			// events carry only the short `description`. The full prompt is visible only
 			// here, as the orchestrator's own subagent call, so capture it for
-			// transcript.md while it is in hand.
+			// transcript.md while it is in hand. The id it belongs to is not known yet;
+			// the worker's subagents:started backfills `to` (see claimSpawnEntry).
 			if (name === "orchestrator" && ev.toolName === "subagent") {
 				timeline.push({ ts: Date.now(), from: "orchestrator", to: "worker", kind: "spawn", body: String(ev.args?.prompt ?? "") });
 			}
@@ -472,6 +487,24 @@ let pendingDecisionFor = null; // worker id whose report the orchestrator has ju
 // whole run. Spawns are sequential, so the ids are matched in arrival order instead.
 const unboundWorkers = []; // lifecycle worker ids awaiting their transcript file
 const boundTranscripts = new Map(); // transcript path -> worker id
+
+// A spawn is seen twice — once as the orchestrator's `subagent` tool call, which is the
+// only place the full brief appears, and once as subagents:started, which is the only
+// place the worker's id appears. One node in the tree, not two: the tool call pushes the
+// entry with the brief and a placeholder `to`, and this claims it when the id arrives.
+// Exact at maxConcurrent 1, where a spawn is always the most recent unclaimed one.
+function claimSpawnEntry(wid, label) {
+	for (let i = timeline.length - 1; i >= 0; i--) {
+		const entry = timeline[i];
+		if (entry.kind === "spawn" && entry.to === "worker") {
+			entry.to = wid;
+			return;
+		}
+	}
+	// No pending tool call to claim (the orchestrator spawned through some path that did
+	// not surface as a `subagent` call). The description is all there is to record.
+	timeline.push({ ts: Date.now(), from: "orchestrator", to: wid, kind: "spawn", body: label });
+}
 function pumpLifecycle() {
 	if (!lifecycleTail || finished || !fs.existsSync(LIFECYCLE)) return;
 	for (const { ev, data } of lifecycleTail.readNew()) {
@@ -494,12 +527,13 @@ function pumpLifecycle() {
 					unboundWorkers.push(wid);
 					const label = String(data.description ?? data.prompt ?? data.brief ?? "").replace(/\s+/g, " ").slice(0, 300);
 					log({ agent: "orchestrator", type: "spawn", msg: `spawn ${wid}: ${label}` });
-					timeline.push({ ts: Date.now(), from: "orchestrator", to: wid, kind: "spawn", body: label });
+					claimSpawnEntry(wid, label);
 				}
 				break;
 			}
 			case "subagents:resuming": case "subagents:resumed": case "subagents:steered":
-				if (wid) ensureWorker(wid).status = "running";
+				if (!wid) break;
+				ensureWorker(wid).status = "running";
 				log({ agent: "orchestrator", type: "resume", msg: `${ev.slice("subagents:".length)} ${wid}` });
 				timeline.push({ ts: Date.now(), from: "orchestrator", to: wid, kind: "resume", body: String(data.message ?? data.description ?? data.prompt ?? "") });
 				break;
@@ -516,6 +550,9 @@ function pumpLifecycle() {
 			case "subagents:failed":
 				if (wid) ensureWorker(wid).status = "failed";
 				log({ agent: wid, type: "worker_failed", msg: `failed: ${String(data.error ?? data.reason ?? JSON.stringify(data)).slice(0, 300)}` });
+				// A failed worker still needs a node in the tree, or its spawn entry is a
+				// branch that simply stops — indistinguishable from one still running.
+				timeline.push({ ts: Date.now(), from: wid, to: "orchestrator", kind: "report", body: `FAILED: ${String(data.error ?? data.result ?? JSON.stringify(data))}` });
 				pendingDecisionFor = wid;
 				break;
 		}
@@ -804,7 +841,7 @@ function runOracle() {
 				const verdict0 = `Oracle run #${doneAttempts}: 0/0 — BUILDER's src/ is missing.`;
 				log({ type: "oracle", msg: verdict0 });
 				timeline.push({ ts: Date.now(), from: "supervisor", to: "both", kind: "oracle", body: verdict0 });
-				deliver("builder", `[SUPERVISOR] ${verdict0} Nothing was found to check.`, "oracle verdict");
+				if (ROLES.builder) deliver("builder", `[SUPERVISOR] ${verdict0} Nothing was found to check.`, "oracle verdict");
 				if (VERIFIER) deliver(VERIFIER, `[SUPERVISOR] ${verdict0}`, "oracle verdict");
 				return;
 			}
@@ -834,8 +871,22 @@ function runOracle() {
 				"oracle verdict",
 			);
 		} else {
-			deliver("builder", `[SUPERVISOR] CRITIC approved your work. ${verdict} Not done. Work with CRITIC to find what you missed, then claim done again. (${CAPS.doneAttempts - doneAttempts} approvals left)`, "oracle verdict");
-			if (VERIFIER) deliver(VERIFIER, `[SUPERVISOR] You approved BUILDER's work. ${verdict} Your approval was wrong. Find what you both missed; interrogate on inputs you have not yet asked about. (${CAPS.doneAttempts - doneAttempts} approvals left)`, "oracle verdict");
+			// Only roles this pattern actually has. The orchestrator pattern has no
+			// BUILDER, and addressing one produced two dropped-mail warnings per run
+			// alongside a verdict naming two roles that were not in it.
+			if (ROLES.builder) {
+				deliver("builder", `[SUPERVISOR] CRITIC approved your work. ${verdict} Not done. Work with CRITIC to find what you missed, then claim done again. (${CAPS.doneAttempts - doneAttempts} approvals left)`, "oracle verdict");
+			}
+			if (VERIFIER) {
+				// The orchestrator did not approve someone else's work — it claimed the
+				// workspace was done and was wrong. Its remedy is its own two instruments,
+				// probes and a worker, not interrogating a counterpart that does not exist.
+				const text =
+					PATTERN === "orchestrator"
+						? `[SUPERVISOR] Your done claim was wrong. The workspace fails the hidden test. Find what was missed with probes and brief a worker on the fix. (${CAPS.doneAttempts - doneAttempts} claims left)`
+						: `[SUPERVISOR] You approved BUILDER's work. ${verdict} Your approval was wrong. Find what you both missed; interrogate on inputs you have not yet asked about. (${CAPS.doneAttempts - doneAttempts} approvals left)`;
+				deliver(VERIFIER, text, "oracle verdict");
+			}
 		}
 	} catch (err) {
 		log({ type: "oracle_crash", msg: `oracle threw: ${err?.stack ?? err}` });

@@ -5,5 +5,5 @@
 		"orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" },
 		"worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 }
 	},
-	"caps": { "wallSec": 240, "toolCalls": 40 }
+	"caps": { "wallSec": 1800, "toolCalls": 120 }
 }
