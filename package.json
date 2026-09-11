@@ -2,6 +2,6 @@
 	"name": "arbiter",
 	"private": true,
 	"type": "module",
-	"scripts": { "test": "node --test \"test/**/*.test.mjs\"" },
+	"scripts": { "test": "node --test \"test/**/*.test.mjs\"", "smoke:substrate": "node smoke/substrate.mjs" },
 	"dependencies": { "@gotgenes/pi-subagents": "21.7.0" }
 }
