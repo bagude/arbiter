@@ -1,5 +1,7 @@
 runs/
 .ws-*/
+.sessions-*/
 node_modules/
+/*.log
 tools/console.html
 tools/runs-data.json

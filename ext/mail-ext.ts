@@ -32,8 +32,8 @@ const DONE_HINT =
 				? 'kind="done" tells the supervisor your implementation is complete and self-tested; it triggers the hidden acceptance test immediately. Other kinds are acknowledged but nobody answers them — there is no counterpart in this run.'
 				: 'kind="done" is your own completion signal — send it once your tests pass. Your counterpart verifies independently; you do not need to keep re-justifying it after you send it.';
 
-// Only CRITIC's probes are host-executed (supervisor.mjs only intercepts
-// kind="probe" from="critic"). A probe sent from BUILDER used to be silently
+// Only CRITIC's and ORCHESTRATOR's probes are host-executed (the supervisor routes
+// kind="probe" from the pattern's verifier role). A probe sent from BUILDER used to be silently
 // relayed as an ordinary, unexecuted mail — confirmed live to cause a mutual
 // stall where both agents waited on a "run" that was never going to happen.
 // Dropping the kind entirely for BUILDER (rather than just warning about it)

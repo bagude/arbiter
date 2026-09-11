@@ -11,6 +11,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { truncateForMail } from "./lib/text.mjs";
 import { decideApproval, QUIESCENCE_MS } from "./lib/gate.mjs";
@@ -19,7 +20,7 @@ import { routeMail } from "./lib/routing.mjs";
 import { loadConfig, parseArgs } from "./lib/config.mjs";
 import { PATTERNS, WORKER_TOOLS } from "./lib/patterns.mjs";
 import { writeWorkerDefinition } from "./lib/worker-def.mjs";
-import { childTranscriptDir, JsonlTailer, workerIdFromTranscript } from "./lib/child-transcripts.mjs";
+import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -40,6 +41,21 @@ const SOLO = PATTERN === "solo";
 // "orchestrator" for the orchestrator pattern, null for solo (where the builder's
 // own done is the trigger instead, handled separately by routeMail's solo_done).
 const VERIFIER = PDEF.verifier;
+// Every [SUPERVISOR] text names the other side of the run. Under the orchestrator
+// pattern there is no BUILDER and no counterpart, yet the first orchestrator run
+// (2026-09-11T18-42-34) delivered "executed directly against BUILDER's current src/"
+// six times and "nothing was sent to your counterpart" on every silent turn. For an
+// experiment about what an orchestrator does, text describing roles the run does not
+// have is a confound, not a cosmetic slip. These are the only words that vary:
+// `builder` is whatever owns src/, `writer` is whoever edits it, `counterpart` is
+// whoever a message would go to. The dyad/solo values are the exact words these
+// strings have always used, so those runs are unchanged byte for byte.
+function who() {
+	return PATTERN === "orchestrator"
+		? { builder: "the workspace", writer: "a worker", counterpart: "a worker" }
+		: { builder: "BUILDER", writer: "BUILDER", counterpart: "your counterpart" };
+}
+const WHO = who();
 
 // ---------- run directory ----------
 const runId = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -81,7 +97,18 @@ if (!TASK_CONTEXT_FILE) throw new Error(`no such task: ${TASK} (needs spec.md or
 // ws-builder, so every downstream tool (extract-runs.mjs, the console,
 // transcript.md) still finds the delivered source exactly where it always has —
 // including for orchestrator runs, where no agent is called "builder" at all.
+//
+// Session directories live out of tree for the same reason, and for a second one
+// the workspace does not have: pi-subagents shows the orchestrator its child's
+// transcript path, and an orchestrator in a live run (2026-09-11T20-14-14) then ran
+// ls/grep/read against `runs/<id>/sessions/orchestrator/...` by absolute path — cwd
+// isolation does nothing against a path it was handed. RUN also holds probe-N/ and
+// oracle-N/, so the same absolute-path reach lands on the hidden oracle's outputs.
+// finish() copies SESSIONS into RUN/sessions once every agent is dead, so the
+// archived run is unchanged for extract-runs.mjs and the console; it just is not
+// readable while agents are alive to read it.
 const WSROOT = path.join(here, "runs", `.ws-${runId}`);
+const SESSIONS = path.join(here, "runs", `.sessions-${runId}`);
 const WS = { workspace: path.join(WSROOT, "ws-builder") };
 fs.cpSync(path.join(TASK, "ws-builder"), WS.workspace, { recursive: true });
 if (SOLO) {
@@ -167,7 +194,7 @@ function launch(name) {
 		"--model",
 		cfg.model,
 		"--session-dir",
-		path.join(RUN, "sessions", name),
+		path.join(SESSIONS, name),
 		"--name",
 		name,
 		// Hardened launch: no discovery of extensions/skills/templates/context files
@@ -328,10 +355,23 @@ function handle(name, ev) {
 			// The worker's actual brief exists nowhere in the lifecycle stream — those
 			// events carry only the short `description`. The full prompt is visible only
 			// here, as the orchestrator's own subagent call, so capture it for
-			// transcript.md while it is in hand. The id it belongs to is not known yet;
-			// the worker's subagents:started backfills `to` (see claimSpawnEntry).
+			// transcript.md while it is in hand.
+			//
+			// `subagent` is two different acts behind one tool name: without `resume` it
+			// starts a fresh worker, with `resume` it continues an existing one (pi
+			// subagents' agent-tool.ts branches on exactly that parameter). A resume is
+			// not a spawn — recording it as one invented a second worker in the
+			// delegation tree for work that was the first worker's. The resume case also
+			// already knows the worker id, so there is nothing for the lifecycle stream
+			// to backfill; only a fresh spawn leaves `to` as the "worker" placeholder for
+			// subagents:created/started to claim (see claimSpawnEntry).
 			if (name === "orchestrator" && ev.toolName === "subagent") {
-				timeline.push({ ts: Date.now(), from: "orchestrator", to: "worker", kind: "spawn", body: String(ev.args?.prompt ?? "") });
+				const resumeId = ev.args?.resume ? String(ev.args.resume) : null;
+				timeline.push(
+					resumeId
+						? { ts: Date.now(), from: "orchestrator", to: `worker:${resumeId}`, kind: "resume", body: String(ev.args?.prompt ?? ""), claimed: false, toolCallId: ev.toolCallId }
+						: { ts: Date.now(), from: "orchestrator", to: "worker", kind: "spawn", body: String(ev.args?.prompt ?? ""), toolCallId: ev.toolCallId },
+				);
 			}
 			s.toolCalls++;
 			lastActivity = Date.now();
@@ -345,6 +385,23 @@ function handle(name, ev) {
 		}
 		case "tool_execution_end":
 			if (ev.toolCallId) s.pendingBash.delete(ev.toolCallId);
+			// A `subagent` call that never produced a worker still pushed an entry above,
+			// and nothing will ever claim it: an unclaimed spawn renders in the delegation
+			// tree as a worker literally named "worker", and an unclaimed resume as a
+			// resume that never happened. Seen live at 135.9s of 2026-09-11T20-14-14 (the
+			// call named a subagent_type whose model did not resolve). Note the failure is
+			// NOT signalled by isError — that call came back isError: false with "Model not
+			// found: …" as ordinary result text. What every call that did produce a run
+			// carries, spawn or resume, foreground or background, is an "Agent ID:" line
+			// (background-spawner.ts, foreground-runner.ts for both outcomes, and
+			// agent-tool.ts's resume return), so its absence is the signal. Matched by
+			// toolCallId rather than "the newest unclaimed entry" because in the foreground
+			// flow the worker's subagents:started has already claimed this call's entry by
+			// the time the call returns, and the newest unclaimed one would be someone else's.
+			if (name === "orchestrator" && ev.toolName === "subagent" && ev.toolCallId) {
+				const text = JSON.stringify(ev.result ?? "");
+				if (ev.isError || !/Agent ID:\s*\S/.test(text)) dropUnclaimedSubagentEntry(ev.toolCallId);
+			}
 			break;
 		case "message_end": {
 			const m = ev.message;
@@ -372,8 +429,11 @@ function handle(name, ev) {
 						name,
 						SOLO
 							? '[SUPERVISOR] Your last turn produced text but called no tool, so nothing happened. If your implementation is complete and self-tested, send kind="done" via send_mail; otherwise keep working.'
-							: '[SUPERVISOR] Your last turn produced text but never called send_mail — nothing was sent to your counterpart, and they never saw it. ' +
-									'You can only communicate via the send_mail tool. If you meant to say something, send it now.',
+							: PATTERN === "orchestrator"
+								? '[SUPERVISOR] Your last turn produced text but called no tool, so nothing happened — no worker was briefed, no probe was run and no mail was sent. ' +
+										'If the workspace already satisfies the specification, send kind="done"; otherwise probe it or brief a worker.'
+								: '[SUPERVISOR] Your last turn produced text but never called send_mail — nothing was sent to your counterpart, and they never saw it. ' +
+										'You can only communicate via the send_mail tool. If you meant to say something, send it now.',
 						"silent turn (text but no tool call)",
 					);
 				}
@@ -440,7 +500,16 @@ function pumpBus() {
 				break;
 			case "solo_done": runOracle(); break;
 			case "solo_ack":
-				deliver(route.to, '[SUPERVISOR] Acknowledged, but nobody will answer this — there is no counterpart in this run. When your implementation is complete and self-tested, send kind="done".', "ack (no counterpart)");
+				// routeMail sends the orchestrator's non-probe, non-done mail here too, so
+				// this is one of the texts that must not describe a counterpart the run
+				// does not have, or an implementation the orchestrator does not write.
+				deliver(
+					route.to,
+					PATTERN === "orchestrator"
+						? '[SUPERVISOR] Acknowledged, but nobody will answer this — the supervisor is a program and there is no other agent to reply. When the workspace satisfies the specification and you have probed it, send kind="done".'
+						: '[SUPERVISOR] Acknowledged, but nobody will answer this — there is no counterpart in this run. When your implementation is complete and self-tested, send kind="done".',
+					"ack (no counterpart)",
+				);
 				break;
 			case "deliver": deliver(route.to, frame(msg), `mail #${msg.n} from ${msg.from}`); break;
 			case "drop": log({ type: "warn", msg: `mail #${msg.n} to unknown recipient "${msg.to}" dropped` }); break;
@@ -456,10 +525,15 @@ function pumpBus() {
 // Both feed the same state[] and the same handle(), so tool counts, edit timestamps,
 // the bash watchdog and cost accounting work for a worker exactly as for an agent.
 
-// pi-subagents emits onSubagentCreated only for background (queued) spawns — in the
-// foreground flow this pattern uses, subagents:started is the first event a worker
-// ever produces, and is therefore what counts as the spawn. Both events route here
-// so whichever arrives first creates the state, and the other is a no-op.
+// pi-subagents emits onSubagentCreated only for background (queued) spawns, and
+// onSubagentStarted for every spawn — so a foreground worker's first event is
+// `started` and a background worker's is `created`. Both route here so whichever
+// arrives first creates the state, and the other is a no-op. Which of the two that
+// is cannot be fixed host-side: roles.worker.background only sets the definition's
+// run_in_background default, and the orchestrator's own tool call overrides it per
+// spawn (observed live in 2026-09-11T20-14-14 — the definition said false and the
+// orchestrator passed run_in_background: true anyway, then blocked on
+// get_subagent_result { wait: true }). Every run must handle both flows.
 function ensureWorker(wid) {
 	if (!state[wid]) {
 		const s = createAgentState({ id: wid, role: "worker" });
@@ -505,56 +579,131 @@ function claimSpawnEntry(wid, label) {
 	// not surface as a `subagent` call). The description is all there is to record.
 	timeline.push({ ts: Date.now(), from: "orchestrator", to: wid, kind: "spawn", body: label });
 }
+// A `subagent` call that returned without producing a run. Its timeline entry — a spawn
+// still holding the "worker" placeholder, or a resume no subagents:resuming confirmed —
+// can only be identified by the call that pushed it, so it carries its toolCallId; see
+// the tool_execution_end branch in handle() for why newest-unclaimed is wrong here.
+function dropUnclaimedSubagentEntry(toolCallId) {
+	for (let i = timeline.length - 1; i >= 0; i--) {
+		const entry = timeline[i];
+		if (entry.toolCallId !== toolCallId) continue;
+		const unclaimed = (entry.kind === "spawn" && entry.to === "worker") || (entry.kind === "resume" && entry.claimed === false);
+		if (unclaimed) timeline.splice(i, 1);
+		return;
+	}
+}
+// A resume's timeline entry is pushed by the orchestrator's own `subagent` call, which
+// already names the worker — unlike a spawn there is no id to backfill. This just marks
+// that entry as accounted for when subagents:resuming confirms the resume actually
+// happened, and writes one from the lifecycle data if the resume came from some other
+// path (the tool call is the only known one, so that fallback is a safety net).
+function claimResumeEntry(wid, label) {
+	for (let i = timeline.length - 1; i >= 0; i--) {
+		const entry = timeline[i];
+		if (entry.kind === "resume" && entry.to === wid && entry.claimed === false) {
+			entry.claimed = true;
+			return;
+		}
+	}
+	timeline.push({ ts: Date.now(), from: "orchestrator", to: wid, kind: "resume", body: label, claimed: true });
+}
+// pi-subagents' terminal error statuses (lifecycle/subagent-state.ts's
+// isTerminalErrorStatus). Needed because subagents:resumed is one channel for both
+// outcomes — see the terminal case below.
+const TERMINAL_ERROR_STATUS = new Set(["error", "aborted", "stopped"]);
+// Announce a worker the first time it appears, whichever event created it. The old code
+// announced only in `started`, so a background spawn — where `created` creates the state
+// and `started` then sees it already exists — produced no spawn audit event, no claimed
+// timeline entry and an orphan "worker" node in the delegation tree. Confirmed live:
+// 2026-09-11T20-14-14 wrote created→started 1 ms apart at 197.8s and its audit.jsonl has
+// no spawn event at all.
+function announceWorker(wid, data) {
+	// Drop ids that already terminated without their transcript ever arriving (a child
+	// that died before persisting a session file). Left at the head of the queue, the
+	// next worker's transcript binds to the dead id and a live worker's tool calls,
+	// edits and cost are attributed to a worker that is already finished.
+	for (let i = unboundWorkers.length - 1; i >= 0; i--) {
+		const st = state[unboundWorkers[i]]?.status;
+		if (st === "completed" || st === "failed") unboundWorkers.splice(i, 1);
+	}
+	unboundWorkers.push(wid);
+	const label = String(data.description ?? data.prompt ?? data.brief ?? "").replace(/\s+/g, " ").slice(0, 300);
+	log({ agent: "orchestrator", type: "spawn", isBackground: data.isBackground === true, msg: `spawn ${wid}: ${label}` });
+	claimSpawnEntry(wid, label);
+}
 function pumpLifecycle() {
 	if (!lifecycleTail || finished || !fs.existsSync(LIFECYCLE)) return;
 	for (const { ev, data } of lifecycleTail.readNew()) {
 		const wid = data?.id ? `worker:${data.id}` : null;
 		lastActivity = Date.now();
 		switch (ev) {
-			case "subagents:created":
-				if (wid && !state[wid]) {
-					ensureWorker(wid);
-					unboundWorkers.push(wid);
-				}
+			case "subagents:created": {
+				if (!wid) break;
+				const fresh = !state[wid];
+				ensureWorker(wid);
+				if (fresh) announceWorker(wid, data);
 				break;
+			}
 			case "subagents:started": {
 				if (!wid) break;
 				const fresh = !state[wid];
 				ensureWorker(wid).status = "running";
-				// Only announce a spawn once: a started that follows a created (background
-				// queueing) is the same worker reaching the front of the queue, not a new one.
-				if (fresh) {
-					unboundWorkers.push(wid);
-					const label = String(data.description ?? data.prompt ?? data.brief ?? "").replace(/\s+/g, " ").slice(0, 300);
-					log({ agent: "orchestrator", type: "spawn", msg: `spawn ${wid}: ${label}` });
-					claimSpawnEntry(wid, label);
-				}
+				// Announce only once. A started that follows a created (background queueing)
+				// is the same worker reaching the front of the queue, not a new one — all
+				// this event adds is that it is now actually running.
+				if (fresh) announceWorker(wid, data);
 				break;
 			}
-			case "subagents:resuming": case "subagents:resumed": case "subagents:steered":
+			// The start of a resumed run. onSubagentResuming carries {id, type, description}
+			// and nothing else — the prompt that caused it is only in the orchestrator's own
+			// `subagent` call, which has already recorded it.
+			case "subagents:resuming":
 				if (!wid) break;
 				ensureWorker(wid).status = "running";
-				log({ agent: "orchestrator", type: "resume", msg: `${ev.slice("subagents:".length)} ${wid}` });
-				timeline.push({ ts: Date.now(), from: "orchestrator", to: wid, kind: "resume", body: String(data.message ?? data.description ?? data.prompt ?? "") });
+				log({ agent: "orchestrator", type: "resume", msg: `resuming ${wid}` });
+				claimResumeEntry(wid, String(data.description ?? ""));
 				break;
+			// A message to a worker that is already running, not a state change: steer-tool.ts
+			// rejects a steer of anything not running, so the status here is already correct
+			// and setting it would be the only thing that could get it wrong.
+			case "subagents:steered": {
+				if (!wid) break;
+				ensureWorker(wid);
+				const message = String(data.message ?? "");
+				log({ agent: "orchestrator", type: "resume", msg: `steered ${wid}: ${message.replace(/\s+/g, " ").slice(0, 300)}` });
+				timeline.push({ ts: Date.now(), from: "orchestrator", to: wid, kind: "resume", body: message });
+				break;
+			}
 			case "subagents:update":
 				log({ agent: wid, type: "report", msg: `update: ${String(data.message ?? data.text ?? JSON.stringify(data)).replace(/\s+/g, " ").slice(0, 300)}` });
 				timeline.push({ ts: Date.now(), from: wid, to: "orchestrator", kind: "report", body: String(data.message ?? data.text ?? "") });
 				break;
-			case "subagents:completed":
-				if (wid) ensureWorker(wid).status = "completed";
-				log({ agent: wid, type: "report", msg: `completed: ${String(data.result ?? "").replace(/\s+/g, " ").slice(0, 300)}` });
-				timeline.push({ ts: Date.now(), from: wid, to: "orchestrator", kind: "report", body: String(data.result ?? "") });
+			// Every way a worker's run can end. subagents:resumed belongs here, not with
+			// resuming: it fires from onSubagentResumed, carries the full buildEventData
+			// payload (result, error, status, tokens…), and is the ONLY terminal event a
+			// resumed run produces — the observer deliberately does not re-emit
+			// completed/failed for one, so that existing subscribers keep their once-per-run
+			// semantics. Read as a start instead, a resumed worker stays "running" forever:
+			// liveWorkers() then blocks the quiescence oracle for the rest of the run and the
+			// resumed run's report never reaches the audit, the tree or pendingDecisionFor —
+			// exactly the behaviour an orchestrator experiment is trying to measure.
+			// Only `status` distinguishes the two outcomes on that channel.
+			case "subagents:completed": case "subagents:failed": case "subagents:resumed": {
+				if (!wid) break;
+				const failed = ev === "subagents:failed" || TERMINAL_ERROR_STATUS.has(data.status);
+				ensureWorker(wid).status = failed ? "failed" : "completed";
+				if (failed) {
+					log({ agent: wid, type: "worker_failed", msg: `failed: ${String(data.error ?? data.reason ?? JSON.stringify(data)).slice(0, 300)}` });
+					// A failed worker still needs a node in the tree, or its spawn entry is a
+					// branch that simply stops — indistinguishable from one still running.
+					timeline.push({ ts: Date.now(), from: wid, to: "orchestrator", kind: "report", body: `FAILED: ${String(data.error ?? data.result ?? JSON.stringify(data))}` });
+				} else {
+					log({ agent: wid, type: "report", msg: `completed: ${String(data.result ?? "").replace(/\s+/g, " ").slice(0, 300)}` });
+					timeline.push({ ts: Date.now(), from: wid, to: "orchestrator", kind: "report", body: String(data.result ?? "") });
+				}
 				pendingDecisionFor = wid;
 				break;
-			case "subagents:failed":
-				if (wid) ensureWorker(wid).status = "failed";
-				log({ agent: wid, type: "worker_failed", msg: `failed: ${String(data.error ?? data.reason ?? JSON.stringify(data)).slice(0, 300)}` });
-				// A failed worker still needs a node in the tree, or its spawn entry is a
-				// branch that simply stops — indistinguishable from one still running.
-				timeline.push({ ts: Date.now(), from: wid, to: "orchestrator", kind: "report", body: `FAILED: ${String(data.error ?? data.result ?? JSON.stringify(data))}` });
-				pendingDecisionFor = wid;
-				break;
+			}
 		}
 	}
 }
@@ -566,18 +715,27 @@ function pumpLifecycle() {
 const childTails = new Map(); // transcript path -> JsonlTailer
 function pumpChildTranscripts() {
 	if (PATTERN !== "orchestrator" || finished) return;
-	const dir = childTranscriptDir(path.join(RUN, "sessions", "orchestrator"));
+	// Drain the lifecycle file first, every tick. The two pumps run on different
+	// intervals (200 ms and 500 ms), so a transcript file can be on disk before this
+	// process has read the subagents:created/started line that names its worker — the
+	// ordering is only guaranteed on disk, not between two timers.
+	pumpLifecycle();
+	const dir = childTranscriptDir(path.join(SESSIONS, "orchestrator"));
 	if (!dir || !fs.existsSync(dir)) return;
 	for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"))) {
 		const p = path.join(dir, f);
-		if (!childTails.has(p)) childTails.set(p, new JsonlTailer(p));
 		if (!boundTranscripts.has(p)) {
-			// Claim the oldest lifecycle worker still waiting for a transcript. The
-			// fallback keeps a worker's activity rather than dropping it if the transcript
-			// file somehow lands before its subagents:started (the two pumps run on
-			// different intervals); it just shows up under the transcript's own id.
-			boundTranscripts.set(p, unboundWorkers.shift() ?? `worker:${workerIdFromTranscript(p)}`);
+			// Claim the oldest lifecycle worker still waiting for a transcript, and if
+			// there is none, leave the file alone until there is. Inventing an id from the
+			// transcript's own basename was worse than waiting: the real lifecycle id then
+			// creates a SECOND state entry for the same worker, the invented half never
+			// receives a terminal event, so it sits at "running" forever, doubles
+			// summary.workers and blocks the quiescence oracle for the whole run — the
+			// exact failure the identity comment above describes as the real damage.
+			if (unboundWorkers.length === 0) continue;
+			boundTranscripts.set(p, unboundWorkers.shift());
 		}
+		if (!childTails.has(p)) childTails.set(p, new JsonlTailer(p));
 		const wid = boundTranscripts.get(p);
 		const s = ensureWorker(wid);
 		// Same raw-*.jsonl record an RPC agent gets, so a worker's stream is replayable
@@ -619,7 +777,7 @@ function runProbe(msg) {
 	try {
 		fs.mkdirSync(dir, { recursive: true });
 		if (!fs.existsSync(path.join(WS.workspace, "src"))) {
-			deliver(VERIFIER, "[SUPERVISOR] Probe failed: BUILDER's src/ does not exist yet.", "probe error");
+			deliver(VERIFIER, `[SUPERVISOR] Probe failed: ${WHO.builder}'s src/ does not exist yet.`, "probe error");
 			return;
 		}
 		// Parse CRITIC's own request up front, independent of what probe.mjs makes of
@@ -677,7 +835,7 @@ function runProbe(msg) {
 			deliver(
 				VERIFIER,
 				`[SUPERVISOR] Probe #${probeCount} was not run — every case in it is an exact repeat of a prior probe against this same, unchanged code:\n${blockedLines.join("\n")}\n\n` +
-					`If you're satisfied, send done. If not, send a genuinely different case, or a question to BUILDER — this exact probe is now a dead end.`,
+					`If you're satisfied, send done. If not, send a genuinely different case, or a question to ${WHO.writer} — this exact probe is now a dead end.`,
 				"probe fully blocked (all repeats)",
 			);
 			return;
@@ -758,7 +916,8 @@ function runProbe(msg) {
 		if (blockedLines.length) parts.push(`Blocked (exact repeats, not re-run):\n${blockedLines.join("\n")}`);
 		deliver(
 			VERIFIER,
-			`[SUPERVISOR] Probe run #${probeCount} — executed directly against BUILDER's current src/, not self-reported. BUILDER did not see this; no reply to BUILDER is needed.\n${parts.join("\n\n")}`,
+			`[SUPERVISOR] Probe run #${probeCount} — executed directly against ${WHO.builder}'s current src/, not self-reported. ` +
+				`${PATTERN === "orchestrator" ? "No worker saw this; there is nobody to reply to." : "BUILDER did not see this; no reply to BUILDER is needed."}\n${parts.join("\n\n")}`,
 			"probe results",
 		);
 	} catch (err) {
@@ -782,10 +941,10 @@ function handleApproval() {
 	});
 	if (verdict.ok) return runOracle();
 	const why = {
-		no_probe: '[SUPERVISOR] Approval not accepted: you have not run a single kind="probe" yet, so nothing confirms this matches BUILDER\'s real code. Probe first, then approve.',
-		no_src: "[SUPERVISOR] Approval not accepted: BUILDER's src/ no longer exists.",
-		stale: '[SUPERVISOR] Approval not accepted: BUILDER\'s src/ has changed since your last probe — the code you verified is not the code that would be tested. Send a fresh kind="probe" against the current code, then approve.',
-		too_soon: `[SUPERVISOR] Approval not accepted yet: BUILDER edited code ${(verdict.sinceEditMs / 1000).toFixed(1)}s ago, too recent to be sure it's settled. Wait a few seconds and send done again — no need to re-probe unless BUILDER tells you something changed.`,
+		no_probe: `[SUPERVISOR] Approval not accepted: you have not run a single kind="probe" yet, so nothing confirms this matches ${WHO.builder}'s real code. Probe first, then approve.`,
+		no_src: `[SUPERVISOR] Approval not accepted: ${WHO.builder}'s src/ no longer exists.`,
+		stale: `[SUPERVISOR] Approval not accepted: ${WHO.builder}'s src/ has changed since your last probe — the code you verified is not the code that would be tested. Send a fresh kind="probe" against the current code, then approve.`,
+		too_soon: `[SUPERVISOR] Approval not accepted yet: ${WHO.writer} edited code ${(verdict.sinceEditMs / 1000).toFixed(1)}s ago, too recent to be sure it's settled. Wait a few seconds and send done again — no need to re-probe unless ${WHO.writer} tells you something changed.`,
 	}[verdict.reason];
 	const label = { no_probe: "approval without probe", no_src: "approval error", stale: "approval stale (src changed since probe)", too_soon: "approval too soon after edit" }[verdict.reason];
 	deliver(VERIFIER, why, label);
@@ -838,25 +997,39 @@ function runOracle() {
 		} else {
 			if (!fs.existsSync(path.join(WS.workspace, "src"))) {
 				fs.writeFileSync(path.join(dir, "result.txt"), "no src/ in builder workspace; nothing to test");
-				const verdict0 = `Oracle run #${doneAttempts}: 0/0 — BUILDER's src/ is missing.`;
+				const verdict0 = `Oracle run #${doneAttempts}: 0/0 — ${WHO.builder}'s src/ is missing.`;
 				log({ type: "oracle", msg: verdict0 });
 				timeline.push({ ts: Date.now(), from: "supervisor", to: "both", kind: "oracle", body: verdict0 });
 				if (ROLES.builder) deliver("builder", `[SUPERVISOR] ${verdict0} Nothing was found to check.`, "oracle verdict");
 				if (VERIFIER) deliver(VERIFIER, `[SUPERVISOR] ${verdict0}`, "oracle verdict");
 				return;
 			}
-			fs.cpSync(path.join(WS.workspace, "src"), path.join(dir, "src"), { recursive: true });
-			const tests = fs.readdirSync(path.join(TASK, "oracle")).filter((f) => f.endsWith(".test.mjs"));
-			for (const f of tests) fs.copyFileSync(path.join(TASK, "oracle", f), path.join(dir, f));
-			const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", ...tests], {
-				cwd: dir,
-				encoding: "utf8",
-				timeout: 60_000,
-			});
-			out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
-			pass = Number(/^# pass (\d+)/m.exec(out)?.[1] ?? 0);
-			const fail = Number(/^# fail (\d+)/m.exec(out)?.[1] ?? 0);
-			total = pass + fail;
+			// The hidden test runs in a scratch directory under os.tmpdir(), not under
+			// RUN. The test file IS the hidden spec, and oracle-N/ used to keep a verbatim
+			// copy of it inside the run directory for the rest of the run — reachable by
+			// absolute path from any agent that thinks to look, the same way an
+			// orchestrator was seen reading runs/<id>/sessions/ in 2026-09-11T20-14-14.
+			// Only result.txt (written below, from `out`) lands in oracle-N/, which is all
+			// any downstream tool ever read from it.
+			const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-oracle-"));
+			try {
+				fs.cpSync(path.join(WS.workspace, "src"), path.join(scratch, "src"), { recursive: true });
+				const tests = fs.readdirSync(path.join(TASK, "oracle")).filter((f) => f.endsWith(".test.mjs"));
+				for (const f of tests) fs.copyFileSync(path.join(TASK, "oracle", f), path.join(scratch, f));
+				const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", ...tests], {
+					cwd: scratch,
+					encoding: "utf8",
+					timeout: 60_000,
+				});
+				out = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
+				pass = Number(/^# pass (\d+)/m.exec(out)?.[1] ?? 0);
+				const fail = Number(/^# fail (\d+)/m.exec(out)?.[1] ?? 0);
+				total = pass + fail;
+			} finally {
+				// In a finally, so a spawnSync throw cannot strand the hidden test on disk;
+				// force so a Windows handle held a beat too long cannot fail the oracle.
+				fs.rmSync(scratch, { recursive: true, force: true });
+			}
 		}
 		fs.writeFileSync(path.join(dir, "result.txt"), out);
 		const verdict = `Oracle run #${doneAttempts}: ${pass}/${total} passed.${note}`;
@@ -941,6 +1114,12 @@ function checkIdle() {
 	// nobody is waiting on its mail, so a quiet, settled workspace is the only
 	// reliable sign the work has actually stopped.
 	if ((SOLO || PATTERN === "orchestrator") && maybeQuiescentOracle()) return;
+	// An orchestrator with a live worker is not idle, it is waiting — and in the
+	// background flow it genuinely is idle by every host-visible measure while its
+	// worker runs for minutes (2026-09-11T20-14-14: a worker ran from 197.8s to
+	// 706.3s). Nudging then tells it "you have been idle with no worker running"
+	// while a worker is running, and burns a nudge off maxNudges for it.
+	if (PATTERN === "orchestrator" && liveWorkers(Object.values(state)).length > 0) return;
 	if (Date.now() - lastActivity < CAPS.idleNudgeSec * 1000) return;
 	nudges++;
 	lastActivity = Date.now();
@@ -972,19 +1151,27 @@ function checkBashTimeout() {
 			const ranMs = Date.now() - info.startedAt;
 			if (ranMs < limitMs) continue;
 			s.pendingBash.delete(toolCallId);
-			// A worker has no RPC channel, so there is nothing to send "abort" to. The
-			// orchestrator owns it and is the only thing that can act, so tell it instead —
-			// the watchdog degrades from a force-abort to a notification, which is the most
-			// the host can honestly do here.
+			// A worker has no RPC channel of its own, but it does not need one: pi-subagents
+			// hands the orchestrator's tool-call AbortSignal straight to the child
+			// (agent-tool.ts's spawnAndWait, and the same signal on a background call's
+			// get_subagent_result{wait:true}). Aborting the orchestrator's run therefore
+			// tears down the worker's hung bash through pi's own machinery — the same two
+			// calls the builder path below uses, which is why a notification alone was never
+			// the most the host could do here. The orchestrator is also blocked inside the
+			// subagent call in the foreground flow, so a "steer" note would not have reached
+			// it until the hang resolved itself anyway.
 			if (s.role === "worker") {
 				log({
 					agent: s.name,
 					type: "bash_timeout",
-					msg: `worker bash call running ${(ranMs / 1000).toFixed(0)}s (limit ${CAPS.bashTimeoutSec}s), no RPC channel to abort it: ${String(info.command).slice(0, 150)}`,
+					msg: `worker bash call running ${(ranMs / 1000).toFixed(0)}s (limit ${CAPS.bashTimeoutSec}s), aborting via the orchestrator: ${String(info.command).slice(0, 150)}`,
 				});
+				send("orchestrator", { type: "abort" });
 				deliver(
 					"orchestrator",
-					`[SUPERVISOR] Worker ${s.name} has had a bash command running for ${(ranMs / 1000).toFixed(0)}s; steer it to stop or wait.`,
+					`[SUPERVISOR] Worker ${s.name} had a bash command running for ${(ranMs / 1000).toFixed(0)}s (limit ${CAPS.bashTimeoutSec}s), so it was force-aborted: ` +
+						`\`${String(info.command).slice(0, 200)}\`. Your own turn was aborted with it. The worker keeps its context — continue it with ` +
+						`subagent using resume: "${s.name.replace(/^worker:/, "")}" and tell it to scope its searches and pass an explicit bash "timeout".`,
 					"worker bash timeout",
 				);
 				continue;
@@ -1042,7 +1229,12 @@ function finish(reason) {
 		// pattern exists to answer — whether the orchestrator had verified the workspace
 		// host-side at least once before the first oracle, or just relayed a claim.
 		workers: Object.values(state).filter((s) => s.role === "worker").length,
-		...(PATTERN === "orchestrator" ? { orchestratorProbedBeforeDone: probeCountAtFirstOracle > 0 } : {}),
+		// null, not false, when no oracle ever ran: a run that hit the wall cap before any
+		// done never reached the question, and tabulating that as "did not probe" is a
+		// wrong answer rather than a missing one, for the only hand-scored boolean here.
+		// A quiescence-triggered oracle counts as the first oracle, deliberately — it is
+		// still the moment the workspace was first graded.
+		...(PATTERN === "orchestrator" ? { orchestratorProbedBeforeDone: probeCountAtFirstOracle === null ? null : probeCountAtFirstOracle > 0 } : {}),
 		caps: CAPS,
 		task: TASK_NAME,
 		oracleGate: PDEF.verifier ? `${PDEF.verifier} approval (hash+quiescence)` : "solo: builder done or quiescence",
@@ -1057,6 +1249,11 @@ function finish(reason) {
 		md.push("## Delegation", "");
 		const byWorker = new Map();
 		for (const m of timeline) {
+			// A spawn still carrying the "worker" placeholder is a `subagent` call that
+			// never produced a worker; handle() drops those as they are seen, and this is
+			// the belt to that pair of braces — an unclaimed entry must never render as a
+			// worker literally called "worker".
+			if (m.kind === "spawn" && m.to === "worker") continue;
 			if (m.kind === "spawn") byWorker.set(m.to, [`- **${m.to}** spawned at ${((m.ts - startedAt) / 1000).toFixed(0)}s — brief: ${m.body.replace(/\s+/g, " ").slice(0, 200)}`]);
 			if ((m.kind === "resume" || m.kind === "report") && byWorker.has(m.kind === "resume" ? m.to : m.from)) {
 				byWorker.get(m.kind === "resume" ? m.to : m.from).push(`  - ${m.kind} at ${((m.ts - startedAt) / 1000).toFixed(0)}s: ${m.body.replace(/\s+/g, " ").slice(0, 160)}`);
@@ -1087,21 +1284,33 @@ function finish(reason) {
 	// record, then drop the now-redundant out-of-tree copy. The archive name stays
 	// ws-builder regardless of pattern — tools/extract-runs.mjs resolves ws-builder/src
 	// for every run in the corpus, old and new.
-	try {
-		if (fs.existsSync(WS.workspace)) fs.cpSync(WS.workspace, path.join(RUN, "ws-builder"), { recursive: true });
-		// Windows can hold the just-killed process's cwd handle open for a moment
-		// after taskkill returns; retry the removal briefly rather than failing once.
+	// Windows can hold the just-killed process's cwd and open session files for a
+	// moment after taskkill returns; retry the removal briefly rather than failing once.
+	const removeAfterArchive = (dir) => {
 		for (let attempt = 0; ; attempt++) {
 			try {
-				fs.rmSync(WSROOT, { recursive: true, force: true });
-				break;
+				fs.rmSync(dir, { recursive: true, force: true });
+				return;
 			} catch (err) {
 				if (attempt >= 4) throw err;
 				Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
 			}
 		}
+	};
+	try {
+		if (fs.existsSync(WS.workspace)) fs.cpSync(WS.workspace, path.join(RUN, "ws-builder"), { recursive: true });
+		removeAfterArchive(WSROOT);
 	} catch (err) {
 		log({ type: "warn", msg: `failed to archive workspaces into RUN: ${err?.message ?? err}` });
+	}
+	// Same move for the session directories, and for the same reason (see SESSIONS
+	// above): out of tree while anything could read them, archived into RUN/sessions
+	// now that nothing can. tools/extract-runs.mjs only ever reads a finished run.
+	try {
+		if (fs.existsSync(SESSIONS)) fs.cpSync(SESSIONS, path.join(RUN, "sessions"), { recursive: true });
+		removeAfterArchive(SESSIONS);
+	} catch (err) {
+		log({ type: "warn", msg: `failed to archive sessions into RUN: ${err?.message ?? err}` });
 	}
 	// Child exit handlers still log after this point; close the audit stream last.
 	setTimeout(() => {
