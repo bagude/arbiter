@@ -22,6 +22,7 @@ import { PATTERNS, WORKER_TOOLS } from "./lib/patterns.mjs";
 import { writeWorkerDefinition, installWorkspaceExtension } from "./lib/worker-def.mjs";
 import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry } from "./lib/workers.mjs";
+import { messages } from "./lib/messages.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -42,21 +43,11 @@ const SOLO = PATTERN === "solo";
 // "orchestrator" for the orchestrator pattern, null for solo (where the builder's
 // own done is the trigger instead, handled separately by routeMail's solo_done).
 const VERIFIER = PDEF.verifier;
-// Every [SUPERVISOR] text names the other side of the run. Under the orchestrator
-// pattern there is no BUILDER and no counterpart, yet the first orchestrator run
-// (2026-09-11T18-42-34) delivered "executed directly against BUILDER's current src/"
-// six times and "nothing was sent to your counterpart" on every silent turn. For an
-// experiment about what an orchestrator does, text describing roles the run does not
-// have is a confound, not a cosmetic slip. These are the only words that vary:
-// `builder` is whatever owns src/, `writer` is whoever edits it, `counterpart` is
-// whoever a message would go to. The dyad/solo values are the exact words these
-// strings have always used, so those runs are unchanged byte for byte.
-function who() {
-	return PATTERN === "orchestrator"
-		? { builder: "the workspace", writer: "a worker", counterpart: "a worker" }
-		: { builder: "BUILDER", writer: "BUILDER", counterpart: "your counterpart" };
-}
-const WHO = who();
+// Every text the supervisor delivers lives in lib/messages.mjs, keyed by situation
+// and rendered for this pattern — an orchestrator run must never be told about a
+// BUILDER or a counterpart it does not have (see the comment there). Pinned by
+// test/messages.test.mjs, dyad and solo to their exact historical literals.
+const M = messages(PATTERN);
 
 // ---------- run directory ----------
 const runId = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -300,15 +291,15 @@ function timeStatus(to) {
 	const elapsed = (Date.now() - startedAt) / 1000;
 	const remaining = Math.max(0, CAPS.wallSec - elapsed);
 	const pct = Math.min(100, Math.round((elapsed / CAPS.wallSec) * 100));
-	let line = `[time: ${elapsed.toFixed(0)}s elapsed / ${CAPS.wallSec}s wall-clock budget — ${pct}% used, ~${remaining.toFixed(0)}s left]`;
-	if (pct >= 85) line += " ⚠ Budget nearly exhausted. Stop exploring further edge cases — reach a decision now with what you already know.";
-	else if (pct >= 60) line += " More than half the budget is gone. Start converging toward done/approval rather than opening new lines of inquiry.";
+	let line = M.time.budget(elapsed, CAPS.wallSec, pct, remaining);
+	if (pct >= 85) line += M.time.nearlyExhausted;
+	else if (pct >= 60) line += M.time.halfGone;
 	// The verifying role's approval is unreachable with zero probes no matter how it's
 	// worded elsewhere — say so directly once time pressure is real, instead of
 	// leaving it to be inferred from the prompt alone. Applies to the orchestrator
 	// for the same reason it applies to CRITIC: it is the role the gate answers to.
 	if (to === VERIFIER && lastProbeHash === null && pct >= 60) {
-		line += ' You have not sent a single kind="probe" yet — approval cannot go through without one. Send a probe now.';
+		line += M.time.noProbeYet;
 	}
 	// The opposite case matters just as much near the deadline: if the gate would
 	// already accept an approval right now, say so plainly instead of leaving CRITIC
@@ -318,9 +309,7 @@ function timeStatus(to) {
 		const srcDir = path.join(WS.workspace, "src");
 		const sinceEdit = Date.now() - lastEditAcross(Object.values(state));
 		if (fs.existsSync(srcDir) && hashDir(srcDir) === lastProbeHash && sinceEdit >= QUIESCENCE_MS) {
-			line +=
-				" The approval gate is satisfiable right now: your last probe matches the current, quiescent workspace. " +
-				'If nothing in it looked wrong, send kind="done" now rather than re-probing the same ground again.';
+			line += M.time.gateSatisfiable;
 		}
 	}
 	return line;
@@ -445,17 +434,7 @@ function handle(name, ev) {
 				// supervisor cannot deliver to a worker anyway.
 				if (m.stopReason === "stop" && !hasToolCall && textLen > 40 && s.role !== "worker") {
 					log({ agent: name, type: "silent_turn", msg: `turn ended with text (${textLen} chars) but no tool call — nothing was sent` });
-					deliver(
-						name,
-						SOLO
-							? '[SUPERVISOR] Your last turn produced text but called no tool, so nothing happened. If your implementation is complete and self-tested, send kind="done" via send_mail; otherwise keep working.'
-							: PATTERN === "orchestrator"
-								? '[SUPERVISOR] Your last turn produced text but called no tool, so nothing happened — no worker was briefed, no probe was run and no mail was sent. ' +
-										'If the workspace already satisfies the specification, send kind="done"; otherwise probe it or brief a worker.'
-								: '[SUPERVISOR] Your last turn produced text but never called send_mail — nothing was sent to your counterpart, and they never saw it. ' +
-										'You can only communicate via the send_mail tool. If you meant to say something, send it now.',
-						"silent turn (text but no tool call)",
-					);
+					deliver(name, M.silentTurn(), "silent turn (text but no tool call)");
 				}
 			}
 			break;
@@ -516,20 +495,14 @@ function pumpBus() {
 			case "probe": runProbe(msg); break;
 			case "approval": handleApproval(); break;
 			case "bounce_probe":
-				deliver(route.to, '[SUPERVISOR] Your kind="probe" was not run — only the verifying role\'s probes are host-executed. Describe what you found as kind="status" instead.', "probe bounced");
+				deliver(route.to, M.probeBounced(), "probe bounced");
 				break;
 			case "solo_done": runOracle(); break;
 			case "solo_ack":
 				// routeMail sends the orchestrator's non-probe, non-done mail here too, so
 				// this is one of the texts that must not describe a counterpart the run
 				// does not have, or an implementation the orchestrator does not write.
-				deliver(
-					route.to,
-					PATTERN === "orchestrator"
-						? '[SUPERVISOR] Acknowledged, but nobody will answer this — the supervisor is a program and there is no other agent to reply. When the workspace satisfies the specification and you have probed it, send kind="done".'
-						: '[SUPERVISOR] Acknowledged, but nobody will answer this — there is no counterpart in this run. When your implementation is complete and self-tested, send kind="done".',
-					"ack (no counterpart)",
-				);
+				deliver(route.to, M.ack(), "ack (no counterpart)");
 				break;
 			case "deliver": deliver(route.to, frame(msg), `mail #${msg.n} from ${msg.from}`); break;
 			case "drop": log({ type: "warn", msg: `mail #${msg.n} to unknown recipient "${msg.to}" dropped` }); break;
@@ -617,14 +590,14 @@ function runProbe(msg) {
 	probeCount++;
 	const runner = path.join(TASK, "oracle", "probe.mjs");
 	if (!fs.existsSync(runner)) {
-		deliver(VERIFIER, `[SUPERVISOR] This task has no probe runner — kind="probe" isn't supported for "${TASK_NAME}".`, "probe unsupported");
+		deliver(VERIFIER, M.probe.unsupported(TASK_NAME), "probe unsupported");
 		return;
 	}
 	const dir = path.join(RUN, `probe-${probeCount}`);
 	try {
 		fs.mkdirSync(dir, { recursive: true });
 		if (!fs.existsSync(path.join(WS.workspace, "src"))) {
-			deliver(VERIFIER, `[SUPERVISOR] Probe failed: ${WHO.builder}'s src/ does not exist yet.`, "probe error");
+			deliver(VERIFIER, M.probe.noSrc(), "probe error");
 			return;
 		}
 		// Parse CRITIC's own request up front, independent of what probe.mjs makes of
@@ -640,13 +613,7 @@ function runProbe(msg) {
 			requestParseError = err.message;
 		}
 		if (requestParseError) {
-			deliver(
-				VERIFIER,
-				`[SUPERVISOR] Probe #${probeCount} rejected: your probe body is not valid JSON (${requestParseError}). ` +
-					`Exact bytes received: ${JSON.stringify(msg.body)}\n` +
-					`Check for a stray/misplaced bracket or brace before re-sending — a single mistyped character here reads as a real result, not a JSON error, once it hits probe.mjs.`,
-				"probe body unparseable",
-			);
+			deliver(VERIFIER, M.probe.unparseable(probeCount, requestParseError, msg.body), "probe body unparseable");
 			return;
 		}
 		const argsById = new Map(requestCases.map((c) => [c?.id ?? "?", c?.args]));
@@ -679,12 +646,7 @@ function runProbe(msg) {
 		if (novelCases.length === 0) {
 			// Nothing to execute — every case in this probe is a verbatim repeat.
 			log({ type: "probe", msg: `probe #${probeCount}: 0 executed, ${blocked.length} blocked (all repeats)` });
-			deliver(
-				VERIFIER,
-				`[SUPERVISOR] Probe #${probeCount} was not run — every case in it is an exact repeat of a prior probe against this same, unchanged code:\n${blockedLines.join("\n")}\n\n` +
-					`If you're satisfied, send done. If not, send a genuinely different case, or a question to ${WHO.writer} — this exact probe is now a dead end.`,
-				"probe fully blocked (all repeats)",
-			);
+			deliver(VERIFIER, M.probe.allRepeats(probeCount, blockedLines), "probe fully blocked (all repeats)");
 			return;
 		}
 
@@ -699,11 +661,7 @@ function runProbe(msg) {
 			results = null;
 		}
 		if (!Array.isArray(results)) {
-			deliver(
-				VERIFIER,
-				`[SUPERVISOR] Probe run #${probeCount} produced no parseable result.${r.stderr ? ` stderr: ${r.stderr.slice(0, 500)}` : ""}`,
-				"probe error",
-			);
+			deliver(VERIFIER, M.probe.noResult(probeCount, r.stderr), "probe error");
 			return;
 		}
 		// This probe's src/ is what CRITIC just verified — record its hash so a later
@@ -761,14 +719,9 @@ function runProbe(msg) {
 		}
 		if (withoutExpect.length) parts.push(`${expectById.size > 0 ? "Other cases (no expectation given):\n" : ""}${withoutExpect.join("\n")}`);
 		if (blockedLines.length) parts.push(`Blocked (exact repeats, not re-run):\n${blockedLines.join("\n")}`);
-		deliver(
-			VERIFIER,
-			`[SUPERVISOR] Probe run #${probeCount} — executed directly against ${WHO.builder}'s current src/, not self-reported. ` +
-				`${PATTERN === "orchestrator" ? "No worker saw this; there is nobody to reply to." : "BUILDER did not see this; no reply to BUILDER is needed."}\n${parts.join("\n\n")}`,
-			"probe results",
-		);
+		deliver(VERIFIER, M.probe.results(probeCount, parts), "probe results");
 	} catch (err) {
-		deliver(VERIFIER, `[SUPERVISOR] Probe run #${probeCount} crashed: ${err?.message ?? err}`, "probe crash");
+		deliver(VERIFIER, M.probe.crashed(probeCount, err?.message ?? err), "probe crash");
 	}
 }
 
@@ -787,12 +740,7 @@ function handleApproval() {
 		now: Date.now(),
 	});
 	if (verdict.ok) return runOracle();
-	const why = {
-		no_probe: `[SUPERVISOR] Approval not accepted: you have not run a single kind="probe" yet, so nothing confirms this matches ${WHO.builder}'s real code. Probe first, then approve.`,
-		no_src: `[SUPERVISOR] Approval not accepted: ${WHO.builder}'s src/ no longer exists.`,
-		stale: `[SUPERVISOR] Approval not accepted: ${WHO.builder}'s src/ has changed since your last probe — the code you verified is not the code that would be tested. Send a fresh kind="probe" against the current code, then approve.`,
-		too_soon: `[SUPERVISOR] Approval not accepted yet: ${WHO.writer} edited code ${(verdict.sinceEditMs / 1000).toFixed(1)}s ago, too recent to be sure it's settled. Wait a few seconds and send done again — no need to re-probe unless ${WHO.writer} tells you something changed.`,
-	}[verdict.reason];
+	const why = M.gate[verdict.reason](verdict.sinceEditMs);
 	const label = { no_probe: "approval without probe", no_src: "approval error", stale: "approval stale (src changed since probe)", too_soon: "approval too soon after edit" }[verdict.reason];
 	deliver(VERIFIER, why, label);
 }
@@ -844,11 +792,11 @@ function runOracle() {
 		} else {
 			if (!fs.existsSync(path.join(WS.workspace, "src"))) {
 				fs.writeFileSync(path.join(dir, "result.txt"), "no src/ in builder workspace; nothing to test");
-				const verdict0 = `Oracle run #${doneAttempts}: 0/0 — ${WHO.builder}'s src/ is missing.`;
+				const verdict0 = M.oracle.missingSrc(doneAttempts);
 				log({ type: "oracle", msg: verdict0 });
 				timeline.push({ ts: Date.now(), from: "supervisor", to: "both", kind: "oracle", body: verdict0 });
-				if (ROLES.builder) deliver("builder", `[SUPERVISOR] ${verdict0} Nothing was found to check.`, "oracle verdict");
-				if (VERIFIER) deliver(VERIFIER, `[SUPERVISOR] ${verdict0}`, "oracle verdict");
+				if (ROLES.builder) deliver("builder", M.oracle.missingSrcBuilder(verdict0), "oracle verdict");
+				if (VERIFIER) deliver(VERIFIER, M.oracle.missingSrcVerifier(verdict0), "oracle verdict");
 				return;
 			}
 			// The hidden test runs in a scratch directory under os.tmpdir(), not under
@@ -885,27 +833,19 @@ function runOracle() {
 		if (total > 0 && pass === total) return finish("SUCCESS: oracle passed");
 		if (doneAttempts >= CAPS.doneAttempts) return finish(`done attempts exhausted (${doneAttempts})`);
 		if (SOLO) {
-			deliver(
-				"builder",
-				`[SUPERVISOR] ${verdict} Not done. Re-read the SPECIFICATION in your prompt — every error rule, every edge case it names — find what you missed, fix it, then send done again. (${CAPS.doneAttempts - doneAttempts} attempts left)`,
-				"oracle verdict",
-			);
+			deliver("builder", M.oracle.failedSolo(verdict, CAPS.doneAttempts - doneAttempts), "oracle verdict");
 		} else {
 			// Only roles this pattern actually has. The orchestrator pattern has no
 			// BUILDER, and addressing one produced two dropped-mail warnings per run
 			// alongside a verdict naming two roles that were not in it.
 			if (ROLES.builder) {
-				deliver("builder", `[SUPERVISOR] CRITIC approved your work. ${verdict} Not done. Work with CRITIC to find what you missed, then claim done again. (${CAPS.doneAttempts - doneAttempts} approvals left)`, "oracle verdict");
+				deliver("builder", M.oracle.failedBuilder(verdict, CAPS.doneAttempts - doneAttempts), "oracle verdict");
 			}
 			if (VERIFIER) {
 				// The orchestrator did not approve someone else's work — it claimed the
 				// workspace was done and was wrong. Its remedy is its own two instruments,
 				// probes and a worker, not interrogating a counterpart that does not exist.
-				const text =
-					PATTERN === "orchestrator"
-						? `[SUPERVISOR] Your done claim was wrong. ${verdict} Find what was missed with probes and brief a worker on the fix. (${CAPS.doneAttempts - doneAttempts} claims left)`
-						: `[SUPERVISOR] You approved BUILDER's work. ${verdict} Your approval was wrong. Find what you both missed; interrogate on inputs you have not yet asked about. (${CAPS.doneAttempts - doneAttempts} approvals left)`;
-				deliver(VERIFIER, text, "oracle verdict");
+				deliver(VERIFIER, M.oracle.failedVerifier(verdict, CAPS.doneAttempts - doneAttempts), "oracle verdict");
 			}
 		}
 	} catch (err) {
@@ -974,12 +914,7 @@ function checkIdle() {
 	// The nudge goes to whoever can actually act on it — the orchestrator, not a
 	// worker (workers are unreachable) and not a "builder" that does not exist.
 	const to = PATTERN === "orchestrator" ? "orchestrator" : "builder";
-	const text =
-		PATTERN === "orchestrator"
-			? `[SUPERVISOR] You have been idle for ${CAPS.idleNudgeSec}s with no worker running. Either start or steer a worker, probe the workspace, or send kind="done" if it is complete.`
-			: SOLO
-				? `[SUPERVISOR] You have been idle for ${CAPS.idleNudgeSec}s. Either keep working, or send kind="done" if your implementation is complete.`
-				: `[SUPERVISOR] Both agents have been idle for ${CAPS.idleNudgeSec}s. Either continue working, ask CRITIC something, or send kind="done".`;
+	const text = M.nudge.idle(CAPS.idleNudgeSec);
 	timeline.push({ ts: Date.now(), from: "supervisor", to, kind: "nudge", body: text });
 	deliver(to, text, `idle nudge ${nudges}`);
 }
@@ -1021,10 +956,7 @@ function checkBashTimeout() {
 					// wait but a background child keeps running — the host cannot reach it. The text
 					// must not claim otherwise; steer_subagent is the one thing that reaches a running
 					// worker, and resume only opens once it has settled.
-					`[SUPERVISOR] Worker ${s.name} has had a bash command running for ${(ranMs / 1000).toFixed(0)}s (limit ${CAPS.bashTimeoutSec}s): ` +
-						`\`${String(info.command).slice(0, 200)}\`. Your current turn was aborted. If you started the worker in the foreground, its bash was aborted with it and it has settled — ` +
-						`continue it with subagent using resume: "${s.name.replace(/^worker:/, "")}". If you started it in the background, it is still running: ` +
-						`use steer_subagent to tell it to stop that command, scope its searches, and pass an explicit bash "timeout".`,
+					M.bash.timeoutWorker(s.name, (ranMs / 1000).toFixed(0), CAPS.bashTimeoutSec, info.command),
 					"worker bash timeout",
 				);
 				continue;
@@ -1037,9 +969,7 @@ function checkBashTimeout() {
 			send(s.name, { type: "abort" });
 			deliver(
 				s.name,
-				`[SUPERVISOR] Your bash command was force-aborted after running ${(ranMs / 1000).toFixed(0)}s (limit ${CAPS.bashTimeoutSec}s): ` +
-					`\`${String(info.command).slice(0, 200)}\`. Always pass an explicit "timeout" (seconds) to bash, and avoid unbounded searches ` +
-					`like "find /" — scope searches to the workspace.`,
+				M.bash.timeoutSelf((ranMs / 1000).toFixed(0), CAPS.bashTimeoutSec, info.command),
 				"bash timeout abort",
 			);
 		}
@@ -1204,25 +1134,17 @@ const readyTimer = setInterval(() => {
 	clearInterval(readyTimer);
 	if (PATTERN === "dyad") {
 		log({ type: "ready", msg: "both agents ready; kicking off" });
-		deliver("critic", "[SUPERVISOR] Session start. BUILDER is waiting. Open the conversation: tell BUILDER what they are building, at the level of a one-paragraph brief. Let them ask for details.", "kickoff");
-		deliver("builder", "[SUPERVISOR] Session start. Read README.md. CRITIC will mail you a brief shortly; you may also mail CRITIC first if you prefer.", "kickoff");
+		deliver("critic", M.kickoff.critic(), "kickoff");
+		deliver("builder", M.kickoff.builder(), "kickoff");
 		return;
 	}
 	if (SOLO) {
 		log({ type: "ready", msg: "builder ready; kicking off (solo)" });
-		deliver(
-			"builder",
-			'[SUPERVISOR] Session start. Read README.md. The full specification is in your system prompt under SPECIFICATION. Implement it under src/, test it yourself, then send kind="done" to the supervisor.',
-			"kickoff",
-		);
+		deliver("builder", M.kickoff.builder(), "kickoff");
 		return;
 	}
 	log({ type: "ready", msg: "orchestrator ready; kicking off" });
-	deliver(
-		"orchestrator",
-		'[SUPERVISOR] Session start. The specification is in your system prompt. Read README.md and src/, decide how to split the work, and start a worker with subagent_type "worker". Verify with kind="probe" before you claim kind="done".',
-		"kickoff",
-	);
+	deliver("orchestrator", M.kickoff.orchestrator(), "kickoff");
 }, 250);
 
 setInterval(pumpBus, 200);
