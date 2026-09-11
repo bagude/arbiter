@@ -26,9 +26,11 @@ const SOLO = PEER === "supervisor";
 const DONE_HINT =
 	ME === "critic"
 		? 'kind="done" is your APPROVAL. It only goes through if you have probed the code as it currently stands and it is not mid-edit — the supervisor tells you exactly why if it does not, and the fix is always to probe again, never to resend the same approval.'
-		: SOLO
-			? 'kind="done" tells the supervisor your implementation is complete and self-tested; it triggers the hidden acceptance test immediately. Other kinds are acknowledged but nobody answers them — there is no counterpart in this run.'
-			: 'kind="done" is your own completion signal — send it once your tests pass. Your counterpart verifies independently; you do not need to keep re-justifying it after you send it.';
+		: ME === "orchestrator"
+			? 'kind="done" claims the shared workspace is complete and triggers the hidden acceptance test. It only goes through if you have probed the workspace as it currently stands and no worker is mid-edit — the supervisor tells you why if it does not, and the fix is always a fresh probe, never resending the same claim.'
+			: SOLO
+				? 'kind="done" tells the supervisor your implementation is complete and self-tested; it triggers the hidden acceptance test immediately. Other kinds are acknowledged but nobody answers them — there is no counterpart in this run.'
+				: 'kind="done" is your own completion signal — send it once your tests pass. Your counterpart verifies independently; you do not need to keep re-justifying it after you send it.';
 
 // Only CRITIC's probes are host-executed (supervisor.mjs only intercepts
 // kind="probe" from="critic"). A probe sent from BUILDER used to be silently
@@ -36,9 +38,9 @@ const DONE_HINT =
 // stall where both agents waited on a "run" that was never going to happen.
 // Dropping the kind entirely for BUILDER (rather than just warning about it)
 // removes the option before a small model can reach for it.
-const PROBE_KIND = ME === "critic" ? [Type.Literal("probe")] : [];
+const PROBE_KIND = ME === "critic" || ME === "orchestrator" ? [Type.Literal("probe")] : [];
 const PROBE_HINT =
-	ME === "critic"
+	ME === "critic" || ME === "orchestrator"
 		? 'kind="probe" is special: the supervisor intercepts it (your counterpart never sees it), executes it ' +
 			'host-side against the real current code, and replies to you directly with real values, echoing back the exact ' +
 			'args it ran — check that echo against what you meant to send before concluding a result is wrong. Body must be a ' +
@@ -55,24 +57,27 @@ export default function (pi: ExtensionAPI) {
 		name: "send_mail",
 		label: "Send mail",
 		description:
-			(SOLO
-				? `Send a message to the supervisor (to="supervisor"). There is no counterpart agent in this run. `
-				: `Send a message to your counterpart "${PEER}". This is your ONLY channel to them. `) +
+			(ME === "orchestrator"
+				? `Send a message to the supervisor (to="supervisor"). Workers are not reachable by mail; use the subagent tools for them. `
+				: SOLO
+					? `Send a message to the supervisor (to="supervisor"). There is no counterpart agent in this run. `
+					: `Send a message to your counterpart "${PEER}". This is your ONLY channel to them. `) +
 			`Body is capped at ${MAX_BODY} characters. ${DONE_HINT}${PROBE_HINT ? ` ${PROBE_HINT}` : ""}`,
 		parameters: Type.Object({
 			to: Type.String({ description: `Recipient. Must be "${PEER}".` }),
 			kind: Type.Union(
-				[
-					Type.Literal("question"),
-					Type.Literal("answer"),
-					Type.Literal("proposal"),
-					Type.Literal("status"),
-					Type.Literal("done"),
-					...PROBE_KIND,
-				],
+				(ME === "orchestrator"
+					? ["status", "done", "probe"]
+					: ["question", "answer", "proposal", "status", "done", ...(PROBE_KIND.length ? ["probe"] : [])]
+				).map((k) => Type.Literal(k)),
 				{ description: "What this message is doing." },
 			),
-			body: Type.String({ description: ME === "critic" ? "Message text, or for kind=probe, a JSON array of {id, args, expect?}." : "Message text." }),
+			body: Type.String({
+				description:
+					ME === "critic" || ME === "orchestrator"
+						? "Message text, or for kind=probe, a JSON array of {id, args, expect?}."
+						: "Message text.",
+			}),
 		}),
 		async execute(_toolCallId, params) {
 			if (!BUS) {
