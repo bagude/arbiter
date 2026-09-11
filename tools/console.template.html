@@ -1,0 +1,647 @@
+<title>Arbiter Console</title>
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Public+Sans:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        colors: {
+          stone: { 950:'#0F0F0E',900:'#161614',850:'#1C1C19',800:'#232320',750:'#2A2A26',700:'#353530',600:'#484842',500:'#64645C',400:'#8E8E84',300:'#B5B5AC',200:'#D6D6CF',100:'#E8E8E2',50:'#F5F5F0' },
+          klein: { DEFAULT:'#0055FF', light:'#3377FF', dark:'#0040CC', dim:'rgba(0,85,255,0.12)' },
+          vermilion: { DEFAULT:'#FF3B30', hover:'#E02D22', dim:'rgba(255,59,48,0.12)' },
+          amber: { DEFAULT:'#FFB703', dim:'rgba(255,183,3,0.12)' },
+          braun: { green:'#2DD4BF', greendim:'rgba(45,212,191,0.12)' }
+        },
+        fontFamily: {
+          sans: ['"Public Sans"','-apple-system','BlinkMacSystemFont','sans-serif'],
+          mono: ['"JetBrains Mono"','monospace']
+        }
+      }
+    }
+  }
+</script>
+<style>
+  html, body { margin:0; padding:0; background-color:#0F0F0E; color:#F5F5F0; font-feature-settings:"cv02","cv03","cv04","cv11","tnum"; }
+  body { overscroll-behavior:none; }
+  ::-webkit-scrollbar { width:4px; height:4px; }
+  ::-webkit-scrollbar-track { background:#161614; }
+  ::-webkit-scrollbar-thumb { background:#2A2A26; }
+  ::-webkit-scrollbar-thumb:hover { background:#484842; }
+  .event-item { animation: enter .25s ease-out; }
+  @keyframes enter { from{ opacity:0; transform:translateY(4px);} to{ opacity:1; transform:none; } }
+  @media (prefers-reduced-motion: reduce){ * { animation-duration:.001ms !important; } }
+  .code-kw{ color:#3377FF; font-weight:600; }
+  .code-str{ color:#FFB703; }
+  .code-com{ color:#64645C; font-style:italic; }
+  .code-num{ color:#2DD4BF; }
+  .code-fn{ color:#F5F5F0; font-weight:500; }
+  ::selection{ background:#0055FF; color:#fff; }
+  [hidden]{ display:none !important; }
+</style>
+
+<div class="bg-stone-950 text-stone-50 font-sans antialiased" style="min-height:600px;">
+<!-- LEFT SIDEBAR -->
+<aside class="fixed left-0 top-0 h-full w-64 bg-stone-900 border-r border-stone-800 z-50 flex flex-col justify-between select-none">
+  <div class="flex flex-col min-h-0">
+    <div class="h-14 px-4 flex items-center justify-between border-b border-stone-800 bg-stone-900 flex-none">
+      <div class="flex items-center gap-2.5">
+        <div class="w-5 h-5 bg-stone-50 text-stone-950 flex items-center justify-center font-mono text-[11px] font-black">D</div>
+        <div class="flex flex-col leading-none">
+          <span class="font-mono text-xs font-bold tracking-widest text-stone-50 uppercase">ARBITER CONSOLE</span>
+          <span class="font-mono text-[9px] text-stone-400 tracking-tighter uppercase mt-0.5">supervisor.mjs · rpc</span>
+        </div>
+      </div>
+    </div>
+    <div class="px-4 pt-4 pb-2 border-b border-stone-800/80 overflow-y-auto">
+      <div class="space-y-1" id="runList" role="tablist"></div>
+    </div>
+  </div>
+  <div class="p-4 border-t border-stone-800 bg-stone-900/90 font-mono flex-none">
+    <div class="flex items-center justify-between text-[10px] text-stone-400 pb-2 border-b border-stone-800">
+      <span class="uppercase tracking-wider">PROTOCOL</span>
+      <span class="text-stone-200">JSONL / RPC</span>
+    </div>
+    <div class="pt-2.5 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 bg-braun-green inline-block"></span>
+        <span class="text-[11px] font-bold tracking-tight text-stone-200 uppercase">SUPERVISOR</span>
+      </div>
+      <span class="text-[10px] text-stone-400 font-medium" title="supervisor.mjs runs no model — it relays, counts, kills, and judges">NO LLM</span>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="pl-64 flex flex-col min-h-screen">
+  <header class="fixed top-0 left-64 right-0 h-14 bg-stone-900 border-b border-stone-800 z-40 flex items-center px-6 select-none overflow-x-auto">
+    <div class="flex items-center gap-px bg-stone-850 border border-stone-800 font-mono text-[10.5px]" id="stats"></div>
+  </header>
+
+  <main class="w-full pt-14 pb-24 px-6 bg-stone-950 flex-1">
+    <div class="flex flex-col w-full max-w-[1680px] mx-auto pt-5 pb-8 space-y-5">
+
+      <section class="space-y-3">
+        <div class="bg-stone-900 border border-stone-800 p-2 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-3 flex-1 min-w-[320px]">
+            <div class="flex items-center gap-2 bg-stone-950 border border-stone-700/80 px-2.5 py-1.5 w-full max-w-sm">
+              <span class="font-mono text-stone-500 text-xs select-none">&gt;</span>
+              <input class="bg-transparent text-stone-100 font-mono text-xs placeholder-stone-600 focus:outline-none w-full" id="searchFilter" placeholder="filter feed: agent, tool, text..." type="text">
+            </div>
+            <div class="flex items-center gap-1 font-mono text-[11px] flex-wrap" id="facets"></div>
+          </div>
+          <div class="font-mono text-[11px] text-stone-400" id="runSub"></div>
+        </div>
+      </section>
+
+      <section class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        <!-- LEFT: TRANSCRIPT -->
+        <div class="lg:col-span-7 flex flex-col bg-stone-900 border border-stone-800 shadow-2xl overflow-hidden">
+          <div class="grid grid-cols-2 divide-x divide-stone-800 border-b border-stone-800 bg-stone-900">
+            <div class="p-3 bg-stone-900 border-t-2 border-klein flex items-center justify-between gap-2 flex-wrap">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="w-7 h-7 bg-klein text-white font-mono font-black text-xs flex items-center justify-center shadow-[0_0_12px_rgba(0,85,255,0.4)] flex-none">B</div>
+                <div class="flex flex-col min-w-0">
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-sans font-extrabold text-xs tracking-wider uppercase text-white">BUILDER</span>
+                    <span class="font-mono text-[9px] bg-klein text-white font-bold px-1.5 py-0.5 tracking-wide">ACTOR</span>
+                    <span class="status-pill font-mono text-[9px] px-1.5 py-0.5 border border-stone-700 text-stone-400" id="builderStatus" data-status="idle">idle</span>
+                  </div>
+                  <span class="font-mono text-[10px] text-stone-400 truncate" id="builderRole"></span>
+                </div>
+              </div>
+              <div class="flex items-center gap-1 font-mono text-[10px] flex-wrap" id="builderChips"></div>
+            </div>
+            <div class="p-3 bg-stone-900 border-t-2 border-amber flex items-center justify-between gap-2 flex-wrap">
+              <div class="flex items-center gap-3 min-w-0">
+                <div class="w-7 h-7 bg-amber text-stone-950 font-mono font-black text-xs flex items-center justify-center shadow-[0_0_12px_rgba(255,183,3,0.4)] flex-none">C</div>
+                <div class="flex flex-col min-w-0">
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-sans font-extrabold text-xs tracking-wider uppercase text-white">CRITIC</span>
+                    <span class="font-mono text-[9px] bg-amber text-stone-950 font-bold px-1.5 py-0.5 tracking-wide">ORACLE</span>
+                    <span class="status-pill font-mono text-[9px] px-1.5 py-0.5 border border-stone-700 text-stone-400" id="criticStatus" data-status="idle">idle</span>
+                  </div>
+                  <span class="font-mono text-[10px] text-stone-400 truncate" id="criticRole"></span>
+                </div>
+              </div>
+              <div class="flex items-center gap-1 font-mono text-[10px] flex-wrap" id="criticChips"></div>
+            </div>
+          </div>
+
+          <div class="px-4 py-2 bg-stone-850 border-b border-stone-800 flex items-center justify-between font-mono text-[11px] select-none">
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-stone-200 uppercase tracking-wider">FEED LOG</span>
+              <span class="text-stone-600">|</span>
+              <span class="text-stone-400" id="feedTarget"></span>
+            </div>
+          </div>
+
+          <div class="p-4 space-y-4 max-h-[640px] overflow-y-auto bg-stone-950/70" id="feed"></div>
+
+          <div class="p-3 bg-stone-900 border-t border-stone-800 flex items-center justify-between font-mono text-xs">
+            <div class="flex items-center gap-2 text-stone-400" id="feedFoot">
+              <span class="w-2 h-2 bg-stone-500"></span>
+              <span class="text-[11px]">Replay — no live process. Reading a completed run's own log files.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: DELIVERED SOURCE -->
+        <div class="lg:col-span-5 flex flex-col bg-stone-900 border border-stone-800 shadow-2xl overflow-hidden">
+          <div class="flex items-center justify-between bg-stone-850 border-b border-stone-800 px-3 py-2">
+            <div class="flex items-center gap-1.5 font-mono text-xs font-bold text-stone-50">
+              <span class="text-stone-500 font-normal">01</span>
+              <span id="codeFileName">—</span>
+            </div>
+            <span class="font-mono text-[9px] text-stone-500 uppercase tracking-widest">final delivered, not a diff</span>
+          </div>
+          <div class="p-3.5 font-mono text-[12.5px] leading-relaxed text-stone-300 overflow-auto max-h-[640px]" id="codeBody"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="fixed bottom-0 left-64 right-0 h-16 bg-stone-900 border-t border-stone-800 z-40 px-6 flex items-center gap-6 select-none">
+    <div class="flex items-center gap-1.5">
+      <button class="w-8 h-8 bg-stone-850 hover:bg-stone-800 border border-stone-700 text-stone-300 flex items-center justify-center transition-colors" id="scrubStart" aria-label="Jump to start">
+        <span class="material-symbols-outlined text-[16px]">skip_previous</span>
+      </button>
+      <button class="w-9 h-9 bg-stone-50 hover:bg-white text-stone-950 flex items-center justify-center transition-colors font-bold" id="playBtn" aria-label="Play">
+        <span class="material-symbols-outlined text-[18px]" id="playIcon">play_arrow</span>
+      </button>
+      <button class="w-8 h-8 bg-stone-850 hover:bg-stone-800 border border-stone-700 text-stone-300 flex items-center justify-center transition-colors" id="scrubEnd" aria-label="Jump to end">
+        <span class="material-symbols-outlined text-[16px]">skip_next</span>
+      </button>
+    </div>
+    <div class="flex-1 flex flex-col gap-1.5 min-w-0">
+      <div class="flex items-center justify-between font-mono text-[10px]">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="font-bold text-stone-100" id="outcomeLabel">—</span>
+        </div>
+        <div class="flex items-center gap-1 text-stone-400 flex-none">
+          <span class="text-stone-200 font-bold" id="timeNow">0:00</span>
+          <span class="text-stone-600">/</span>
+          <span id="timeTotal">0:00</span>
+        </div>
+      </div>
+      <div class="scrub-wrap relative w-full">
+        <input type="range" class="scrub w-full h-2 bg-stone-850 border border-stone-750 appearance-none cursor-pointer" id="scrub" min="0" max="1000" value="0" aria-label="Timeline scrubber">
+        <div class="absolute inset-0 pointer-events-none" id="scrubMarks" style="top:2px; height:8px;"></div>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 font-mono text-xs flex-none">
+      <select class="px-2.5 py-1 bg-stone-850 border border-stone-700 text-stone-200 font-bold" id="speed" aria-label="Playback speed">
+        <option value="1">1×</option>
+        <option value="2">2×</option>
+        <option value="4" selected>4×</option>
+        <option value="10">10×</option>
+        <option value="30">30×</option>
+      </select>
+    </div>
+  </footer>
+</div>
+</div>
+
+<script>
+const RUNS = __RUNS_DATA__;
+
+function metaFor(run){
+  const s = run.summary || {};
+  const roles = run.roles || {};
+  const roleNames = Object.keys(roles);
+  const builderLike = roleNames.find(r => r === "builder" || r === "worker") || "builder";
+  const criticLike  = roleNames.find(r => r === "critic" || r === "orchestrator") || null;
+  return {
+    title: run.label,
+    gate: run.gate,
+    model: criticLike && s.criticModel && !/^none/.test(s.criticModel) ? `${s.builderModel} / ${s.criticModel}` : (s.builderModel || s.model || "?"),
+    builderTools: (roles[builderLike] && roles[builderLike].tools) || ["read","bash","edit","write","ls","grep","find","send_mail"],
+    criticTools: criticLike ? ((roles[criticLike] && roles[criticLike].tools) || ["send_mail"]) : [],
+    builderRole: builderLike === "worker" ? "worker: builds what the orchestrator briefs" : "implements against a spec it doesn't have",
+    criticRole: criticLike === "orchestrator" ? "orchestrator: decomposes, delegates, probes, claims done" : (criticLike ? "holds the spec, probes before approving" : "none — solo run"),
+    blurb: `${s.reason || "running"} · ${s.wallSec ? s.wallSec + "s" : ""} · ${typeof s.costUsd === "number" ? "$" + s.costUsd.toFixed(2) : ""}`
+  };
+}
+const TOOL_TAG = { read:"R", grep:"G", find:"F", ls:"L", write:"W", edit:"E", bash:"B", send_mail:"M" };
+const FACETS = [
+  { key:"thinking", label:"COT THOUGHTS" },
+  { key:"tool",      label:"TOOL RUNS" },
+  { key:"mail",      label:"MAIL EXCH" },
+  { key:"oracle",    label:"ORACLE" },
+];
+
+let currentId = null;
+let timer = null, playing = false, playhead = 0, speed = 4, duration = 1;
+let cursor = 0;
+const filters = { thinking:true, tool:true, mail:true, oracle:true };
+let searchQuery = "";
+
+function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function mailHtml(text){
+  let h = esc(text);
+  h = h.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  h = h.replace(/`([^`]+)`/g, "<code class='bg-stone-950 px-1 border border-stone-800'>$1</code>");
+  return h;
+}
+function fmtTime(s){
+  s = Math.max(0, Math.round(s));
+  const m = Math.floor(s/60), r = s%60;
+  return m + ":" + String(r).padStart(2,"0");
+}
+function fmtCost(c){ return c==null ? "—" : "$"+c.toFixed(2); }
+
+// ---------- sidebar run list ----------
+function buildRunList(){
+  const wrap = document.getElementById("runList");
+  wrap.innerHTML = "";
+  for (const id of Object.keys(RUNS)){
+    const r = RUNS[id];
+    const meta = metaFor(RUNS[id]);
+    const b = document.createElement("button");
+    b.className = "run-item w-full text-left p-2.5 flex items-center justify-between transition-colors";
+    b.dataset.id = id;
+    b.innerHTML =
+      '<div class="flex flex-col min-w-0"><span class="font-mono text-xs font-bold tracking-tight truncate run-title"></span>' +
+      '<span class="font-mono text-[10px] text-stone-500 truncate">'+meta.model+'</span></div>' +
+      '<span class="w-1.5 h-1.5 flex-none run-dot"></span>';
+    b.querySelector(".run-title").textContent = meta.title;
+    b.addEventListener("click", () => selectRun(id));
+    wrap.appendChild(b);
+  }
+}
+function paintRunList(){
+  document.querySelectorAll(".run-item").forEach((el) => {
+    const id = el.dataset.id;
+    const selected = id === currentId;
+    const complete = RUNS[id].complete;
+    el.className = "run-item w-full text-left p-2.5 flex items-center justify-between transition-colors " +
+      (selected ? "bg-stone-850 border-l-2 border-klein border-r border-t border-b border-stone-800" : "bg-stone-900 border border-stone-800/60 hover:border-stone-700 opacity-70 hover:opacity-100");
+    const dot = el.querySelector(".run-dot");
+    dot.className = "w-1.5 h-1.5 flex-none run-dot " + (complete ? "bg-braun-green" : "bg-vermilion animate-pulse");
+  });
+}
+
+// ---------- top stats strip ----------
+function buildStats(){
+  const r = RUNS[currentId];
+  const meta = metaFor(RUNS[currentId]);
+  const s = r.summary;
+  const el = document.getElementById("stats");
+  const cost = s ? s.costUsd : null;
+  const mailN = s ? s.mail : r.events.filter(e=>e.kind==="mail").length;
+  const wall = s ? s.wallSec : (r.events.length ? r.events[r.events.length-1].t : 0);
+  const toolsB = s ? s.toolCalls.builder : r.events.filter(e=>e.kind==="tool" && e.agent==="builder").length;
+  const toolsC = s ? s.toolCalls.critic : r.events.filter(e=>e.kind==="tool" && e.agent==="critic").length;
+  const items = [
+    { k:"MODEL", v: meta.model },
+    { k:"GATE", v: meta.gate },
+    { k:"ELAPSED", v: fmtTime(wall) + (r.complete ? "" : "+") },
+    { k:"COST", v: fmtCost(cost) },
+    { k:"TOOLS", v: (toolsB+toolsC) },
+    { k:"MAIL", v: mailN },
+    { k:"OUTCOME", v: s ? (s.reason.startsWith("SUCCESS") ? "PASSED" : "STOPPED") : "IN PROGRESS", cls: s ? (s.reason.startsWith("SUCCESS")?"text-braun-green":"text-vermilion") : "text-amber" },
+  ];
+  el.innerHTML = items.map((it) =>
+    '<div class="bg-stone-900 px-3 py-1.5 flex items-center gap-2 whitespace-nowrap">'+
+      '<span class="text-stone-500 text-[9px] uppercase tracking-wider">'+it.k+'</span>'+
+      '<span class="font-bold '+(it.cls||"text-stone-100")+'">'+it.v+'</span>'+
+    '</div>'
+  ).join("");
+}
+
+// ---------- facets (with live counts) ----------
+function buildFacets(){
+  const r = RUNS[currentId];
+  const counts = { thinking:0, tool:0, mail:0, oracle:0 };
+  for (const e of r.events) if (counts[e.kind] !== undefined) counts[e.kind]++;
+  const wrap = document.getElementById("facets");
+  wrap.innerHTML = FACETS.map((f) => {
+    const active = filters[f.key];
+    return '<button class="facet-btn px-2 py-1 border flex items-center gap-1.5 transition-colors '+
+      (active ? "bg-stone-900/90 border-stone-800 text-stone-200" : "bg-stone-900/40 border-stone-850 text-stone-600") +
+      '" data-facet="'+f.key+'">'+
+      '<span class="w-1.5 h-1.5 '+(active ? facetColor(f.key) : "bg-stone-700")+'"></span>'+
+      '<span>'+f.label+'</span>'+
+      '<span class="text-[9px] text-stone-500 bg-stone-950 px-1 border border-stone-850">'+counts[f.key]+'</span>'+
+    '</button>';
+  }).join("");
+  wrap.querySelectorAll(".facet-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.facet;
+      filters[key] = !filters[key];
+      buildFacets();
+      applyFilter(key);
+    });
+  });
+}
+function facetColor(key){
+  return key === "thinking" ? "bg-amber" : key === "tool" ? "bg-stone-400" : key === "mail" ? "bg-klein-light" : "bg-braun-green";
+}
+function applyFilter(cat){
+  document.getElementById("feed").querySelectorAll('[data-cat="'+cat+'"]').forEach((el) => {
+    el.hidden = !filters[cat] || !matchesSearch(el);
+  });
+}
+function matchesSearch(el){
+  if (!searchQuery) return true;
+  return el.textContent.toLowerCase().includes(searchQuery);
+}
+function applySearch(){
+  document.getElementById("feed").querySelectorAll(".event-item").forEach((el) => {
+    const cat = el.dataset.cat;
+    el.hidden = !filters[cat] || !matchesSearch(el);
+  });
+}
+
+// ---------- chips / roles ----------
+function buildChips(){
+  const meta = metaFor(RUNS[currentId]);
+  document.getElementById("builderChips").innerHTML = meta.builderTools.map((t)=>
+    '<span class="bg-stone-950 border border-stone-800 text-stone-400 px-1.5 py-0.5">'+t+'</span>').join("");
+  document.getElementById("criticChips").innerHTML = meta.criticTools.map((t)=>
+    '<span class="bg-stone-950 border border-stone-800 text-stone-400 px-1.5 py-0.5">'+t+'</span>').join("");
+  document.getElementById("builderRole").textContent = meta.builderRole;
+  document.getElementById("criticRole").textContent = meta.criticRole;
+  document.getElementById("feedTarget").innerHTML = "Task: <code class='text-stone-100 font-bold bg-stone-950 px-1 border border-stone-800'>"+meta.title+"</code>";
+}
+
+// ---------- delivered source (right pane), real content only ----------
+function hilite(code, isJson){
+  const esc1 = esc(code);
+  if (isJson){
+    return esc1.replace(/("(?:\\.|[^"\\])*")(\s*:)?|(\btrue\b|\bfalse\b|\bnull\b)|(-?\d+\.?\d*)/g, (m, str, colon, kw, num) => {
+      if (str) return '<span class="'+(colon?"code-fn":"code-str")+'">'+str+'</span>'+(colon||"");
+      if (kw) return '<span class="code-kw">'+kw+'</span>';
+      if (num) return '<span class="code-num">'+num+'</span>';
+      return m;
+    });
+  }
+  const KW = /\b(export|function|const|let|var|return|if|else|for|while|new|throw|typeof|import|from|async|await|try|catch|class|extends|of|in|null|undefined|true|false)\b/;
+  return esc1.replace(/(\/\/[^\n]*)|(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\b\d+\.?\d*\b)|([A-Za-z_$][A-Za-z0-9_$]*)/g,
+    (m, com, str, num, word) => {
+      if (com) return '<span class="code-com">'+com+'</span>';
+      if (str) return '<span class="code-str">'+str+'</span>';
+      if (num) return '<span class="code-num">'+num+'</span>';
+      if (word && KW.test(word)) return '<span class="code-kw">'+word+'</span>';
+      return m;
+    });
+}
+function buildCode(){
+  const r = RUNS[currentId];
+  const fileEl = document.getElementById("codeFileName");
+  const bodyEl = document.getElementById("codeBody");
+  fileEl.textContent = r.sourceFile || "—";
+  if (!r.source){
+    bodyEl.innerHTML = '<div class="text-stone-600 italic p-2">No deliverable written yet.</div>';
+    return;
+  }
+  const isJson = (r.sourceFile || "").endsWith(".json");
+  const lines = r.source.split("\n");
+  bodyEl.innerHTML = lines.map((line, i) =>
+    '<div class="flex items-start gap-3 py-0.5 hover:bg-stone-900/40">'+
+    '<span class="text-stone-600 select-none w-7 text-right font-light text-[11px] pt-0.5 flex-none">'+(i+1)+'</span>'+
+    '<div class="flex-1 whitespace-pre-wrap break-all">'+(hilite(line, isJson) || "&nbsp;")+'</div></div>'
+  ).join("");
+}
+
+// ---------- feed rendering ----------
+function clearEmpty(){
+  const e = document.querySelector("#feed .feed-empty");
+  if (e) e.remove();
+}
+function resetFeed(){
+  document.getElementById("feed").innerHTML = '<div class="feed-empty text-stone-600 italic text-xs p-2">— waiting —</div>';
+  cursor = 0;
+  paintStatus("builder","idle"); paintStatus("critic","idle");
+}
+function paintStatus(who, status){
+  const el = document.getElementById(who+"Status");
+  el.dataset.status = status;
+  el.textContent = status;
+  el.className = "status-pill font-mono text-[9px] px-1.5 py-0.5 border " +
+    (status === "streaming" ? "border-braun-green text-braun-green bg-braun-greendim" : "border-stone-700 text-stone-400");
+}
+function agentBadge(agent){
+  const color = agent === "builder" ? "bg-klein text-white shadow-[0_0_8px_rgba(0,85,255,0.35)]" : "bg-amber text-stone-950 shadow-[0_0_8px_rgba(255,183,3,0.35)]";
+  return '<span class="w-5 h-5 font-mono font-black text-[11px] flex items-center justify-center flex-none '+color+'">'+agent[0].toUpperCase()+'</span>';
+}
+function agentName(agent){
+  return agent === "builder" ? '<span class="font-sans font-black text-xs text-klein-light uppercase tracking-wide">BUILDER</span>'
+                              : '<span class="font-sans font-black text-xs text-amber uppercase tracking-wide">CRITIC</span>';
+}
+function row(catClass, html, align){
+  const div = document.createElement("div");
+  div.className = "event-item " + catClass + " flex flex-col gap-1.5 max-w-[94%]" + (align ? " ml-auto" : "");
+  div.innerHTML = html;
+  return div;
+}
+
+function renderThinking(e){
+  clearEmpty();
+  const long = e.text.length > 420;
+  const body = long ? e.text.slice(0,420) + "…" : e.text;
+  const el = row("thinking", "");
+  el.dataset.cat = "thinking";
+  if (e.agent === "critic") el.classList.add("ml-auto"); // classList.add("") throws — this crashed the whole render loop on the first builder thought
+  el.innerHTML =
+    '<div class="flex items-center justify-between font-mono text-[11px] pb-1"><div class="flex items-center gap-2">'+
+    agentBadge(e.agent) + agentName(e.agent) +
+    '<span class="font-mono text-[9px] bg-stone-950 text-stone-500 border border-stone-850 px-1.5 py-0.5 font-medium">COT</span></div>'+
+    '<span class="text-[10px] text-stone-500 font-mono">'+fmtTime(e.t)+'</span></div>'+
+    '<div class="bg-stone-950/90 border-l-2 border-stone-700 border-r border-t border-b border-stone-850 p-3 font-sans text-xs text-stone-400 leading-relaxed shadow-md">'+
+    '<div class="flex items-center gap-1.5 font-mono text-[10px] text-stone-500 font-bold uppercase tracking-wider mb-1.5">'+
+    '<span class="material-symbols-outlined text-[13px]">psychology</span><span>REASONING</span></div>'+
+    '<p class="italic leading-relaxed" data-body>"'+esc(body)+'"</p></div>';
+  if (long){
+    const btn = document.createElement("button");
+    btn.className = "font-mono text-[10px] uppercase tracking-wide text-stone-500 hover:text-stone-300 self-start mt-1";
+    btn.textContent = "show full thought";
+    let expanded = false;
+    btn.addEventListener("click", () => {
+      expanded = !expanded;
+      el.querySelector("[data-body]").textContent = '"' + (expanded ? e.text : body) + '"';
+      btn.textContent = expanded ? "show less" : "show full thought";
+    });
+    el.appendChild(btn);
+  }
+  el.hidden = !filters.thinking || !matchesSearch(el);
+  document.getElementById("feed").appendChild(el);
+  scrollFeed();
+  paintStatus(e.agent, "streaming");
+}
+
+function renderTool(e){
+  clearEmpty();
+  const isWarn = e.kind === "warn";
+  const isLifecycle = e.kind === "lifecycle";
+  if (isLifecycle){
+    if (/settled/.test(e.text)) paintStatus(e.agent, "settled");
+    return;
+  }
+  const el = row("tools", "");
+  el.dataset.cat = "tool";
+  const m = /^(\w+)/.exec(e.text);
+  const tag = m ? (TOOL_TAG[m[1]] || m[1][0].toUpperCase()) : "·";
+  el.innerHTML =
+    '<div class="flex items-center justify-between font-mono text-[11px] pb-1"><div class="flex items-center gap-2">'+
+    (e.agent ? agentBadge(e.agent) + agentName(e.agent) : '<span class="font-sans font-black text-xs text-stone-400 uppercase tracking-wide">SYSTEM</span>')+
+    '</div><span class="text-[10px] text-stone-500 font-mono">'+fmtTime(e.t)+'</span></div>'+
+    '<div class="bg-stone-950 border border-stone-850 overflow-hidden shadow-md">'+
+    '<div class="bg-stone-900/90 px-3 py-1.5 border-b border-stone-850 flex items-center gap-2 font-mono text-[11px]">'+
+    '<span class="text-stone-500 font-black w-4 text-center">'+tag+'</span>'+
+    '<span class="text-stone-300 flex-1 truncate '+(isWarn?"text-vermilion":"")+'">'+esc(e.text)+'</span></div></div>';
+  el.hidden = !filters.tool || !matchesSearch(el);
+  document.getElementById("feed").appendChild(el);
+  scrollFeed();
+  if (e.agent) paintStatus(e.agent, "streaming");
+}
+
+function renderMail(e){
+  clearEmpty();
+  const long = e.text.length > 420;
+  const body = long ? e.text.slice(0,420) + "…" : e.text;
+  const html = mailHtml(body);
+  const el = row("mail", "", e.from === "critic");
+  el.dataset.cat = "mail";
+  const other = e.from === "builder" ? "critic" : "builder";
+  const kindColor = e.mailKind === "done" ? "bg-braun-greendim text-braun-green border-braun-green/40" : "bg-stone-950 text-stone-400 border-stone-800";
+  el.innerHTML =
+    '<div class="flex items-center justify-between font-mono text-[11px] pb-1"><div class="flex items-center gap-2">'+
+    agentBadge(e.from) + agentName(e.from) +
+    '<span class="font-mono text-[10px] bg-stone-950 text-stone-300 px-1.5 py-0.5 border border-stone-800 font-bold flex items-center gap-1.5">'+
+    '<span class="'+(e.from==="builder"?"text-klein-light":"text-amber")+'">'+e.from.toUpperCase()+'</span>'+
+    '<span class="text-stone-500">→</span><span class="'+(other==="builder"?"text-klein-light":"text-amber")+'">'+other.toUpperCase()+'</span></span></div>'+
+    '<span class="text-[10px] text-stone-500 font-mono">#'+e.n+' · '+fmtTime(e.t)+'</span></div>'+
+    '<div class="bg-stone-900 border border-stone-800 p-3 space-y-2 shadow-lg">'+
+    '<div class="flex items-center justify-between border-b border-stone-800 pb-1.5">'+
+    '<span class="font-mono text-[9px] uppercase tracking-wide px-1.5 py-0.5 border '+kindColor+'">'+e.mailKind+'</span>'+
+    (e.truncated ? '<span class="font-mono text-[9px] text-vermilion font-bold" title="cut off at the mail size cap">⚑ CUT OFF</span>' : '')+
+    '</div><p class="font-sans text-xs text-stone-300 leading-normal whitespace-pre-wrap" data-body>'+html+'</p></div>';
+  if (long){
+    const btn = document.createElement("button");
+    btn.className = "font-mono text-[10px] uppercase tracking-wide text-stone-500 hover:text-stone-300 self-start mt-1";
+    btn.textContent = "show full message";
+    let expanded = false;
+    btn.addEventListener("click", () => {
+      expanded = !expanded;
+      el.querySelector("[data-body]").innerHTML = mailHtml(expanded ? e.text : body);
+      btn.textContent = expanded ? "show less" : "show full message";
+    });
+    el.appendChild(btn);
+  }
+  el.hidden = !filters.mail || !matchesSearch(el);
+  document.getElementById("feed").appendChild(el);
+  scrollFeed();
+  paintStatus(e.from, "settled");
+  paintStatus(e.to, "streaming");
+}
+
+function renderOracle(e){
+  clearEmpty();
+  const pass = /(\d+)\/\1 passed/.test(e.text) && !/0\/0/.test(e.text);
+  const el = row("oracle", "");
+  el.dataset.cat = "oracle";
+  el.classList.add("bg-stone-950","border","border-stone-800","p-3.5","relative","shadow-xl");
+  el.innerHTML =
+    '<div class="flex items-center justify-between border-b border-stone-800 pb-2.5">'+
+    '<div class="flex items-center gap-2.5"><span class="w-5 h-5 bg-stone-800 text-stone-100 font-mono font-black text-[11px] flex items-center justify-center border border-stone-700">O</span>'+
+    '<span class="font-sans text-sm font-black tracking-wider uppercase text-stone-100">SYSTEM / ORACLE GATE</span></div>'+
+    '<span class="font-mono text-[10px] font-bold px-2 py-0.5 uppercase tracking-wider '+(pass?"bg-braun-greendim text-braun-green border border-braun-green/40":"bg-vermilion/10 text-vermilion border border-vermilion/40")+'">'+(pass?"PASSED":"NOT YET")+'</span>'+
+    '</div><div class="py-2.5 font-sans text-xs text-stone-400 leading-relaxed">'+esc(e.text)+'</div>';
+  el.hidden = false;
+  document.getElementById("feed").appendChild(el);
+  scrollFeed();
+}
+function scrollFeed(){
+  const f = document.getElementById("feed");
+  f.scrollTop = f.scrollHeight;
+}
+
+function applyEvent(e){
+  if (e.kind === "mail") renderMail(e);
+  else if (e.kind === "oracle") renderOracle(e);
+  else if (e.kind === "thinking") renderThinking(e);
+  else renderTool(e);
+}
+
+// ---------- playback ----------
+function buildScrubMarks(){
+  const r = RUNS[currentId];
+  const marks = document.getElementById("scrubMarks");
+  marks.innerHTML = "";
+  for (const e of r.events){
+    if (e.kind !== "oracle") continue;
+    const pass = /(\d+)\/\1 passed/.test(e.text) && !/0\/0/.test(e.text);
+    const pct = duration ? (e.t/duration*100) : 0;
+    const m = document.createElement("div");
+    m.className = "absolute top-0 bottom-0 w-0.5 " + (pass ? "bg-braun-green" : "bg-vermilion");
+    m.style.left = pct + "%";
+    marks.appendChild(m);
+  }
+}
+function seekTo(t){
+  const r = RUNS[currentId];
+  if (t < playhead || cursor === 0) resetFeed();
+  playhead = t;
+  while (cursor < r.events.length && r.events[cursor].t <= playhead){
+    applyEvent(r.events[cursor]);
+    cursor++;
+  }
+  document.getElementById("timeNow").textContent = fmtTime(playhead);
+  document.getElementById("scrub").value = Math.round(playhead/duration*1000);
+}
+function tick(prevT){
+  const now = performance.now();
+  const dt = (now - prevT)/1000;
+  playhead += dt*speed;
+  if (playhead >= duration){ playhead = duration; seekTo(playhead); pause(); return; }
+  seekTo(playhead);
+  timer = requestAnimationFrame(() => tick(now));
+}
+function play(){
+  if (playing) return;
+  if (playhead >= duration){ playhead = 0; resetFeed(); }
+  playing = true;
+  document.getElementById("playIcon").textContent = "pause";
+  timer = requestAnimationFrame((t)=>tick(performance.now()));
+}
+function pause(){
+  playing = false;
+  document.getElementById("playIcon").textContent = "play_arrow";
+  if (timer) cancelAnimationFrame(timer);
+}
+
+function selectRun(id){
+  pause();
+  currentId = id;
+  const r = RUNS[id];
+  duration = Math.max(1, r.events.length ? r.events[r.events.length-1].t + 3 : 1);
+  playhead = 0; cursor = 0;
+
+  paintRunList();
+  document.getElementById("runSub").textContent = metaFor(RUNS[id]).blurb;
+  document.getElementById("feedFoot").querySelector("span:last-child").textContent =
+    r.complete ? "Replay — no live process. Reading a completed run's own log files." : "Replay — this run was still in progress when captured.";
+  document.getElementById("outcomeLabel").textContent = r.complete ? (r.summary.reason.startsWith("SUCCESS") ? "ORACLE PASSED" : "STOPPED: " + r.summary.reason) : "IN PROGRESS";
+
+  buildStats(); buildChips(); buildFacets(); buildCode(); resetFeed(); buildScrubMarks();
+  document.getElementById("timeTotal").textContent = fmtTime(duration);
+  document.getElementById("scrub").value = 0;
+  document.getElementById("timeNow").textContent = "0:00";
+
+  play();
+}
+
+document.getElementById("playBtn").addEventListener("click", () => playing ? pause() : play());
+document.getElementById("scrubStart").addEventListener("click", () => { pause(); seekTo(0); });
+document.getElementById("scrubEnd").addEventListener("click", () => { pause(); seekTo(duration); });
+document.getElementById("speed").addEventListener("change", (e) => speed = Number(e.target.value));
+document.getElementById("scrub").addEventListener("input", (e) => { pause(); seekTo(Number(e.target.value)/1000*duration); });
+document.getElementById("searchFilter").addEventListener("input", (e) => { searchQuery = e.target.value.toLowerCase(); applySearch(); });
+
+buildRunList();
+selectRun(Object.keys(RUNS)[Object.keys(RUNS).length-1]);
+</script>
