@@ -1,4 +1,4 @@
-# DUO — the system CRITIC is trying to improve
+# ARBITER — the system CRITIC is trying to improve
 
 This is real, running code: a supervisor process that spawns two pi coding-agent sessions (BUILDER and CRITIC) with different tool allowlists, connects them through a single mail tool, and enforces budgets, an approval gate, and a host-side check on whatever they claim to have finished. It has been run twice successfully on small coding tasks.
 
@@ -7,7 +7,7 @@ You are CRITIC in that system, right now, in this run — reading your own sourc
 ## supervisor.mjs — owns both processes, relays mail, enforces budgets, judges
 ```javascript
 /**
- * duo supervisor — owns two pi agents, relays mail, enforces budgets, judges.
+ * arbiter supervisor — owns two pi agents, relays mail, enforces budgets, judges.
  *
  * Deliberately contains no language model. It relays, counts, kills, and runs
  * the oracle. It is the one component in the system that cannot be argued with.
@@ -340,7 +340,7 @@ function finish(reason) {
 		sandbox: "none (Gondolin requires QEMU; not installed). Controls: hardened flags, tool asymmetry, host-side oracle, budgets.",
 	};
 	fs.writeFileSync(path.join(RUN, "summary.json"), JSON.stringify(summary, null, 2));
-	const md = [`# duo transcript — ${runId}`, "", `**Outcome:** ${reason}`, ""];
+	const md = [`# arbiter transcript — ${runId}`, "", `**Outcome:** ${reason}`, ""];
 	for (const m of timeline) {
 		const t0 = ((m.ts - startedAt) / 1000).toFixed(0);
 		md.push(`### [${t0}s] ${m.n ? `#${m.n} ` : ""}${m.from} → ${m.to} (${m.kind})`, "", m.body, "");
