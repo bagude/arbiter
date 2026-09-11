@@ -150,7 +150,7 @@ function launch(name) {
 		// from the workspace, and project-local files are ignored unconditionally.
 		"-ne",
 		"-e",
-		path.join(here, "mail-ext.ts"),
+		path.join(here, "ext", "mail-ext.ts"),
 		"-na",
 		"-ns",
 		"-np",
