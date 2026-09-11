@@ -11,6 +11,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { truncateForMail } from "./lib/text.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const REPO = "C:/Users/user/open_harnessess/pi/pi";
@@ -154,11 +155,6 @@ function hashDir(dir) {
 // recovery could then summarize, an unrecoverable stall rather than a slowdown.
 // This caps only the DISPLAY string; comparisons for expect/match always use the
 // full untruncated value.
-const PROBE_VALUE_MAX = 1500;
-function truncateForMail(s) {
-	if (s.length <= PROBE_VALUE_MAX) return s;
-	return `${s.slice(0, PROBE_VALUE_MAX)}…[truncated, ${s.length} chars total — ask for a smaller case, e.g. a shorter n, if you need to see all of it]`;
-}
 
 function launch(name) {
 	const cfg = AGENTS[name];
