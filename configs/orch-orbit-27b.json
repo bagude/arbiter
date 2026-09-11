@@ -1,0 +1,4 @@
+{ "task": "orbit", "pattern": "orchestrator",
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
+  "caps": { "toolCalls": 250, "wallSec": 6000, "usd": 5, "doneAttempts": 5 },
+  "_note": "First orchestrator run on the proven 27B footprint (2026-09-11): the Flash-Next server alone left ~1.3 GB RAM free and the Flash run was OOM-killed; orch-orbit-flash.json is rerun once the router is restarted with only Flash resident." }

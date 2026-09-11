@@ -675,6 +675,7 @@ function pumpLifecycle() {
 				break;
 			}
 			case "subagents:update":
+				if (!wid) break;
 				log({ agent: wid, type: "report", msg: `update: ${String(data.message ?? data.text ?? JSON.stringify(data)).replace(/\s+/g, " ").slice(0, 300)}` });
 				timeline.push({ ts: Date.now(), from: wid, to: "orchestrator", kind: "report", body: String(data.message ?? data.text ?? "") });
 				break;
@@ -1169,9 +1170,15 @@ function checkBashTimeout() {
 				send("orchestrator", { type: "abort" });
 				deliver(
 					"orchestrator",
-					`[SUPERVISOR] Worker ${s.name} had a bash command running for ${(ranMs / 1000).toFixed(0)}s (limit ${CAPS.bashTimeoutSec}s), so it was force-aborted: ` +
-						`\`${String(info.command).slice(0, 200)}\`. Your own turn was aborted with it. The worker keeps its context — continue it with ` +
-						`subagent using resume: "${s.name.replace(/^worker:/, "")}" and tell it to scope its searches and pass an explicit bash "timeout".`,
+					// Background flow caveat: get_subagent_result{wait:true} only races the wait against
+					// the abort signal (subagent.ts settleOrAbort), so the abort ends the orchestrator's
+					// wait but a background child keeps running — the host cannot reach it. The text
+					// must not claim otherwise; steer_subagent is the one thing that reaches a running
+					// worker, and resume only opens once it has settled.
+					`[SUPERVISOR] Worker ${s.name} has had a bash command running for ${(ranMs / 1000).toFixed(0)}s (limit ${CAPS.bashTimeoutSec}s): ` +
+						`\`${String(info.command).slice(0, 200)}\`. Your current turn was aborted. If you started the worker in the foreground, its bash was aborted with it and it has settled — ` +
+						`continue it with subagent using resume: "${s.name.replace(/^worker:/, "")}". If you started it in the background, it is still running: ` +
+						`use steer_subagent to tell it to stop that command, scope its searches, and pass an explicit bash "timeout".`,
 					"worker bash timeout",
 				);
 				continue;
