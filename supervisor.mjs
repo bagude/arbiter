@@ -1,5 +1,5 @@
 /**
- * duo supervisor — owns two pi agents, relays mail, enforces budgets, judges.
+ * arbiter supervisor — owns two pi agents, relays mail, enforces budgets, judges.
  *
  * Deliberately contains no language model. It relays, counts, kills, and runs
  * the oracle. It is the one component in the system that cannot be argued with.
@@ -131,7 +131,7 @@ let finished = false;
 
 // The gate used to require BUILDER's own kind="done" before CRITIC's approval
 // could trigger the oracle. Evidence from six straight local-model runs (see
-// duo/runs/2026-09-10T1[4-7]-*) showed BUILDER simply never sends it — not once,
+// arbiter/runs/2026-09-10T1[4-7]-*) showed BUILDER simply never sends it — not once,
 // across any of them — no matter how directly CRITIC or the supervisor asked.
 // The precondition was standing in for a real invariant: the code CRITIC is
 // approving must be the code that gets tested, and it must not be mid-edit.
@@ -491,7 +491,7 @@ function runProbe(msg) {
 		// this exact code is not re-executed at all. Re-running it can only produce the
 		// same answer, and a prose reminder not to bother didn't stop it happening live
 		// (the same case was re-probed 3+ times across ~1400s). This mirrors how the
-		// rest of duo works — BUILDER doesn't get a "please don't probe" reminder, it
+		// rest of arbiter works — BUILDER doesn't get a "please don't probe" reminder, it
 		// doesn't have the tool at all; CRITIC doesn't get "please don't re-probe this",
 		// it can't.
 		const currentSrcHash = hashDir(path.join(WS.builder, "src"));
@@ -847,7 +847,7 @@ function finish(reason) {
 		sandbox: "none (Gondolin requires QEMU; not installed). Controls: hardened flags, tool asymmetry, host-side oracle, budgets.",
 	};
 	fs.writeFileSync(path.join(RUN, "summary.json"), JSON.stringify(summary, null, 2));
-	const md = [`# duo transcript — ${runId}`, "", `**Outcome:** ${reason}`, ""];
+	const md = [`# arbiter transcript — ${runId}`, "", `**Outcome:** ${reason}`, ""];
 	for (const m of timeline) {
 		const t0 = ((m.ts - startedAt) / 1000).toFixed(0);
 		md.push(`### [${t0}s] ${m.n ? `#${m.n} ` : ""}${m.from} → ${m.to} (${m.kind})`, "", m.body, "");
