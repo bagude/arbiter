@@ -1,25 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { discoverRuns } from "./extract-runs.mjs";
+import { readJsonl } from "../lib/jsonl.mjs";
 
 const RUNS = discoverRuns().map((r) => ({ dir: r.dir, label: r.label }));
-
-function readJsonl(p) {
-	if (!fs.existsSync(p)) return [];
-	return fs
-		.readFileSync(p, "utf8")
-		.split("\n")
-		.map((l) => l.trim())
-		.filter(Boolean)
-		.map((l) => {
-			try {
-				return JSON.parse(l);
-			} catch {
-				return null;
-			}
-		})
-		.filter(Boolean);
-}
 
 function tokenTotals(dir) {
 	let input = 0,

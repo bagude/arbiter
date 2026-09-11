@@ -1,0 +1,10 @@
+{
+	"_note": "requires downloading the qwen3.5-9b model and registering it in pi's llama.cpp provider before use — qwen3.5-9b is not registered today (unlike qwen3-flash).",
+	"task": "orbit",
+	"pattern": "orchestrator",
+	"roles": {
+		"orchestrator": { "provider": "llama.cpp", "model": "qwen3.5-9b" },
+		"worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 }
+	},
+	"caps": { "toolCalls": 250, "wallSec": 6000, "usd": 5, "doneAttempts": 5 }
+}

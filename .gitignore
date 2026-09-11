@@ -1,3 +1,5 @@
 runs/
 .ws-*/
 node_modules/
+tools/console.html
+tools/runs-data.json

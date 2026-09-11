@@ -227,17 +227,24 @@ function metaFor(run){
 }
 const TOOL_TAG = { read:"R", grep:"G", find:"F", ls:"L", write:"W", edit:"E", bash:"B", send_mail:"M" };
 const FACETS = [
-  { key:"thinking", label:"COT THOUGHTS" },
-  { key:"tool",      label:"TOOL RUNS" },
-  { key:"mail",      label:"MAIL EXCH" },
-  { key:"oracle",    label:"ORACLE" },
+  { key:"thinking",   label:"COT THOUGHTS" },
+  { key:"tool",       label:"TOOL RUNS" },
+  { key:"mail",       label:"MAIL EXCH" },
+  { key:"delegation", label:"DELEGATION" },
+  { key:"oracle",     label:"ORACLE" },
 ];
 
 let currentId = null;
 let timer = null, playing = false, playhead = 0, speed = 4, duration = 1;
 let cursor = 0;
-const filters = { thinking:true, tool:true, mail:true, oracle:true };
+const filters = { thinking:true, tool:true, mail:true, delegation:true, oracle:true };
 let searchQuery = "";
+// Agent-colour lanes generalize past the fixed builder/critic pair: an orchestrator
+// run's agents are "orchestrator" and "worker:<id>", one per spawned pi-subagent.
+// A worker plays the builder's role (klein/left lane); the orchestrator plays the
+// critic's (amber/right lane) — same palette, same "who is acting" convention.
+function isBuilderLike(agent){ return agent === "builder" || (typeof agent === "string" && agent.startsWith("worker:")); }
+function isCriticLike(agent){ return agent === "critic" || agent === "orchestrator"; }
 
 function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 function mailHtml(text){
@@ -315,7 +322,7 @@ function buildStats(){
 // ---------- facets (with live counts) ----------
 function buildFacets(){
   const r = RUNS[currentId];
-  const counts = { thinking:0, tool:0, mail:0, oracle:0 };
+  const counts = { thinking:0, tool:0, mail:0, delegation:0, oracle:0 };
   for (const e of r.events) if (counts[e.kind] !== undefined) counts[e.kind]++;
   const wrap = document.getElementById("facets");
   wrap.innerHTML = FACETS.map((f) => {
@@ -338,7 +345,7 @@ function buildFacets(){
   });
 }
 function facetColor(key){
-  return key === "thinking" ? "bg-amber" : key === "tool" ? "bg-stone-400" : key === "mail" ? "bg-klein-light" : "bg-braun-green";
+  return key === "thinking" ? "bg-amber" : key === "tool" ? "bg-stone-400" : key === "mail" ? "bg-klein-light" : key === "delegation" ? "bg-amber" : "bg-braun-green";
 }
 function applyFilter(cat){
   document.getElementById("feed").querySelectorAll('[data-cat="'+cat+'"]').forEach((el) => {
@@ -418,19 +425,23 @@ function resetFeed(){
   paintStatus("builder","idle"); paintStatus("critic","idle");
 }
 function paintStatus(who, status){
+  // Only "builder" and "criticStatus" pills exist in the header — an orchestrator
+  // run's "orchestrator" / "worker:<id>" agents have no pill of their own to paint.
   const el = document.getElementById(who+"Status");
+  if (!el) return;
   el.dataset.status = status;
   el.textContent = status;
   el.className = "status-pill font-mono text-[9px] px-1.5 py-0.5 border " +
     (status === "streaming" ? "border-braun-green text-braun-green bg-braun-greendim" : "border-stone-700 text-stone-400");
 }
 function agentBadge(agent){
-  const color = agent === "builder" ? "bg-klein text-white shadow-[0_0_8px_rgba(0,85,255,0.35)]" : "bg-amber text-stone-950 shadow-[0_0_8px_rgba(255,183,3,0.35)]";
-  return '<span class="w-5 h-5 font-mono font-black text-[11px] flex items-center justify-center flex-none '+color+'">'+agent[0].toUpperCase()+'</span>';
+  const color = isBuilderLike(agent) ? "bg-klein text-white shadow-[0_0_8px_rgba(0,85,255,0.35)]" : "bg-amber text-stone-950 shadow-[0_0_8px_rgba(255,183,3,0.35)]";
+  const letter = agent && agent[0] ? agent[0].toUpperCase() : "?";
+  return '<span class="w-5 h-5 font-mono font-black text-[11px] flex items-center justify-center flex-none '+color+'">'+letter+'</span>';
 }
 function agentName(agent){
-  return agent === "builder" ? '<span class="font-sans font-black text-xs text-klein-light uppercase tracking-wide">BUILDER</span>'
-                              : '<span class="font-sans font-black text-xs text-amber uppercase tracking-wide">CRITIC</span>';
+  const cls = isBuilderLike(agent) ? "text-klein-light" : "text-amber";
+  return '<span class="font-sans font-black text-xs '+cls+' uppercase tracking-wide">'+esc(String(agent||"").toUpperCase())+'</span>';
 }
 function row(catClass, html, align){
   const div = document.createElement("div");
@@ -445,7 +456,7 @@ function renderThinking(e){
   const body = long ? e.text.slice(0,420) + "…" : e.text;
   const el = row("thinking", "");
   el.dataset.cat = "thinking";
-  if (e.agent === "critic") el.classList.add("ml-auto"); // classList.add("") throws — this crashed the whole render loop on the first builder thought
+  if (isCriticLike(e.agent)) el.classList.add("ml-auto"); // classList.add("") throws — this crashed the whole render loop on the first builder thought
   el.innerHTML =
     '<div class="flex items-center justify-between font-mono text-[11px] pb-1"><div class="flex items-center gap-2">'+
     agentBadge(e.agent) + agentName(e.agent) +
@@ -539,6 +550,25 @@ function renderMail(e){
   paintStatus(e.to, "streaming");
 }
 
+function renderDelegation(e){
+  clearEmpty();
+  const el = row("delegation", "");
+  el.dataset.cat = "delegation";
+  const tag = String(e.sub || "").toUpperCase();
+  el.innerHTML =
+    '<div class="flex items-center justify-between font-mono text-[11px] pb-1"><div class="flex items-center gap-2">'+
+    (e.agent ? agentBadge(e.agent) + agentName(e.agent) : '<span class="font-sans font-black text-xs text-stone-400 uppercase tracking-wide">SYSTEM</span>')+
+    '</div><span class="text-[10px] text-stone-500 font-mono">'+fmtTime(e.t)+'</span></div>'+
+    '<div class="bg-stone-950 border-l-2 border-amber border-t border-r border-b border-stone-850 overflow-hidden shadow-md">'+
+    '<div class="bg-stone-900/90 px-3 py-1.5 border-b border-stone-850 flex items-center gap-2 font-mono text-[11px]">'+
+    '<span class="text-amber font-black text-[10px] uppercase tracking-wide">'+esc(tag)+'</span>'+
+    '<span class="text-stone-300 flex-1 truncate">'+esc(e.text)+'</span></div></div>';
+  el.hidden = !filters.delegation || !matchesSearch(el);
+  document.getElementById("feed").appendChild(el);
+  scrollFeed();
+  if (e.agent) paintStatus(e.agent, "streaming");
+}
+
 function renderOracle(e){
   clearEmpty();
   const pass = /(\d+)\/\1 passed/.test(e.text) && !/0\/0/.test(e.text);
@@ -564,6 +594,7 @@ function applyEvent(e){
   if (e.kind === "mail") renderMail(e);
   else if (e.kind === "oracle") renderOracle(e);
   else if (e.kind === "thinking") renderThinking(e);
+  else if (e.kind === "delegation") renderDelegation(e);
   else renderTool(e);
 }
 

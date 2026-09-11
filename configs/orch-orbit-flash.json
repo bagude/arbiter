@@ -1,0 +1,9 @@
+{
+	"task": "orbit",
+	"pattern": "orchestrator",
+	"roles": {
+		"orchestrator": { "provider": "llama.cpp", "model": "qwen3-flash" },
+		"worker": { "provider": "llama.cpp", "model": "qwen3-flash", "max": 1 }
+	},
+	"caps": { "toolCalls": 250, "wallSec": 6000, "usd": 5, "doneAttempts": 5 }
+}

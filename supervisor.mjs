@@ -1050,6 +1050,21 @@ function finish(reason) {
 	};
 	fs.writeFileSync(path.join(RUN, "summary.json"), JSON.stringify(summary, null, 2));
 	const md = [`# arbiter transcript — ${runId}`, "", `**Outcome:** ${reason}`, ""];
+	// Delegation tree: one entry per worker the orchestrator spawned, each followed by
+	// its resumes and its final report, in the order the worker experienced them — the
+	// interleaved timeline below already has this, but not as a single readable branch.
+	if (PATTERN === "orchestrator") {
+		md.push("## Delegation", "");
+		const byWorker = new Map();
+		for (const m of timeline) {
+			if (m.kind === "spawn") byWorker.set(m.to, [`- **${m.to}** spawned at ${((m.ts - startedAt) / 1000).toFixed(0)}s — brief: ${m.body.replace(/\s+/g, " ").slice(0, 200)}`]);
+			if ((m.kind === "resume" || m.kind === "report") && byWorker.has(m.kind === "resume" ? m.to : m.from)) {
+				byWorker.get(m.kind === "resume" ? m.to : m.from).push(`  - ${m.kind} at ${((m.ts - startedAt) / 1000).toFixed(0)}s: ${m.body.replace(/\s+/g, " ").slice(0, 160)}`);
+			}
+		}
+		for (const lines of byWorker.values()) md.push(...lines);
+		md.push("");
+	}
 	for (const m of timeline) {
 		const t0 = ((m.ts - startedAt) / 1000).toFixed(0);
 		md.push(`### [${t0}s] ${m.n ? `#${m.n} ` : ""}${m.from} → ${m.to} (${m.kind})`, "", m.body, "");

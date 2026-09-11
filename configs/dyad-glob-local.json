@@ -1,0 +1,9 @@
+{
+	"task": "glob",
+	"pattern": "dyad",
+	"roles": {
+		"builder": { "provider": "llama.cpp", "model": "qwen3-27b" },
+		"critic": { "provider": "llama.cpp", "model": "qwen3-27b" }
+	},
+	"caps": { "wallSec": 1500 }
+}

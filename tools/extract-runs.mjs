@@ -1,28 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readJsonl } from "../lib/jsonl.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const RUNS_DIR = path.join(here, "..", "runs");
 const THINK_CAP = 6000;
 const SRC_BY_TASK = { duration: "duration.mjs", glob: "glob.mjs", orbit: "orbit.mjs", decline: "decline.mjs", "intercom-review": "findings.json" };
-
-function readJsonl(p) {
-	if (!fs.existsSync(p)) return [];
-	return fs
-		.readFileSync(p, "utf8")
-		.split("\n")
-		.map((l) => l.trim())
-		.filter(Boolean)
-		.map((l) => {
-			try {
-				return JSON.parse(l);
-			} catch {
-				return null;
-			}
-		})
-		.filter(Boolean);
-}
 
 export function discoverRuns(runsDir = RUNS_DIR) {
 	return fs
@@ -99,13 +83,20 @@ export function extractRun(run) {
 			events.push({ t: Number(a.t), kind: "system", text: a.msg });
 		} else if (a.type === "stderr" || a.type === "rpc_error" || a.type === "model_error" || a.type === "retry" || a.type === "oracle_crash") {
 			events.push({ t: Number(a.t), kind: "warn", agent: a.agent ?? null, text: a.msg });
+		} else if (["spawn", "resume", "report", "decide", "worker_failed"].includes(a.type)) {
+			events.push({ t: Number(a.t), kind: "delegation", agent: a.agent ?? null, sub: a.type, text: a.msg });
 		}
 	}
 
 	// Chain-of-thought: pull "thinking" content blocks straight from each agent's raw RPC event
 	// log (message_end only — turn_end/agent_end repeat the same message and would double it up).
-	for (const agent of ["builder", "critic"]) {
-		const raw = readJsonl(path.join(dir, `raw-${agent}.jsonl`));
+	// Every raw-*.jsonl in the run dir is one agent — "raw-orchestrator.jsonl" is
+	// "orchestrator", "raw-worker_<id>.jsonl" is "worker:<id>" (the underscore stands in for
+	// the colon, which is not a legal Windows filename character — see supervisor.mjs).
+	const rawFiles = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /^raw-.*\.jsonl$/.test(f)) : [];
+	for (const f of rawFiles) {
+		const agent = f.slice("raw-".length, -".jsonl".length).replace("_", ":");
+		const raw = readJsonl(path.join(dir, f));
 		for (const ev of raw) {
 			if (ev.type !== "message_end") continue;
 			const m = ev.message;

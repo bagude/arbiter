@@ -1,0 +1,8 @@
+{
+	"task": "glob",
+	"pattern": "solo",
+	"roles": {
+		"builder": { "provider": "llama.cpp", "model": "qwen3-27b" }
+	},
+	"caps": { "wallSec": 6000 }
+}
