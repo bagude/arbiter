@@ -105,6 +105,10 @@ Order, cheapest first, each a separate run with its own config file under `confi
 
 Provider setup for 2–4 is a key in `~/.pi/agent/auth.json` (`type: "api_key"`) plus a one-line smoke test per provider; all target model ids are already in pi's catalog.
 
+### Results
+
+**Run 0 — `configs/orch-orbit-27b.json`, `runs/2026-09-11T21-35-14` (Qwen3-27B as orchestrator and worker).** Run before the Flash-Next run because the Flash server alone left ~1.3 GB RAM free and the first Flash attempt (`runs/2026-09-11T20-14-14`) was killed by the host's low-memory guard at t=1170 s. Outcome: SUCCESS, oracle 48/48 on the first `done` claim; 1086 s wall; 3 workers spawned in sequence (stages 1–2, 3–4, 5), each brief carrying the current state of the file; 12 probes — the orchestrator probed after every worker report (5 after worker 1, 1 after worker 2, 4 after worker 3), then claimed; 1 done attempt; 70 tool calls (orchestrator 32, workers 17/10/11); success per 1k fresh tokens E_excl 5.705, E_incl 0.436 — the best of any run to date (the dyad on the same task stalled, E = 0). Hand-scored behaviours: (a) probed before `done` — **yes**; (b) probed after a worker report — **yes, after every report**; (c) resumed a worker — **no**, three fresh spawns; the orchestrator handed state forward in the brief text instead. Observation: the briefs were the deliverable — each named the exact exports already present and the helpers to reuse — and workers' reports were treated as claims to probe, not results to trust. Isolation caveat from the killed Flash run: the orchestrator read `runs/<id>/sessions/...` by absolute path (sessions and the oracle scratch now live out of tree); an in-band path guard is the first post-plan item.
+
 ## 7. Testing
 
 - **Unit** (`node:test`, new `arbiter/patterns/*.mjs`): pattern→required roles resolution; config load with env override precedence; per-agent state map (quiescence = max over workers); mail/report routing table for each pattern; gate decision function given (probe hash, workspace hash, last edit times); report/brief capping. The supervisor has no tests today; this is where the intricate logic moves so it can have them.
