@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { truncateForMail } from "./lib/text.mjs";
 import { decideApproval, QUIESCENCE_MS } from "./lib/gate.mjs";
+import { createAgentState, lastEditAcross, EDITING_TOOLS } from "./lib/agents.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const REPO = "C:/Users/user/open_harnessess/pi/pi";
@@ -174,7 +175,8 @@ function launch(name) {
 		stdio: ["pipe", "pipe", "pipe"],
 	});
 	const raw = fs.createWriteStream(path.join(RUN, `raw-${name}.jsonl`), { flags: "a" });
-	const s = { name, child, raw, busy: false, ready: false, toolCalls: 0, cost: 0, buf: "", pendingBash: new Map(), lastEditTs: 0 };
+	const s = createAgentState({ id: name, role: name, child, raw });
+	s.name = name; // existing code reads s.name throughout
 	state[name] = s;
 
 	child.stdout.on("data", (chunk) => {
@@ -235,7 +237,7 @@ function timeStatus(to) {
 	// pattern seen live (a run's last ~1400s re-checked cases already confirmed).
 	if (to === "critic" && pct >= 85 && lastProbeHash !== null) {
 		const srcDir = path.join(WS.builder, "src");
-		const sinceEdit = Date.now() - (state.builder?.lastEditTs || 0);
+		const sinceEdit = Date.now() - lastEditAcross(Object.values(state));
 		if (fs.existsSync(srcDir) && hashDir(srcDir) === lastProbeHash && sinceEdit >= QUIESCENCE_MS) {
 			line +=
 				" The approval gate is satisfiable right now: your last probe matches BUILDER's current, quiescent code. " +
@@ -281,7 +283,7 @@ function handle(name, ev) {
 			log({ agent: name, type: "tool", msg: summary });
 			if (ev.toolName === "bash" && ev.toolCallId) s.pendingBash.set(ev.toolCallId, { startedAt: Date.now(), command: a.command });
 			// bash can also change files, so it counts toward quiescence too, alongside write/edit.
-			if (name === "builder" && (ev.toolName === "write" || ev.toolName === "edit" || ev.toolName === "bash")) s.lastEditTs = Date.now();
+			if (EDITING_TOOLS.has(ev.toolName) && (s.role === "builder" || s.role === "worker")) s.lastEditTs = Date.now();
 			break;
 		}
 		case "tool_execution_end":
@@ -595,7 +597,7 @@ function handleCriticApproval() {
 		lastProbeHash,
 		currentHash: srcExists ? hashDir(srcDir) : null,
 		srcExists,
-		lastEditTs: state.builder.lastEditTs,
+		lastEditTs: lastEditAcross(Object.values(state)),
 		now: Date.now(),
 	});
 	if (verdict.ok) return runOracle();
@@ -719,11 +721,11 @@ function checkCaps() {
 const SOLO_QUIET_MS = 60_000;
 let lastOracleHash = null;
 function maybeQuiescentOracle() {
-	const b = state.builder;
-	if (!b || b.lastEditTs === 0) return false;
+	const lastEdit = lastEditAcross(Object.values(state));
+	if (lastEdit === 0) return false;
 	const srcDir = path.join(WS.builder, "src");
 	if (!fs.existsSync(srcDir)) return false;
-	if (Date.now() - b.lastEditTs < SOLO_QUIET_MS) return false;
+	if (Date.now() - lastEdit < SOLO_QUIET_MS) return false;
 	if (hashDir(srcDir) === lastOracleHash) return false;
 	log({ type: "oracle_trigger", msg: `quiescence: src/ unchanged for ${SOLO_QUIET_MS / 1000}s and not yet tested — running oracle` });
 	lastActivity = Date.now();
