@@ -68,6 +68,10 @@ const AUDIT = path.join(RUN, "audit.jsonl");
 // process and appends one line per lifecycle event here, which the supervisor tails
 // exactly like it tails the mail bus.
 const LIFECYCLE = path.join(RUN, "lifecycle.jsonl");
+// In-band guards loaded into every agent process (and copied into the workspace for
+// pi-subagents workers). Each is a policy in lib/ plus a thin tool_call adapter on
+// ext/guard-kit.ts; see docs/backlog.md §2a for the rule on what belongs here.
+const GUARDS = [path.join(here, "ext", "path-guard.ts"), path.join(here, "ext", "guards", "bash-timeout.ts")];
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
 const startedAt = Date.now();
@@ -202,12 +206,11 @@ function launch(name) {
 		"-ne",
 		"-e",
 		path.join(here, "ext", "mail-ext.ts"),
-		// In-band path guard: sits on pi's tool_call edge and blocks paths outside the
-		// workspace before the tool runs — the supervisor only sees calls afterwards,
-		// too late for a read of the oracle. Every role gets it; workers get a copy
-		// under <workspace>/.pi/extensions (see the orchestrator block below).
-		"-e",
-		path.join(here, "ext", "path-guard.ts"),
+		// In-band guards: sit on pi's tool_call edge, before the tool runs — the
+		// supervisor only sees calls afterwards, too late for a read of the oracle or a
+		// bash call with no timeout. Every role gets them; workers get copies under
+		// <workspace>/.pi/extensions (see the orchestrator block below).
+		...GUARDS.flatMap((g) => ["-e", g]),
 		"-na",
 		"-ns",
 		"-np",
@@ -233,7 +236,17 @@ function launch(name) {
 		// One shared workspace for every role: the orchestrator reads it, and its
 		// workers inherit this cwd, which is also where .pi/agents/worker.md lives.
 		cwd: WS.workspace,
-		env: { ...process.env, AGENT_NAME: name, PEER: cfg.peer, BUS_FILE: BUS, ARBITER_LIFECYCLE_FILE: LIFECYCLE, ARBITER_HOME: here },
+		env: {
+			...process.env,
+			AGENT_NAME: name,
+			PEER: cfg.peer,
+			BUS_FILE: BUS,
+			ARBITER_LIFECYCLE_FILE: LIFECYCLE,
+			ARBITER_HOME: here,
+			// One number, one source: the bash-timeout guard injects this into every bash
+			// call that lacks a timeout; checkBashTimeout() below is now the fallback.
+			ARBITER_BASH_TIMEOUT_SEC: String(CAPS.bashTimeoutSec),
+		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
 	const raw = fs.createWriteStream(path.join(RUN, `raw-${name}.jsonl`), { flags: "a" });
@@ -554,10 +567,10 @@ function ensureWorker(wid) {
 	return state[wid];
 }
 
-// Every pattern tails the lifecycle file now: the path guard writes its denies
+// Every pattern tails the lifecycle file now: the guards write their reports
 // there from every role, not only pi-subagents from the orchestrator.
 const lifecycleTail = new JsonlTailer(LIFECYCLE);
-const guardDenies = {}; // role -> count of tool calls the path guard blocked
+const guards = {}; // guard name -> kind (denied|rewritten) -> role -> count
 let pendingDecisionFor = null; // worker id whose report the orchestrator has just received
 // The two views of a worker do not share an identifier, and nothing in either one
 // joins them: a lifecycle id is randomUUID().slice(0, 17) (subagent-manager.ts's
@@ -644,12 +657,15 @@ function pumpLifecycle() {
 	if (!lifecycleTail || finished || !fs.existsSync(LIFECYCLE)) return;
 	for (const { ev, data } of lifecycleTail.readNew()) {
 		lastActivity = Date.now();
-		// A guard deny is a signature to count, not a rule to act on: the model already
-		// received the redirect as its tool result. No cap, no nudge.
-		if (ev === "guard:path_denied") {
-			const role = String(data?.role ?? "unknown");
-			guardDenies[role] = (guardDenies[role] ?? 0) + 1;
-			log({ agent: role, type: "path_denied", msg: `path guard blocked ${data?.tool}: ${String(data?.fragment ?? "").slice(0, 200)}` });
+		// A guard report is a signature to count, not a rule to act on: the model already
+		// received the redirect (or the rewritten call ran). No cap, no nudge. Events are
+		// `guard:<name>_<kind>` from ext/guard-kit.ts; the last `_` splits name from kind.
+		const guardMatch = /^guard:(.+)_(denied|rewritten)$/.exec(ev);
+		if (guardMatch) {
+			const [, name, kind] = guardMatch;
+			const { role = "unknown", ...rest } = data ?? {};
+			((guards[name] ??= {})[kind] ??= {})[role] = (guards[name][kind][role] ?? 0) + 1;
+			log({ agent: String(role), type: "guard", msg: `${name} ${kind}: ${JSON.stringify(rest).slice(0, 200)}` });
 			continue;
 		}
 		const wid = data?.id ? `worker:${data.id}` : null;
@@ -1259,7 +1275,7 @@ function finish(reason) {
 		// A quiescence-triggered oracle counts as the first oracle, deliberately — it is
 		// still the moment the workspace was first graded.
 		...(PATTERN === "orchestrator" ? { orchestratorProbedBeforeDone: probeCountAtFirstOracle === null ? null : probeCountAtFirstOracle > 0 } : {}),
-		guardDenies,
+		guards,
 		caps: CAPS,
 		task: TASK_NAME,
 		oracleGate: PDEF.verifier ? `${PDEF.verifier} approval (hash+quiescence)` : "solo: builder done or quiescence",
@@ -1354,8 +1370,9 @@ console.log("config:", JSON.stringify(CONFIG));
 // orchestrator writes the brief; it does not get to widen what a worker may do.
 if (PATTERN === "orchestrator") {
 	// Workers' loaders do not inherit the parent's -e paths; they do resolve
-	// <cwd>/.pi/extensions. The copy resolves lib/ through ARBITER_HOME.
-	installWorkspaceExtension(WS.workspace, path.join(here, "ext", "path-guard.ts"));
+	// <cwd>/.pi/extensions. The copies resolve ext/guard-kit.ts and lib/ through
+	// ARBITER_HOME.
+	for (const g of GUARDS) installWorkspaceExtension(WS.workspace, g);
 	writeWorkerDefinition(WS.workspace, {
 		provider: ROLES.worker.provider,
 		model: ROLES.worker.model,

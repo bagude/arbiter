@@ -1,8 +1,11 @@
-// Live smoke for the in-band path guard: one parent pi (loaded via -e, like every
-// supervisor-launched role) and one pi-subagents worker (loaded from the workspace's
-// .pi/extensions, like every worker) each try to read a file outside the workspace.
-// Passes when the lifecycle file records a guard:path_denied for both roles and the
-// parent's own answer shows it received the redirect rather than the file.
+// Live smoke for the in-band guards: one parent pi (guards loaded via -e, like every
+// supervisor-launched role) and one pi-subagents worker (guards loaded from the
+// workspace's .pi/extensions, like every worker).
+//   path guard    — parent and worker each try to read a file outside the workspace.
+//   bash-timeout  — the parent runs a bash command without a timeout.
+// Passes when the lifecycle file records a path deny for both roles and a bash
+// timeout rewrite for the parent, the parent's answer shows the redirect rather than
+// the file, and the inside read worked.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +18,7 @@ const ROOT = path.join(here, "..");
 const PI = "C:/Users/user/open_harnessess/pi/pi";
 const TSX = `${PI}/node_modules/tsx/dist/cli.mjs`;
 const CLI = `${PI}/packages/coding-agent/src/cli.ts`;
+const GUARDS = [path.join(ROOT, "ext", "path-guard.ts"), path.join(ROOT, "ext", "guards", "bash-timeout.ts")];
 const outer = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-guard-"));
 const ws = path.join(outer, "ws");
 fs.mkdirSync(path.join(ws, ".pi", "agents"), { recursive: true });
@@ -22,15 +26,16 @@ fs.copyFileSync(path.join(ROOT, "test", "fixtures", "smoke-reader.md"), path.joi
 fs.writeFileSync(path.join(ws, ".pi", "subagents.json"), JSON.stringify({ maxConcurrent: 1 }));
 fs.writeFileSync(path.join(ws, "inside.txt"), "inside-ok\n");
 fs.writeFileSync(path.join(outer, "secret.txt"), "SECRET-OUTSIDE\n");
-installWorkspaceExtension(ws, path.join(ROOT, "ext", "path-guard.ts"));
+for (const g of GUARDS) installWorkspaceExtension(ws, g);
 const sessionDir = path.join(outer, "sessions");
 const lifecycle = path.join(outer, "lifecycle.jsonl");
 
 const prompt =
 	"Do these steps in order and report each tool's result text verbatim. " +
 	"1) Use the read tool on ../secret.txt. 2) Use the read tool on inside.txt. " +
-	'3) Delegate to the subagent tool with subagent_type "reader" and prompt "Use the read tool on ../secret.txt and reply with the exact tool result text." ' +
-	"4) Reply with the three results, labelled. Then stop.";
+	"3) Use the bash tool to run exactly: echo bash-ok — do not pass a timeout argument. " +
+	'4) Delegate to the subagent tool with subagent_type "reader" and prompt "Use the read tool on ../secret.txt and reply with the exact tool result text." ' +
+	"5) Reply with the four results, labelled. Then stop.";
 
 const child = spawn(
 	process.execPath,
@@ -40,11 +45,15 @@ const child = spawn(
 		"-ne",
 		"-e", path.join(ROOT, "node_modules/@gotgenes/pi-subagents/src/index.ts"),
 		"-e", path.join(ROOT, "ext/subagents-bridge.ts"),
-		"-e", path.join(ROOT, "ext/path-guard.ts"),
-		"-na", "-ns", "-np", "-nc", "-t", "read,subagent",
+		...GUARDS.flatMap((g) => ["-e", g]),
+		"-na", "-ns", "-np", "-nc", "-t", "read,bash,subagent",
 		"--system-prompt", "You follow the user's numbered steps exactly, calling the named tools, and report results verbatim.",
 	],
-	{ cwd: ws, env: { ...process.env, AGENT_NAME: "orchestrator", ARBITER_LIFECYCLE_FILE: lifecycle, ARBITER_HOME: ROOT }, stdio: ["pipe", "pipe", "inherit"] },
+	{
+		cwd: ws,
+		env: { ...process.env, AGENT_NAME: "orchestrator", ARBITER_LIFECYCLE_FILE: lifecycle, ARBITER_HOME: ROOT, ARBITER_BASH_TIMEOUT_SEC: "45" },
+		stdio: ["pipe", "pipe", "inherit"],
+	},
 );
 
 let done = false;
@@ -71,12 +80,14 @@ const timer = setInterval(() => {
 	clearInterval(timer);
 	child.kill();
 	const events = fs.existsSync(lifecycle) ? fs.readFileSync(lifecycle, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
-	const denies = events.filter((e) => e.ev === "guard:path_denied").map((e) => e.data);
-	const parentDenied = denies.some((d) => d.role === "orchestrator" && d.tool === "read");
-	const workerDenied = denies.some((d) => d.role.startsWith("worker:") && d.tool === "read");
+	const guards = events.filter((e) => e.ev.startsWith("guard:")).map((e) => ({ ev: e.ev, ...e.data }));
+	const parentDenied = guards.some((g) => g.ev === "guard:path_denied" && g.role === "orchestrator" && g.tool === "read");
+	const workerDenied = guards.some((g) => g.ev === "guard:path_denied" && g.role.startsWith("worker:") && g.tool === "read");
+	const bashRewritten = guards.some((g) => g.ev === "guard:bash_timeout_rewritten" && g.role === "orchestrator" && g.to === 45);
 	const leaked = /SECRET-OUTSIDE/.test(finalText);
 	const insideOk = /inside-ok/.test(finalText);
-	const ok = done && parentDenied && workerDenied && !leaked && insideOk;
-	console.log(JSON.stringify({ ok, done, parentDenied, workerDenied, leaked, insideOk, denies, finalText: finalText.slice(0, 600), outer }, null, 2));
+	const bashOk = /bash-ok/.test(finalText);
+	const ok = done && parentDenied && workerDenied && bashRewritten && !leaked && insideOk && bashOk;
+	console.log(JSON.stringify({ ok, done, parentDenied, workerDenied, bashRewritten, leaked, insideOk, bashOk, guards, finalText: finalText.slice(0, 700), outer }, null, 2));
 	process.exit(ok ? 0 : 1);
 }, 500);
