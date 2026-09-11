@@ -1,0 +1,1 @@
+read,grep,find,ls,write,send_mail
