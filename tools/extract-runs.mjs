@@ -81,7 +81,7 @@ export function extractRun(run) {
 			events.push({ t: Number(a.t), kind: "oracle", text: a.msg });
 		} else if (a.type === "exit" || a.type === "finish") {
 			events.push({ t: Number(a.t), kind: "system", text: a.msg });
-		} else if (a.type === "stderr" || a.type === "rpc_error" || a.type === "model_error" || a.type === "retry" || a.type === "oracle_crash") {
+		} else if (a.type === "stderr" || a.type === "rpc_error" || a.type === "model_error" || a.type === "retry" || a.type === "oracle_crash" || a.type === "path_denied") {
 			events.push({ t: Number(a.t), kind: "warn", agent: a.agent ?? null, text: a.msg });
 		} else if (["spawn", "resume", "report", "decide", "worker_failed"].includes(a.type)) {
 			events.push({ t: Number(a.t), kind: "delegation", agent: a.agent ?? null, sub: a.type, text: a.msg });

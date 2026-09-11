@@ -3,7 +3,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { workerDefinition, writeWorkerDefinition } from "../lib/worker-def.mjs";
+import { workerDefinition, writeWorkerDefinition, installWorkspaceExtension } from "../lib/worker-def.mjs";
+
+test("installWorkspaceExtension copies an extension into the workspace's .pi/extensions", () => {
+	const ws = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-ws-"));
+	const src = path.join(ws, "guard-src.ts");
+	fs.writeFileSync(src, "export default function () {}\n");
+	const p = installWorkspaceExtension(ws, src);
+	assert.equal(p, path.join(ws, ".pi", "extensions", "guard-src.ts"));
+	assert.equal(fs.readFileSync(p, "utf8"), "export default function () {}\n");
+});
 
 test("definition has the frontmatter pi-subagents reads", () => {
 	const md = workerDefinition({ provider: "llama.cpp", model: "qwen3-27b", tools: ["read", "bash"], prompt: "Build it.", maxTurns: 12 });

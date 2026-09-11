@@ -19,7 +19,7 @@ import { createAgentState, lastEditAcross, liveWorkers, EDITING_TOOLS } from "./
 import { routeMail } from "./lib/routing.mjs";
 import { loadConfig, parseArgs } from "./lib/config.mjs";
 import { PATTERNS, WORKER_TOOLS } from "./lib/patterns.mjs";
-import { writeWorkerDefinition } from "./lib/worker-def.mjs";
+import { writeWorkerDefinition, installWorkspaceExtension } from "./lib/worker-def.mjs";
 import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 
@@ -202,6 +202,12 @@ function launch(name) {
 		"-ne",
 		"-e",
 		path.join(here, "ext", "mail-ext.ts"),
+		// In-band path guard: sits on pi's tool_call edge and blocks paths outside the
+		// workspace before the tool runs — the supervisor only sees calls afterwards,
+		// too late for a read of the oracle. Every role gets it; workers get a copy
+		// under <workspace>/.pi/extensions (see the orchestrator block below).
+		"-e",
+		path.join(here, "ext", "path-guard.ts"),
 		"-na",
 		"-ns",
 		"-np",
@@ -227,7 +233,7 @@ function launch(name) {
 		// One shared workspace for every role: the orchestrator reads it, and its
 		// workers inherit this cwd, which is also where .pi/agents/worker.md lives.
 		cwd: WS.workspace,
-		env: { ...process.env, AGENT_NAME: name, PEER: cfg.peer, BUS_FILE: BUS, ARBITER_LIFECYCLE_FILE: LIFECYCLE },
+		env: { ...process.env, AGENT_NAME: name, PEER: cfg.peer, BUS_FILE: BUS, ARBITER_LIFECYCLE_FILE: LIFECYCLE, ARBITER_HOME: here },
 		stdio: ["pipe", "pipe", "pipe"],
 	});
 	const raw = fs.createWriteStream(path.join(RUN, `raw-${name}.jsonl`), { flags: "a" });
@@ -548,7 +554,10 @@ function ensureWorker(wid) {
 	return state[wid];
 }
 
-const lifecycleTail = PATTERN === "orchestrator" ? new JsonlTailer(LIFECYCLE) : null;
+// Every pattern tails the lifecycle file now: the path guard writes its denies
+// there from every role, not only pi-subagents from the orchestrator.
+const lifecycleTail = new JsonlTailer(LIFECYCLE);
+const guardDenies = {}; // role -> count of tool calls the path guard blocked
 let pendingDecisionFor = null; // worker id whose report the orchestrator has just received
 // The two views of a worker do not share an identifier, and nothing in either one
 // joins them: a lifecycle id is randomUUID().slice(0, 17) (subagent-manager.ts's
@@ -634,8 +643,16 @@ function announceWorker(wid, data) {
 function pumpLifecycle() {
 	if (!lifecycleTail || finished || !fs.existsSync(LIFECYCLE)) return;
 	for (const { ev, data } of lifecycleTail.readNew()) {
-		const wid = data?.id ? `worker:${data.id}` : null;
 		lastActivity = Date.now();
+		// A guard deny is a signature to count, not a rule to act on: the model already
+		// received the redirect as its tool result. No cap, no nudge.
+		if (ev === "guard:path_denied") {
+			const role = String(data?.role ?? "unknown");
+			guardDenies[role] = (guardDenies[role] ?? 0) + 1;
+			log({ agent: role, type: "path_denied", msg: `path guard blocked ${data?.tool}: ${String(data?.fragment ?? "").slice(0, 200)}` });
+			continue;
+		}
+		const wid = data?.id ? `worker:${data.id}` : null;
 		switch (ev) {
 			case "subagents:created": {
 				if (!wid) break;
@@ -1242,6 +1259,7 @@ function finish(reason) {
 		// A quiescence-triggered oracle counts as the first oracle, deliberately — it is
 		// still the moment the workspace was first graded.
 		...(PATTERN === "orchestrator" ? { orchestratorProbedBeforeDone: probeCountAtFirstOracle === null ? null : probeCountAtFirstOracle > 0 } : {}),
+		guardDenies,
 		caps: CAPS,
 		task: TASK_NAME,
 		oracleGate: PDEF.verifier ? `${PDEF.verifier} approval (hash+quiescence)` : "solo: builder done or quiescence",
@@ -1335,6 +1353,9 @@ console.log("config:", JSON.stringify(CONFIG));
 // prompt are fixed on disk by the host before the orchestrator process exists. The
 // orchestrator writes the brief; it does not get to widen what a worker may do.
 if (PATTERN === "orchestrator") {
+	// Workers' loaders do not inherit the parent's -e paths; they do resolve
+	// <cwd>/.pi/extensions. The copy resolves lib/ through ARBITER_HOME.
+	installWorkspaceExtension(WS.workspace, path.join(here, "ext", "path-guard.ts"));
 	writeWorkerDefinition(WS.workspace, {
 		provider: ROLES.worker.provider,
 		model: ROLES.worker.model,
