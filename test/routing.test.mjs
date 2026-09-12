@@ -26,6 +26,12 @@ test("orchestrator: orchestrator probe and done are intercepted; other kinds ack
 	assert.deepEqual(routeMail("orchestrator", m("orchestrator", "supervisor", "done")), { action: "approval" });
 	assert.deepEqual(routeMail("orchestrator", m("orchestrator", "supervisor", "status")), { action: "solo_ack", to: "orchestrator" });
 });
+test("kind=memory from any role in any pattern is a memory candidate, never relayed", () => {
+	assert.deepEqual(routeMail("dyad", m("builder", "critic", "memory")), { action: "memory", from: "builder" });
+	assert.deepEqual(routeMail("dyad", m("critic", "builder", "memory")), { action: "memory", from: "critic" });
+	assert.deepEqual(routeMail("solo", m("builder", "supervisor", "memory")), { action: "memory", from: "builder" });
+	assert.deepEqual(routeMail("orchestrator", m("orchestrator", "supervisor", "memory")), { action: "memory", from: "orchestrator" });
+});
 test("unknown recipients are dropped", () => {
 	assert.deepEqual(routeMail("dyad", m("builder", "nobody", "question")), { action: "drop" });
 });

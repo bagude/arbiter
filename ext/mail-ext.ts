@@ -52,6 +52,13 @@ const PROBE_HINT =
 			"returns the prior answer instead of running it again, because re-sending it cannot produce a different result."
 		: "";
 
+// Memory is addressed to future runs, not to anyone here: the supervisor stores the
+// observation as a candidate that a later human or paired run may promote. Saying
+// so in the tool description keeps a model from waiting for a reply to it.
+const MEMORY_HINT =
+	'kind="memory" records one durable observation for future runs of this task — a convention, a pitfall, a split of the work that held up — as a single sentence, no code. ' +
+	"It is stored as a candidate for later review; nobody answers it and it changes nothing in this run.";
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "send_mail",
@@ -62,13 +69,13 @@ export default function (pi: ExtensionAPI) {
 				: SOLO
 					? `Send a message to the supervisor (to="supervisor"). There is no counterpart agent in this run. `
 					: `Send a message to your counterpart "${PEER}". This is your ONLY channel to them. `) +
-			`Body is capped at ${MAX_BODY} characters. ${DONE_HINT}${PROBE_HINT ? ` ${PROBE_HINT}` : ""}`,
+			`Body is capped at ${MAX_BODY} characters. ${DONE_HINT}${PROBE_HINT ? ` ${PROBE_HINT}` : ""} ${MEMORY_HINT}`,
 		parameters: Type.Object({
 			to: Type.String({ description: `Recipient. Must be "${PEER}".` }),
 			kind: Type.Union(
 				(ME === "orchestrator"
-					? ["status", "done", "probe"]
-					: ["question", "answer", "proposal", "status", "done", ...(PROBE_KIND.length ? ["probe"] : [])]
+					? ["status", "done", "probe", "memory"]
+					: ["question", "answer", "proposal", "status", "done", ...(PROBE_KIND.length ? ["probe"] : []), "memory"]
 				).map((k) => Type.Literal(k)),
 				{ description: "What this message is doing." },
 			),

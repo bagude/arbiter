@@ -24,6 +24,7 @@ import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry } from "./lib/workers.mjs";
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
+import { makeRecord, foldLog, readLog, appendLog, project, retainFromRun, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -139,6 +140,18 @@ for (const role of PDEF.roles) {
 	const base = fs.readFileSync(promptFile, "utf8");
 	const needsContext = role === "critic" || role === "orchestrator" || SOLO;
 	prompts[role] = needsContext ? `${base}\n\n# ${contextHeading}\n\n${taskContext}` : base;
+}
+// Memory recall (opt-in): a budgeted projection of promoted records for this task,
+// appended to every role's prompt. What was injected is recorded in summary.json so
+// the run is reproducible; a run with memory off is told nothing.
+const MEMORY = memoryPaths(here);
+const MEMORY_INJECTED = [];
+if (CONFIG.memory) {
+	const { text, ids } = project({ records: foldLog(readLog(MEMORY.log)), scopes: ["global", `task:${TASK_NAME}`], query: taskContext, budgetChars: CONFIG.memory.budgetChars });
+	if (text) {
+		for (const role of Object.keys(prompts)) prompts[role] = `${prompts[role]}\n\n${text}`;
+		MEMORY_INJECTED.push(...ids);
+	}
 }
 
 // Role asymmetry is enforced by capability, not by prompt. A task may narrow
@@ -514,6 +527,14 @@ function pumpBus() {
 				deliver(route.to, M.ack(), "ack (no counterpart)");
 				break;
 			case "deliver": deliver(route.to, frame(msg), `mail #${msg.n} from ${msg.from}`); break;
+			case "memory": {
+				// Stored as a candidate only; the writer never promotes its own observation.
+				const record = makeRecord({ scope: `task:${TASK_NAME}`, kind: "semantic", text: msg.body.slice(0, 500), evidence: [`run:${runId}`, `mail:${runId}#${msg.n}`], confidence: 0.4, source: "agent" });
+				appendLog(MEMORY.log, [record]);
+				log({ agent: route.from, type: "memory", msg: `candidate ${record.id}: ${record.text.replace(/\s+/g, " ").slice(0, 200)}` });
+				deliver(route.from, M.memoryAck(), "memory candidate recorded");
+				break;
+			}
 			case "drop": log({ type: "warn", msg: `mail #${msg.n} to unknown recipient "${msg.to}" dropped` }); break;
 		}
 	}
@@ -1015,8 +1036,17 @@ function finish(reason) {
 		task: TASK_NAME,
 		verifier: PDEF.verifier,
 	});
+	summary.memory = { recall: CONFIG.memory ? CONFIG.memory : null, injected: MEMORY_INJECTED };
 	fs.writeFileSync(path.join(RUN, "summary.json"), JSON.stringify(summary, null, 2));
 	fs.writeFileSync(path.join(RUN, "transcript.md"), renderTranscript({ runId, reason, startedAt, timeline, pattern: PATTERN }));
+	// Retention happens for every run, recall or not: the harness learns from each
+	// outcome; only what an agent was told is the experimental variable.
+	try {
+		appendLog(MEMORY.log, retainFromRun({ summary, timeline }));
+		renderAll(here);
+	} catch (err) {
+		log({ type: "warn", msg: `memory retention failed: ${err?.message ?? err}` });
+	}
 	log({ type: "finish", msg: `FINISH: ${reason} | $${t.cost.toFixed(3)} | ${t.toolCalls} tool calls | ${mailCount} mails | ${t.wallSec.toFixed(0)}s` });
 	// Kill the agent processes before touching WSROOT — on Windows, removing a
 	// directory that's still a live process's cwd fails with EPERM (found live:

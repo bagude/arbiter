@@ -22,6 +22,7 @@ test("silent turn", () => {
 });
 
 test("mail routing texts", () => {
+	assert.equal(dyad.memoryAck(), "[SUPERVISOR] Recorded as a memory candidate for future runs of this task. Nothing else happens with it now; carry on.");
 	assert.equal(dyad.probeBounced(), '[SUPERVISOR] Your kind="probe" was not run — only the verifying role\'s probes are host-executed. Describe what you found as kind="status" instead.');
 	assert.equal(orch.ack(), '[SUPERVISOR] Acknowledged, but nobody will answer this — the supervisor is a program and there is no other agent to reply. When the workspace satisfies the specification and you have probed it, send kind="done".');
 	assert.equal(solo.ack(), '[SUPERVISOR] Acknowledged, but nobody will answer this — there is no counterpart in this run. When your implementation is complete and self-tested, send kind="done".');

@@ -26,7 +26,14 @@ test("critic has probe", () => {
 });
 test("orchestrator has probe and done, addressed to the supervisor", () => {
 	const t = render("orchestrator", "supervisor");
-	assert.deepEqual(t.kinds.sort(), ["done", "probe", "status"]);
+	assert.deepEqual(t.kinds.sort(), ["done", "memory", "probe", "status"]);
 	assert.match(t.description, /shared workspace/);
 	assert.match(t.description, /host-side/);
+});
+test("every role can send kind=memory, and the description says it is a candidate for future runs", () => {
+	for (const [agent, peer] of [["builder", "critic"], ["critic", "builder"], ["builder", "supervisor"]]) {
+		const t = render(agent, peer);
+		assert.ok(t.kinds.includes("memory"), `${agent} kinds: ${t.kinds}`);
+		assert.match(t.description, /kind="memory".*future runs/);
+	}
 });
