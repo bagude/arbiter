@@ -1,6 +1,6 @@
 # guard bash_timeout
 
-Totals across 19 run(s): rewritten 320.
+Totals across 21 run(s): rewritten 367.
 
 ## By run
 
@@ -23,3 +23,5 @@ Totals across 19 run(s): rewritten 320.
 - [[runs/2026-09-12T19-01-04]] — rewritten 4
 - [[runs/2026-09-12T19-08-27]] — rewritten 42
 - [[runs/2026-09-12T19-41-35]] — rewritten 37
+- [[runs/2026-09-12T20-08-54]] — rewritten 32
+- [[runs/2026-09-12T20-27-18]] — rewritten 15
