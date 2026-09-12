@@ -65,6 +65,20 @@ test("a worker (child session under tasks/) is named worker:<id> in the deny rec
 	assert.equal(lines[0].data.role, "worker:2026_def");
 });
 
+test("R8: a file-tool path that is a link pointing outside the workspace is denied by the adapter", () => {
+	// A real directory junction (no admin needed on Windows) from inside the workspace
+	// to a directory outside it; the pure policy cannot see it, the adapter must.
+	const outer = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-link-"));
+	const root = path.join(outer, "ws");
+	fs.mkdirSync(path.join(root, "src"), { recursive: true });
+	fs.mkdirSync(path.join(outer, "secret"));
+	fs.writeFileSync(path.join(outer, "secret", "flag.txt"), "x");
+	fs.symlinkSync(path.join(outer, "secret"), path.join(root, "src", "link-out"), "junction");
+	const { out } = run([{ toolName: "read", input: { path: "src/link-out/flag.txt" } }, { toolName: "read", input: { path: "src/link-out" } }], { root });
+	assert.equal(out[0]?.block, true, "file through the link");
+	assert.equal(out[1]?.block, true, "the link itself");
+});
+
 test("blocks a bash command that leaves the workspace", () => {
 	const { out } = run([{ toolName: "bash", input: { command: "cd C:/Users/me/AppData/Local/Temp && node chk.mjs" } }], { root: ROOT });
 	assert.equal(out[0].block, true);

@@ -89,6 +89,43 @@ test("bash: /dev/null redirects and glob paths inside the workspace are not esca
 	assert.equal(decide("bash", { command: "cat /etc/passwd" }).ok, false);
 });
 
+// Path guard v2 — from review-guard run 2026-09-12T08-24-41 (R1–R7) and the three
+// false positives the night batch exposed (path-like data in command arguments).
+test("v2 bash: a `..` that resolves inside the workspace is allowed, one that escapes is denied", () => {
+	assert.equal(decide("bash", { command: "node -e 'console.log(normalize(\"a/../b\"))'" }).ok, true, "quoted data that stays inside");
+	assert.equal(decide("bash", { command: "cd src && cat ../README.md" }).ok, true, "cd src then .. is the root");
+	assert.equal(decide("bash", { command: "cd src/lib; cat ../../README.md" }).ok, true);
+	assert.equal(decide("bash", { command: "cd src && cat ../../README.md" }).ok, false, "climbs above the root");
+	assert.equal(decide("bash", { command: "cat ../../tasks/glob/oracle/glob.test.mjs" }).ok, false);
+	assert.equal(decide("bash", { command: "cd .. && ls" }).ok, false);
+});
+
+test("v2 bash: POSIX-absolute fragments are denied only when they exist on disk; path-like data is not a path", () => {
+	assert.equal(decide("bash", { command: "node -e 'apply(doc, [{op:\"add\", path:\"/a/c\", value:1}])'" }).ok, true, "/a/c is a JSON pointer, not a place");
+	assert.equal(decide("bash", { command: "node -e 'render(\"{{#items}}x{{/items}}\", d)'" }).ok, true);
+	assert.equal(decide("bash", { command: "ls /" }).ok, false, "R2: the root");
+	assert.equal(decide("bash", { command: "find / -name oracle" }).ok, false);
+	assert.equal(decide("bash", { command: "cat /c/Users/x" }).ok, false, "msys drive path");
+	assert.equal(decide("bash", { command: "cat ~/.pi/agent/auth.json" }).ok, false);
+});
+
+test("v2 bash: the protected .pi directory — case-insensitive, and globs that can name it", () => {
+	assert.equal(decide("bash", { command: "cat .PI/agents/worker.md" }).ok, false, "R1");
+	assert.equal(decide("bash", { command: "ls .pi*" }).ok, false, "R7");
+	assert.equal(decide("bash", { command: "ls .p?" }).ok, false);
+	assert.equal(decide("bash", { command: "ls .[pi]i" }).ok, false);
+	assert.equal(decide("bash", { command: "cat src/.pinned" }).ok, true, "a file whose name merely starts with .pi");
+});
+
+test("v2 bash: UNC paths and any env-var indirection into a path are denied", () => {
+	assert.equal(decide("bash", { command: "type \\\\server\\share\\flag.txt" }).ok, false, "R3");
+	assert.equal(decide("bash", { command: "cat //server/share/flag.txt" }).ok, false);
+	assert.equal(decide("bash", { command: "type %USERNAME%\\Desktop\\note.txt" }).ok, false, "R4");
+	assert.equal(decide("bash", { command: "cat $HOMEDRIVE$HOMEPATH/x" }).ok, false);
+	assert.equal(decide("bash", { command: "cat $env:WINDIR\\x" }).ok, false);
+	assert.equal(decide("bash", { command: "echo $PATH" }).ok, true, "an env var not used as a path");
+});
+
 test("bash: a dot-dot inside a version range is not a path segment", () => {
 	assert.equal(decide("bash", { command: "npm view foo@1..2" }).ok, true);
 });
