@@ -44,6 +44,9 @@ def flatten(d, prefix=""):
             out.update(flatten(v, key + "."))
         else:
             out[key] = v
+            if isinstance(v, dict):  # dropped: the object and each reason are both citable
+                for kk, vv in v.items():
+                    out[f"{key}.{kk}"] = vv
     return out
 
 
