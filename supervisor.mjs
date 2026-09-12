@@ -153,6 +153,9 @@ if (CONFIG.memory) {
 		MEMORY_INJECTED.push(...ids);
 	}
 }
+// Logged at launch (not only in summary.json at finish) so a live run shows what
+// its agents were told; the system prompt itself is not in any stream we record.
+log({ type: "memory", msg: CONFIG.memory ? `memory recall: ${MEMORY_INJECTED.length} record(s) injected${MEMORY_INJECTED.length ? `: ${MEMORY_INJECTED.join(", ")}` : ""}` : "memory recall: off" });
 
 // Role asymmetry is enforced by capability, not by prompt. A task may narrow
 // BUILDER's tools further (e.g. no bash for a read-only review task) via
