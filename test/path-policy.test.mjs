@@ -129,3 +129,19 @@ test("v2 bash: UNC paths and any env-var indirection into a path are denied", ()
 test("bash: a dot-dot inside a version range is not a path segment", () => {
 	assert.equal(decide("bash", { command: "npm view foo@1..2" }).ok, true);
 });
+
+test("v3 bash: a bare `/` is a place only after a filesystem command — division inside a one-liner is not (R10, seen live in dw-explore)", () => {
+	assert.equal(decide("bash", { command: 'uv run python -c "print(round(100.0 * sum(a) / sum(b), 1))"' }).ok, true);
+	assert.equal(decide("bash", { command: "echo $((a / b))" }).ok, true);
+	assert.equal(decide("bash", { command: "ls /" }).ok, false);
+	assert.equal(decide("bash", { command: "find / -name secret" }).ok, false);
+	assert.equal(decide("bash", { command: "rm -rf /" }).ok, false);
+});
+
+test("v3 bash: a variable the command line binds itself is not env indirection (R9, seen live in every dw-bronze run)", () => {
+	assert.equal(decide("bash", { command: "for s in tx nm ok; do ls remote/$s/arcgis; done" }).ok, true);
+	assert.equal(decide("bash", { command: "s=tx; ls remote/$s/mft && cat remote/${s}/x" }).ok, true);
+	assert.equal(decide("bash", { command: "for d in a b; do cd remote/$d && ls; done" }).ok, true);
+	assert.equal(decide("bash", { command: "cat $HOMEDRIVE$HOMEPATH/x" }).ok, false);
+	assert.equal(decide("bash", { command: "ls $UNBOUND/x" }).ok, false);
+});
