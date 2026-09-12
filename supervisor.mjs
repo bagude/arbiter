@@ -20,6 +20,7 @@ import { routeMail } from "./lib/routing.mjs";
 import { loadConfig, parseArgs } from "./lib/config.mjs";
 import { PATTERNS, WORKER_TOOLS } from "./lib/patterns.mjs";
 import { writeWorkerDefinition, installWorkspaceExtension, resolveWorkerPrompt } from "./lib/worker-def.mjs";
+import { readMounts, installMounts, archiveFilter, uninstallMounts } from "./lib/mounts.mjs";
 import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry } from "./lib/workers.mjs";
 import { messages } from "./lib/messages.mjs";
@@ -114,6 +115,12 @@ const WSROOT = path.join(here, "runs", `.ws-${runId}`);
 const SESSIONS = path.join(here, "runs", `.sessions-${runId}`);
 const WS = { workspace: path.join(WSROOT, "ws-builder") };
 fs.cpSync(path.join(TASK, "ws-builder"), WS.workspace, { recursive: true });
+// Read-only mounts (tasks/<task>/mounts.json): junctions into the copied workspace,
+// created after the copy (cpSync would dereference them) and skipped at archive
+// time. Agents learn the mount roots through ARBITER_MOUNTS; the path guard lets
+// reads through and refuses writes there.
+const MOUNTS = installMounts(WS.workspace, readMounts(TASK, here));
+if (MOUNTS.length) log({ type: "mounts", msg: `mounted: ${MOUNTS.map((m) => `${path.relative(WS.workspace, m.path)} -> ${m.target}`).join(", ")}` });
 if (SOLO) {
 	// Task READMEs describe a counterpart that does not exist in a solo run; a small
 	// model reading both the README and the prompt should not have to reconcile them.
@@ -268,6 +275,7 @@ function launch(name) {
 			// Opt-in context diet: "" leaves the guard unregistered; a JSON object of
 			// options (possibly {}) turns it on for every role in the run.
 			ARBITER_CONTEXT_DIET: CONFIG.guards.context_diet ? JSON.stringify(CONFIG.guards.context_diet) : "",
+			ARBITER_MOUNTS: MOUNTS.length ? JSON.stringify(MOUNTS) : "",
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -1089,7 +1097,8 @@ function finish(reason) {
 		}
 	};
 	try {
-		if (fs.existsSync(WS.workspace)) fs.cpSync(WS.workspace, path.join(RUN, "ws-builder"), { recursive: true });
+		if (fs.existsSync(WS.workspace)) fs.cpSync(WS.workspace, path.join(RUN, "ws-builder"), { recursive: true, filter: archiveFilter(MOUNTS) });
+		uninstallMounts(MOUNTS);
 		removeAfterArchive(WSROOT);
 	} catch (err) {
 		log({ type: "warn", msg: `failed to archive workspaces into RUN: ${err?.message ?? err}` });

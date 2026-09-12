@@ -31,19 +31,51 @@ function realTarget(root: string, p: unknown): string | null {
 	if (typeof p !== "string" || !p) return null;
 	try {
 		const abs = path.isAbsolute(p) ? p : path.resolve(root, p);
-		if (!fs.existsSync(abs)) return null;
-		return fs.realpathSync.native(abs);
+		if (fs.existsSync(abs)) return fs.realpathSync.native(abs);
+		// A path that does not exist yet (a write) is judged by where its nearest
+		// existing ancestor really is — a new file under a mount is still under the mount.
+		let dir = path.dirname(abs);
+		const tail: string[] = [path.basename(abs)];
+		while (!fs.existsSync(dir)) {
+			if (path.dirname(dir) === dir) return null;
+			tail.unshift(path.basename(dir));
+			dir = path.dirname(dir);
+		}
+		return path.join(fs.realpathSync.native(dir), ...tail);
 	} catch {
 		return null;
 	}
 }
+
+// Read-only mounts declared by the task (lib/mounts.mjs): a junction inside the
+// workspace whose real path is a snapshot outside it. Reads through it are the
+// point; writes are refused — the snapshot is shared by every run.
+const MOUNTS: { path: string; target: string }[] = (() => {
+	try {
+		return JSON.parse(process.env.ARBITER_MOUNTS || "[]");
+	} catch {
+		return [];
+	}
+})();
+function insideMount(real: string): boolean {
+	const r = real.toLowerCase();
+	return MOUNTS.some((m) => {
+		const t = m.target.toLowerCase();
+		return r === t || r.startsWith(`${t}${path.sep}`);
+	});
+}
+const WRITE_TOOLS = new Set(["write", "edit"]);
 
 export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx) => {
 		let verdict = decidePath({ root: ctx.cwd, tool: event.toolName, input: event.input });
 		if (verdict.ok && event.toolName !== "bash" && event.toolName !== "powershell") {
 			const real = realTarget(ctx.cwd, (event.input as { path?: unknown }).path);
-			if (real) verdict = decidePath({ root: ctx.cwd, tool: event.toolName, input: { ...(event.input as object), path: real } });
+			if (real && insideMount(real)) {
+				if (WRITE_TOOLS.has(event.toolName)) verdict = { ok: false, reason: "That path is a read-only mount (a shared data snapshot). Read it freely; write your deliverable under src/.", fragment: String((event.input as { path?: unknown }).path) };
+			} else if (real) {
+				verdict = decidePath({ root: ctx.cwd, tool: event.toolName, input: { ...(event.input as object), path: real } });
+			}
 		}
 		if (verdict.ok) return undefined;
 		kit.report("path", "denied", ctx, { tool: event.toolName, fragment: verdict.fragment });

@@ -93,8 +93,13 @@ function seedFromRuns() {
 	let runs = 0;
 	let obs = 0;
 	const runsDir = path.join(ROOT, "runs");
+	// Only runs of the same task count: a seed-data exploration must not brake a
+	// real-data one (dw-explore vs dw-explore-real).
+	const task = readJson(path.resolve(config))?.task;
 	for (const d of fs.existsSync(runsDir) ? fs.readdirSync(runsDir) : []) {
 		if (!/^\d{4}-/.test(d)) continue;
+		const s = readJson(path.join(runsDir, d, "summary.json"));
+		if (task && s?.task !== task) continue;
 		const doc = readJson(path.join(runsDir, d, "ws-builder", "src", "exploration.json"));
 		if (!doc) continue;
 		runs++;

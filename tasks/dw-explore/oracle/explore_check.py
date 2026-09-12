@@ -167,9 +167,11 @@ def main() -> int:
     ap.add_argument("--data", type=Path)
     ap.add_argument("--observation")
     ap.add_argument("--query")
+    ap.add_argument("--db", type=Path, help="the warehouse file (default: <data>/data/gold/warehouse.duckdb)")
+    ap.add_argument("--max-obs", type=int, default=0, help="reject reports with more observations than this (0 = no cap)")
     a = ap.parse_args()
     data = a.data or a.workspace
-    db = data / "data" / "gold" / "warehouse.duckdb"
+    db = a.db or data / "data" / "gold" / "warehouse.duckdb"
     if a.query is not None:
         err = query_ok(a.query)
         if err:
@@ -200,7 +202,7 @@ def main() -> int:
     ck.add("scope", isinstance(doc.get("scope"), str) and doc["scope"].strip() != "", str(doc.get("scope"))[:100])
     ids = [o.get("id") if isinstance(o, dict) else None for o in obs]
     titles = [str(o.get("title", "")).strip().lower() if isinstance(o, dict) else "" for o in obs]
-    ck.add("observations_count", len(obs) >= MIN_OBS, f"{len(obs)} observations (min {MIN_OBS})")
+    ck.add("observations_count", len(obs) >= MIN_OBS and (not a.max_obs or len(obs) <= a.max_obs), f"{len(obs)} observations (min {MIN_OBS}{f', max {a.max_obs}' if a.max_obs else ''})")
     ck.add("ids_unique", len(set(ids)) == len(ids) and all(isinstance(i, str) and i for i in ids), str(ids)[:200])
     ck.add("titles_distinct", len(set(titles)) == len(titles), "")
     nq = doc.get("next_questions")

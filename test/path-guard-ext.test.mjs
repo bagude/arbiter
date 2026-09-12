@@ -11,7 +11,7 @@ import { spawnSync } from "node:child_process";
 // starts a model.
 const PI = "C:/Users/user/open_harnessess/pi/pi";
 
-function run(events, { root, role = "builder" }) {
+function run(events, { root, role = "builder", env = {} }) {
 	const lifecycle = path.join(os.tmpdir(), `path-guard-${process.pid}-${Date.now()}.jsonl`);
 	const driver = path.join(os.tmpdir(), `path-guard-driver-${process.pid}.mjs`);
 	fs.writeFileSync(
@@ -31,7 +31,7 @@ function run(events, { root, role = "builder" }) {
 	);
 	const r = spawnSync(process.execPath, [`${PI}/node_modules/tsx/dist/cli.mjs`, driver], {
 		encoding: "utf8",
-		env: { ...process.env, AGENT_NAME: role, ARBITER_LIFECYCLE_FILE: lifecycle, NODE_PATH: `${PI}/node_modules` },
+		env: { ...process.env, AGENT_NAME: role, ARBITER_LIFECYCLE_FILE: lifecycle, NODE_PATH: `${PI}/node_modules`, ...env },
 	});
 	assert.equal(r.status, 0, r.stderr);
 	const lines = fs.existsSync(lifecycle) ? fs.readFileSync(lifecycle, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
@@ -77,6 +77,32 @@ test("R8: a file-tool path that is a link pointing outside the workspace is deni
 	const { out } = run([{ toolName: "read", input: { path: "src/link-out/flag.txt" } }, { toolName: "read", input: { path: "src/link-out" } }], { root });
 	assert.equal(out[0]?.block, true, "file through the link");
 	assert.equal(out[1]?.block, true, "the link itself");
+});
+
+test("a declared read-only mount (ARBITER_MOUNTS) lets reads through the junction and refuses writes", () => {
+	const outer = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-mount-"));
+	const root = path.join(outer, "ws");
+	fs.mkdirSync(path.join(root, "src"), { recursive: true });
+	const snapshot = path.join(outer, "snapshot");
+	fs.mkdirSync(snapshot);
+	fs.writeFileSync(path.join(snapshot, "warehouse.duckdb"), "x");
+	fs.mkdirSync(path.join(root, "data"));
+	fs.symlinkSync(snapshot, path.join(root, "data", "real"), "junction");
+	const env = { ARBITER_MOUNTS: JSON.stringify([{ path: path.join(root, "data", "real"), target: fs.realpathSync.native(snapshot) }]) };
+	const { out, lines } = run(
+		[
+			{ toolName: "read", input: { path: "data/real/warehouse.duckdb" } },
+			{ toolName: "ls", input: { path: "data/real" } },
+			{ toolName: "write", input: { path: "data/real/notes.txt", content: "no" } },
+			{ toolName: "read", input: { path: "src/link-out/flag.txt" } },
+		],
+		{ root, env },
+	);
+	assert.equal(out[0], null, "read through the mount");
+	assert.equal(out[1], null, "ls of the mount");
+	assert.equal(out[2]?.block, true, "write into the mount");
+	assert.match(out[2].reason, /read-only mount/);
+	assert.equal(lines.length, 1);
 });
 
 test("blocks a bash command that leaves the workspace", () => {

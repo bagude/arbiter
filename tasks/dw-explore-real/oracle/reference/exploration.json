@@ -1,0 +1,161 @@
+{
+  "scope": "Shape and provenance of the full 93-million-row warehouse: grain per state, concentration, trend, source mix and NULL/zero semantics \u2014 the baseline before deeper exploration.",
+  "observations": [
+    {
+      "id": "O1",
+      "title": "Three states, three grains: TX lease-months dominate the warehouse",
+      "observation": "Row counts by state: NM 19389985 rows over 86592 entities (1986-02-01 to 2026-01-01); OK 486327 rows over 454921 entities (1950-02-01 to 2026-02-01); TX 73303107 rows over 336680 entities (1993-01-01 to 2026-02-01). TX is lease-grain (many wells per lease), NM and OK are well-grain, so row counts are not comparable across states.",
+      "why_it_matters": "Any cross-state statistic must be per entity-month of the right grain; a naive row count over-weights TX by an order of magnitude.",
+      "query": "select state, count(*) as rows_, count(distinct entity_key) as entities, min(production_date) as first_month, max(production_date) as last_month from production_monthly group by 1 order by 1",
+      "result": [
+        [
+          "NM",
+          19389985,
+          86592,
+          "1986-02-01",
+          "2026-01-01"
+        ],
+        [
+          "OK",
+          486327,
+          454921,
+          "1950-02-01",
+          "2026-02-01"
+        ],
+        [
+          "TX",
+          73303107,
+          336680,
+          "1993-01-01",
+          "2026-02-01"
+        ]
+      ],
+      "confidence": 0.85
+    },
+    {
+      "id": "O2",
+      "title": "The five largest TX operators by lifetime oil",
+      "observation": "Top TX operators by summed total_oil_bbl: PIONEER NATURAL RES. USA, INC. 1.79535e+09 bbl across 9897 leases; EOG RESOURCES, INC. 1.4215e+09 bbl across 10270 leases; OCCIDENTAL PERMIAN LTD. 1.12281e+09 bbl across 719 leases; DIAMONDBACK E&P LLC 9.06777e+08 bbl across 5433 leases; XTO ENERGY INC. 7.70473e+08 bbl across 11078 leases.",
+      "why_it_matters": "Concentration at the operator level tells an analyst whose filings drive the TX totals and where a reporting change would show first.",
+      "query": "select operator, round(sum(total_oil_bbl)) as oil_bbl, count(distinct entity_key) as leases from production_monthly where state = 'TX' and operator is not null group by 1 order by 2 desc nulls last, 1 limit 5",
+      "result": [
+        [
+          "PIONEER NATURAL RES. USA, INC.",
+          1795350848.0,
+          9897
+        ],
+        [
+          "EOG RESOURCES, INC.",
+          1421504659.0,
+          10270
+        ],
+        [
+          "OCCIDENTAL PERMIAN LTD.",
+          1122808847.0,
+          719
+        ],
+        [
+          "DIAMONDBACK E&P LLC",
+          906776573.0,
+          5433
+        ],
+        [
+          "XTO ENERGY INC.",
+          770472692.0,
+          11078
+        ]
+      ],
+      "confidence": 0.85
+    },
+    {
+      "id": "O3",
+      "title": "NM yearly oil for the last five complete years",
+      "observation": "NM total oil by year: 2020: 3.7486e+08 bbl from 54715 wells; 2021: 4.59179e+08 bbl from 55578 wells; 2022: 5.84221e+08 bbl from 56545 wells; 2023: 6.65184e+08 bbl from 56913 wells; 2024: 7.38118e+08 bbl from 57753 wells.",
+      "why_it_matters": "The trend and the active-well count together say whether NM output is moving on volume per well or on the number of reporting wells.",
+      "query": "select production_year, round(sum(total_oil_bbl)) as oil_bbl, count(distinct entity_key) as wells from production_monthly where state = 'NM' and production_year between 2020 and 2024 group by 1 order by 1",
+      "result": [
+        [
+          2020,
+          374859834.0,
+          54715
+        ],
+        [
+          2021,
+          459179201.0,
+          55578
+        ],
+        [
+          2022,
+          584221191.0,
+          56545
+        ],
+        [
+          2023,
+          665183942.0,
+          56913
+        ],
+        [
+          2024,
+          738118119.0,
+          57753
+        ]
+      ],
+      "confidence": 0.85
+    },
+    {
+      "id": "O4",
+      "title": "OK 'production' rows come from two non-production sources",
+      "observation": "OK rows by source_file: arcgis_rbdms_wells 454916 rows (2026-02-01 to 2026-02-01); completions_wells_formations.xlsx 31411 rows (1950-02-01 to 2026-01-01). Neither is a monthly production report: one is the well master stamped with the pull month, the other is completion IP tests.",
+      "why_it_matters": "OK volumes and months in this warehouse are not production; the seed-pipeline contract already excludes them, and this warehouse should too.",
+      "query": "select source_file, count(*) as rows_, min(production_date) as first_month, max(production_date) as last_month from production_monthly where state = 'OK' group by 1 order by 2 desc",
+      "result": [
+        [
+          "arcgis_rbdms_wells",
+          454916,
+          "2026-02-01",
+          "2026-02-01"
+        ],
+        [
+          "completions_wells_formations.xlsx",
+          31411,
+          "1950-02-01",
+          "2026-01-01"
+        ]
+      ],
+      "confidence": 0.85
+    },
+    {
+      "id": "O5",
+      "title": "NULL versus zero oil by state",
+      "observation": "Per state (null oil / zero oil / rows): NM 0 / 9668807 / 19389985; OK 0 / 459606 / 486327; TX 0 / 44253267 / 73303107.",
+      "why_it_matters": "The contract says NULL means not reported and 0 means reported zero; how each state's parser used them decides whether averages over 'producing' months are meaningful.",
+      "query": "select state, sum(case when total_oil_bbl is null then 1 else 0 end) as null_oil, sum(case when total_oil_bbl = 0 then 1 else 0 end) as zero_oil, count(*) as rows_ from production_monthly group by 1 order by 1",
+      "result": [
+        [
+          "NM",
+          0,
+          9668807,
+          19389985
+        ],
+        [
+          "OK",
+          0,
+          459606,
+          486327
+        ],
+        [
+          "TX",
+          0,
+          44253267,
+          73303107
+        ]
+      ],
+      "confidence": 0.85
+    }
+  ],
+  "next_questions": [
+    "How many TX leases are single-well (entity_type = 'well') versus multi-well, and how does that split affect per-well statistics?",
+    "Which NM wells dominate cumulative oil, and are the top ones CO2-EOR condensate units as in the seed?",
+    "Does the OK well-master row set carry any volume at all, or are all OK volumes from completion IP tests?"
+  ]
+}
