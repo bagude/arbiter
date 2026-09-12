@@ -1,0 +1,4 @@
+{
+  "question": "What failure signatures recur across arbiter runs, and which guard would remove the most cost?",
+  "findings": []
+}
