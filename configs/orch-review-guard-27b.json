@@ -1,0 +1,4 @@
+{ "task": "review-guard", "pattern": "orchestrator",
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
+  "caps": { "toolCalls": 250, "wallSec": 2400, "usd": 5, "doneAttempts": 5 },
+  "_note": "No hidden truth: the oracle grounds each finding (file/line/quote exist; the demonstrated command really behaves as claimed under the policy) but cannot judge whether a denial was wrong. Human verdict via tools/verdict.mjs; findings enter memory as candidates." }
