@@ -1,9 +1,10 @@
 # repo:data-warehousers
 
-4 fact(s), 10 run(s) in history, 4 candidate(s). Runs: [[runs/2026-09-12T15-18-58]], [[runs/2026-09-12T15-59-13]], [[runs/2026-09-12T16-06-52]], [[runs/2026-09-12T17-19-11]], [[runs/2026-09-12T17-38-19]], [[runs/2026-09-12T17-45-13]], [[runs/2026-09-12T17-52-06]], [[runs/2026-09-12T18-04-17]], [[runs/2026-09-12T18-36-04]], [[runs/2026-09-12T18-50-05]].
+5 fact(s), 10 run(s) in history, 4 candidate(s). Runs: [[runs/2026-09-12T15-18-58]], [[runs/2026-09-12T15-59-13]], [[runs/2026-09-12T16-06-52]], [[runs/2026-09-12T17-19-11]], [[runs/2026-09-12T17-38-19]], [[runs/2026-09-12T17-45-13]], [[runs/2026-09-12T17-52-06]], [[runs/2026-09-12T18-04-17]], [[runs/2026-09-12T18-36-04]], [[runs/2026-09-12T18-50-05]], [[runs/2026-09-12T19-01-04]].
 
 ## Facts
 
+- [procedural] dw-recon: delegation that passed the oracle — worker 1: Task: build a health report for an oil & gas data warehouse in this workspace (CWD = workspace root). (m_0b4cd2f8331e, conf 0.7, evidence: [[runs/2026-09-12T19-01-04]] oracle:2026-09-12T19-01-04#1)
 - [procedural] dw-explore: delegation that passed the oracle — worker 1: You are writing the final deliverable files for a data-exploration task in this workspace (CWD = workspace root). (m_1f6569ccf449, conf 0.7, evidence: [[runs/2026-09-12T17-38-19]] oracle:2026-09-12T17-38-19#1)
 - [procedural] dw-explore: delegation that passed the oracle — worker 1: You are the data explorer for an oil & gas data warehouse (Texas RRC, New Mexico OCD, Oklahoma OCC). (m_5aa05c202015, conf 0.99, evidence: [[runs/2026-09-12T16-06-52]] oracle:2026-09-12T16-06-52#1 [[runs/2026-09-12T17-19-11]] oracle:2026-09-12T17-19-11#1 [[runs/2026-09-12T17-45-13]] oracle:2026-09-12T17-45-13#1 [[runs/2026-09-12T17-52-06]] oracle:2026-09-12T17-52-06#1 [[runs/2026-09-12T18-04-17]] oracle:2026-09-12T18-04-17#1 [[runs/2026-09-12T18-36-04]] oracle:2026-09-12T18-36-04#1 [[runs/2026-09-12T18-50-05]] oracle:2026-09-12T18-50-05#1)
 - [procedural] dw-recon: delegation that passed the oracle — worker 1: Task: build a health report for an oil & gas data warehouse. (m_5b2a31b64016, conf 0.7, evidence: [[runs/2026-09-12T15-59-13]] oracle:2026-09-12T15-59-13#1)
@@ -31,7 +32,7 @@
 - dw-explore via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 413.2s; 1 workers, 6 probes, 1 done attempt. Oracle: 18/18. (m_4243230647f7, conf 0.9, evidence: [[runs/2026-09-12T17-38-19]] oracle:2026-09-12T17-38-19#1)
 - dw-explore via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 667.6s; 1 workers, 1 probes, 1 done attempt. Oracle: 14/14. (m_6bdbc182b538, conf 0.9, evidence: [[runs/2026-09-12T17-19-11]] oracle:2026-09-12T17-19-11#1)
 - dw-explore via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 814.8s; 1 workers, 3 probes, 1 done attempt. Oracle: 17/17. (m_8f13785ca58c, conf 0.9, evidence: [[runs/2026-09-12T16-06-52]] oracle:2026-09-12T16-06-52#1)
-- dw-recon via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 434.6s; 1 workers, 2 probes, 1 done attempt. Oracle: 15/15. (m_0816f0e9fabb, conf 0.9, evidence: [[runs/2026-09-12T15-59-13]] oracle:2026-09-12T15-59-13#1)
+- dw-recon via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 434.6s; 1 workers, 2 probes, 1 done attempt. Oracle: 15/15. (m_0816f0e9fabb, conf 0.99, evidence: [[runs/2026-09-12T15-59-13]] oracle:2026-09-12T15-59-13#1 [[runs/2026-09-12T19-01-04]] oracle:2026-09-12T19-01-04#1)
 - dw-bronze via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 1728.8s; 4 workers, 3 probes, 1 done attempt. Oracle: 51/51. (m_8598f8d08a3b, conf 0.9, evidence: [[runs/2026-09-12T15-18-58]] oracle:2026-09-12T15-18-58#1)
 
 ## Candidates
