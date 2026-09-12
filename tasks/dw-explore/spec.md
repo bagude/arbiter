@@ -2,7 +2,7 @@ This is an exploration task, not a coding task. You are the data explorer for an
 
 ## The question
 
-**What is in this data that a maintainer or an analyst would want to know?** Explore freely — distributions, concentration, trends, outliers, data-quality oddities, cross-state contrasts, anything the contracts imply that the data contradicts. If your prompt carries a memory of earlier explorations, go somewhere those did not.
+**What is in this data that a maintainer or an analyst would want to know?** Explore freely — distributions, concentration, trends, outliers, data-quality oddities, cross-state contrasts, anything the contracts imply that the data contradicts. If your prompt carries a MEMORY section with earlier explorations, their titles are ground already covered — go elsewhere — and the `next:` questions after them are open threads earlier runs left: take those as your starting points, and leave new ones for the run after you.
 
 ## The deliverable
 

@@ -66,6 +66,9 @@ test("recall reads pages in scope order (repo, task, global), Facts before Histo
 	assert.ok(full.text.indexOf("## repo:dw") < full.text.indexOf("## task:orbit") && full.text.indexOf("## task:orbit") < full.text.indexOf("## global"));
 	assert.deepEqual(full.ids, ["m_6", "m_1", "m_2", "m_5"]);
 	assert.doesNotMatch(full.text, /agent claim|forgotten/);
+	// a run's digest is carried once, in its own section, and stripped from the History line
+	assert.match(full.text, /## repo:dw\n- \[\[runs\/r2\]\] KPI digest: TX landed 2026-02-11 \(m_6\)\n- dw-recon: SUCCESS in 435s\. Oracle: 15\/15\. \(m_6, conf 0\.9/);
+	assert.equal((full.text.match(/KPI digest/g) ?? []).length, 1);
 	const tight = recall({ pages, scopes: ["task:orbit"], budgetChars: 160 });
 	assert.deepEqual(tight.ids, ["m_1"]);
 	const none = recall({ pages, scopes: ["task:nothing"], budgetChars: 1000 });

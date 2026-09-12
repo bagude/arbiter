@@ -211,7 +211,11 @@ def main() -> int:
         ck.add(f"observation {oid}", not bad, "; ".join(bad) or "reproduces")
     md = a.workspace / "src" / "exploration.md"
     ck.add("exploration_md", md.is_file() and md.stat().st_size > 200, "present" if md.is_file() else "src/exploration.md missing")
+    # The digest is what later runs are told: the titles found, then the open questions
+    # this run left — the seeds of a self-recursive exploration.
     digest = " | ".join(f"{o.get('id')} {str(o.get('title', ''))[:80]}" for o in obs if isinstance(o, dict))
+    if isinstance(nq, list) and nq:
+        digest += " || next: " + " | ".join(str(q)[:140] for q in nq[:5] if isinstance(q, str))
     print(json.dumps(ck.result(digest), indent=2))
     return 0 if ck.result()["pass"] == ck.result()["total"] else 1
 
