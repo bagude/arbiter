@@ -1,6 +1,6 @@
 # task:run-analysis
 
-1 fact(s), 1 run(s) in history, 0 candidate(s). Runs: [[runs/2026-09-12T05-30-35]].
+1 fact(s), 2 run(s) in history, 0 candidate(s). Runs: [[runs/2026-09-12T05-30-35]].
 
 ## Facts
 
@@ -8,6 +8,7 @@
 
 ## History
 
+- human verdict on run 2026-09-12T05-30-35: accept — F1 silent turns, F4 27B omits timeouts, F5 re-claim gate, F6 slice re-reads are real and evidence-backed (m_eb8359c41466, conf 0.95, evidence: [[runs/2026-09-12T05-30-35]])
 - run-analysis via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 1189.7s; 1 workers, 1 probes, 1 done attempt. Oracle: 76/76. (m_2f0d3cfdca1f, conf 0.9, evidence: [[runs/2026-09-12T05-30-35]] oracle:2026-09-12T05-30-35#1)
 
 ## Candidates

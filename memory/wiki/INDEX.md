@@ -1,31 +1,34 @@
 # Arbiter memory wiki
 
-Compiled 2026-09-12T21:14:48.326Z from 77 live record(s) across 16 scope(s), 53 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
+Compiled 2026-09-12T21:35:04.089Z from 80 live record(s) across 19 scope(s), 53 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
 
 ## Repos
 
-- [[scopes/repo-data-warehousers]] — 7 facts, 7 candidates, last run: 2026-09-12T21-03-58 SUCCESS
+- [[scopes/repo-data-warehousers]] — 10 facts, 0 candidates, last run: 2026-09-12T21-03-58 SUCCESS
 
 ## Tasks
 
-- [[scopes/task-bucket]] — 1 fact, 1 candidate, last run: 2026-09-12T07-04-20 SUCCESS
+- [[scopes/task-bucket]] — 2 facts, 0 candidates, last run: 2026-09-12T07-04-20 SUCCESS
 - [[scopes/task-csv]] — 0 facts, 0 candidates, last run: 2026-09-12T06-21-03 CAP
-- [[scopes/task-glob]] — 0 facts, 1 candidate, last run: 2026-09-11T18-42-34 CAP
+- [[scopes/task-dw-bronze]] — 0 facts, 0 candidates, last run: 2026-09-12T15-18-58 SUCCESS
+- [[scopes/task-dw-explore]] — 0 facts, 0 candidates, last run: 2026-09-12T18-50-05 SUCCESS
+- [[scopes/task-dw-recon]] — 0 facts, 0 candidates, last run: 2026-09-12T20-08-54 SUCCESS
+- [[scopes/task-glob]] — 0 facts, 0 candidates, last run: 2026-09-11T18-42-34 CAP
 - [[scopes/task-intervals]] — 1 fact, 0 candidates, last run: 2026-09-12T07-46-05 SUCCESS
 - [[scopes/task-jsondiff]] — 1 fact, 0 candidates, last run: 2026-09-12T07-31-04 SUCCESS
 - [[scopes/task-lru]] — 1 fact, 0 candidates, last run: 2026-09-12T06-13-34 SUCCESS
-- [[scopes/task-mdtable]] — 1 fact, 1 candidate, last run: 2026-09-12T07-14-49 SUCCESS
+- [[scopes/task-mdtable]] — 2 facts, 0 candidates, last run: 2026-09-12T07-14-49 SUCCESS
 - [[scopes/task-orbit]] — 1 fact, 0 candidates, last run: 2026-09-11T21-35-14 SUCCESS
 - [[scopes/task-pathnorm]] — 1 fact, 0 candidates, last run: 2026-09-12T07-25-47 SUCCESS
-- [[scopes/task-review-guard]] — 1 fact, 1 candidate, last run: 2026-09-12T08-24-41 SUCCESS
+- [[scopes/task-review-guard]] — 2 facts, 0 candidates, last run: 2026-09-12T08-24-41 SUCCESS
 - [[scopes/task-run-analysis]] — 1 fact, 0 candidates, last run: 2026-09-12T05-30-35 SUCCESS
 - [[scopes/task-semver]] — 1 fact, 0 candidates, last run: 2026-09-12T06-51-06 SUCCESS
-- [[scopes/task-tmpl]] — 1 fact, 1 candidate, last run: 2026-09-12T08-05-48 SUCCESS
+- [[scopes/task-tmpl]] — 2 facts, 0 candidates, last run: 2026-09-12T08-05-48 SUCCESS
 - [[scopes/task-toposort]] — 1 fact, 0 candidates, last run: 2026-09-12T08-16-09 SUCCESS
 
 ## Global
 
-- [[scopes/global]] — 0 facts, 16 candidates
+- [[scopes/global]] — 13 facts, 0 candidates
 
 ## Guards
 

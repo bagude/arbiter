@@ -125,3 +125,45 @@
 {"id":"m_5f6431f5f722","ts":1789247688318,"scope":"repo:data-warehousers","kind":"procedural","text":"dw-explore: delegation that passed the oracle — worker 1: You are the data explorer for an oil & gas data warehouse (Texas RRC, New Mexico OCD, Oklahoma OCC) and you will produce","evidence":["run:2026-09-12T21-03-58","oracle:2026-09-12T21-03-58#1"],"confidence":0.7,"source":"supervisor","status":"promoted"}
 {"op":"update","id":"m_5aa05c202015","ts":1789247688319,"evidence":["run:2026-09-12T16-06-52","oracle:2026-09-12T16-06-52#1","run:2026-09-12T17-19-11","oracle:2026-09-12T17-19-11#1","run:2026-09-12T17-45-13","oracle:2026-09-12T17-45-13#1","run:2026-09-12T17-52-06","oracle:2026-09-12T17-52-06#1","run:2026-09-12T18-04-17","oracle:2026-09-12T18-04-17#1","run:2026-09-12T18-36-04","oracle:2026-09-12T18-36-04#1","run:2026-09-12T18-50-05","oracle:2026-09-12T18-50-05#1","run:2026-09-12T20-51-46","oracle:2026-09-12T20-51-46#1","run:2026-09-12T21-03-58","oracle:2026-09-12T21-03-58#1"],"confidence":0.99}
 {"op":"tombstone","id":"m_5f6431f5f722","ts":1789247688319,"reason":"merged into m_5aa05c202015"}
+{"id":"m_26056c59e943","ts":1789248902491,"scope":"task:review-guard","kind":"episodic","text":"human verdict on run 2026-09-12T08-24-41: accept — review-guard R1-R8 are all tests in path guard v2/v3; EISDIR note is a true harness fact","evidence":["run:2026-09-12T08-24-41"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"promote","id":"m_de2f7c2570c0","ts":1789248902491}
+{"op":"promote","id":"m_36438949544b","ts":1789248902491}
+{"op":"promote","id":"m_bdeb21f26749","ts":1789248902491}
+{"op":"promote","id":"m_a6f89a2e47a5","ts":1789248902491}
+{"op":"promote","id":"m_69be6e694f9e","ts":1789248902491}
+{"op":"promote","id":"m_a33e82effc7c","ts":1789248902491}
+{"op":"promote","id":"m_56ed7fbe822f","ts":1789248902491}
+{"op":"promote","id":"m_c8821556908b","ts":1789248902491}
+{"op":"promote","id":"m_c0b5acee8f15","ts":1789248902491}
+{"op":"promote","id":"m_bf121c5ff86f","ts":1789248902491}
+{"id":"m_d895ceabedfa","ts":1789248902599,"scope":"task:bucket","kind":"episodic","text":"human verdict on run 2026-09-12T07-04-20: accept — bucket probe usage notes are accurate","evidence":["run:2026-09-12T07-04-20"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"promote","id":"m_8822c0fb9f26","ts":1789248902599}
+{"id":"m_47c3f99162a0","ts":1789248902687,"scope":"task:mdtable","kind":"episodic","text":"human verdict on run 2026-09-12T07-14-49: accept — mdtable probe usage notes are accurate","evidence":["run:2026-09-12T07-14-49"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"promote","id":"m_482121f731f9","ts":1789248902687}
+{"id":"m_4120647ae7d7","ts":1789248902813,"scope":"task:tmpl","kind":"episodic","text":"human verdict on run 2026-09-12T08-05-48: accept — tmpl probe usage notes are accurate","evidence":["run:2026-09-12T08-05-48"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"promote","id":"m_ce408fac0b17","ts":1789248902813}
+{"id":"m_b18a80ba487d","ts":1789248902930,"scope":"task:dw-explore","kind":"episodic","text":"human verdict on run 2026-09-12T17-52-06: accept — serialise observation results from the exact query: true, and why later rounds passed first time","evidence":["run:2026-09-12T17-52-06"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"promote","id":"m_3ee3736af8d9","ts":1789248902930}
+{"id":"m_e5c25f975e68","ts":1789248903056,"scope":"task:dw-explore","kind":"episodic","text":"human verdict on run 2026-09-12T18-36-04: accept — the campaign worker recipe (covered titles + open threads + seed facts) is the pattern that works","evidence":["run:2026-09-12T18-36-04"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"promote","id":"m_94e2c8699f08","ts":1789248903056}
+{"id":"m_2cddb4c0a334","ts":1789248903144,"scope":"task:dw-explore","kind":"episodic","text":"human verdict on run 2026-09-12T20-35-53: accept — graded queries need a unique ORDER BY tie-breaker: the failure the probe caught in run 1","evidence":["run:2026-09-12T20-35-53"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"promote","id":"m_c1c1e2fe9107","ts":1789248903144}
+{"id":"m_eb8359c41466","ts":1789248903272,"scope":"task:run-analysis","kind":"episodic","text":"human verdict on run 2026-09-12T05-30-35: accept — F1 silent turns, F4 27B omits timeouts, F5 re-claim gate, F6 slice re-reads are real and evidence-backed","evidence":["run:2026-09-12T05-30-35"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"promote","id":"m_b451874cbb68","ts":1789248903272}
+{"op":"promote","id":"m_0eac91d787dd","ts":1789248903272}
+{"op":"promote","id":"m_f5a50979d9bb","ts":1789248903272}
+{"op":"promote","id":"m_ab293c445cbd","ts":1789248903272}
+{"op":"promote","id":"m_77f5996c5c86","ts":1789248903272}
+{"op":"promote","id":"m_48dfb2112cbc","ts":1789248903272}
+{"op":"promote","id":"m_609830428c10","ts":1789248903272}
+{"op":"tombstone","id":"m_0eac91d787dd","ts":1789248903370,"reason":"F2 recommends a probe dedupe that already exists in runProbe"}
+{"op":"tombstone","id":"m_f5a50979d9bb","ts":1789248903476,"reason":"F3 describes an approval rule the harness no longer has"}
+{"op":"tombstone","id":"m_609830428c10","ts":1789248903560,"reason":"recommendation to build F2 first is stale (F2 exists)"}
+{"id":"m_7e7429320e18","ts":1789248903645,"scope":"task:dw-bronze","kind":"episodic","text":"human verdict on run 2026-09-12T15-18-58: reject — blames checker semantics for what was the probe-harness bug (fixed 50a3ea1)","evidence":["run:2026-09-12T15-18-58"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"tombstone","id":"m_ad52aab846ba","ts":1789248903645,"reason":"rejected by human verdict on run 2026-09-12T15-18-58: blames checker semantics for what was the probe-harness bug (fixed 50a3ea1)"}
+{"id":"m_5da94f4bb4a8","ts":1789248903760,"scope":"task:dw-explore","kind":"episodic","text":"human verdict on run 2026-09-12T18-50-05: reject — restates the run's own findings digest, already retained","evidence":["run:2026-09-12T18-50-05"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"tombstone","id":"m_ccca1862bcb2","ts":1789248903760,"reason":"rejected by human verdict on run 2026-09-12T18-50-05: restates the run's own findings digest, already retained"}
+{"id":"m_ec523f2d7f19","ts":1789248903887,"scope":"task:dw-recon","kind":"episodic","text":"human verdict on run 2026-09-12T20-08-54: reject — prose-digest confusion; the contract now states the rule and JSON digests make it moot","evidence":["run:2026-09-12T20-08-54"],"confidence":0.95,"source":"human","status":"promoted"}
+{"op":"tombstone","id":"m_7d0552188f1c","ts":1789248903887,"reason":"rejected by human verdict on run 2026-09-12T20-08-54: prose-digest confusion; the contract now states the rule and JSON digests make it moot"}
+{"op":"tombstone","id":"m_279838e6cb2d","ts":1789248903887,"reason":"rejected by human verdict on run 2026-09-12T20-08-54: prose-digest confusion; the contract now states the rule and JSON digests make it moot"}
+{"op":"tombstone","id":"m_6ada4474e613","ts":1789248903986,"reason":"capped run with no oracle; the run page keeps it"}
