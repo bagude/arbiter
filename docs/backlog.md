@@ -34,6 +34,10 @@ Observed but not planned. Recorded 2026-09-11 at the close of the orchestrator p
 17. **External ruler** — LiveCodeBench-hard as a task source for #4 (their claim: 5× Qwen3.8-27B = 92.4% pass@1 vs Fable 5 90.4%, ~⅕ cost). Caveat: stdin/stdout single-file problems with cheap exact sample tests — transfers to our gate thesis, not directly to our repo-shaped tasks.
 18. **Fresh-context workers + shared ledger vs persistent-context resumable workers** — a paired experiment. Our orchestrator never resumed a worker in run 0; it handed state forward in the brief text, which is halfway to their design already.
 
+## From billion-context-pi (pi.dev/packages/billion-context-pi, v0.1.67)
+
+21. **Context-edge guards** — the package hooks pi's `context` event (before every LLM call) and lets the model compress/decompress ranges of its own history, persisting state in a sidecar next to the session transcript; claims ~150–200K active tokens over billions cumulative. Same idea as our guards on a different edge: a policy on memory instead of on actions. Not needed by the orchestrator pattern (nobody's context grows), would have helped the dyad builder on orbit (1.1M fresh tokens re-reading history). Model-driven forgetting is a self-report confound unless its decisions are logged (they are) and measured with #4. If tried: load via `-e`/workspace copy like the guards, never a global install (workers would pick it up, parents would not).
+
 ## From pi-sandbox
 
 19. **WSL2 sandbox, phase two** — bubblewrap profiles bound via worker frontmatter `sandbox:`; native Windows is a no-go.
