@@ -1,18 +1,15 @@
 # Arbiter memory wiki
 
-Compiled 2026-09-12T21:35:57.509Z from 80 live record(s) across 19 scope(s), 53 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
+Compiled 2026-09-12T21:36:54.049Z from 80 live record(s) across 16 scope(s), 53 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
 
 ## Repos
 
-- [[scopes/repo-data-warehousers]] — 10 facts, 0 candidates, last run: 2026-09-12T21-03-58 SUCCESS
+- [[scopes/repo-data-warehousers]] — 10 facts, 0 candidates, last run: 2026-09-12T20-08-54 SUCCESS
 
 ## Tasks
 
 - [[scopes/task-bucket]] — 2 facts, 0 candidates, last run: 2026-09-12T07-04-20 SUCCESS
 - [[scopes/task-csv]] — 0 facts, 0 candidates, last run: 2026-09-12T06-21-03 CAP
-- [[scopes/task-dw-bronze]] — 0 facts, 0 candidates, last run: 2026-09-12T15-18-58 SUCCESS
-- [[scopes/task-dw-explore]] — 0 facts, 0 candidates, last run: 2026-09-12T18-50-05 SUCCESS
-- [[scopes/task-dw-recon]] — 0 facts, 0 candidates, last run: 2026-09-12T20-08-54 SUCCESS
 - [[scopes/task-glob]] — 0 facts, 0 candidates, last run: 2026-09-11T18-42-34 CAP
 - [[scopes/task-intervals]] — 1 fact, 0 candidates, last run: 2026-09-12T07-46-05 SUCCESS
 - [[scopes/task-jsondiff]] — 1 fact, 0 candidates, last run: 2026-09-12T07-31-04 SUCCESS

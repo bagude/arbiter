@@ -1,6 +1,6 @@
 # repo:data-warehousers
 
-10 fact(s), 16 run(s) in history, 0 candidate(s). Runs: [[runs/2026-09-12T15-18-58]], [[runs/2026-09-12T15-59-13]], [[runs/2026-09-12T16-06-52]], [[runs/2026-09-12T17-19-11]], [[runs/2026-09-12T17-38-19]], [[runs/2026-09-12T17-45-13]], [[runs/2026-09-12T17-52-06]], [[runs/2026-09-12T18-04-17]], [[runs/2026-09-12T18-36-04]], [[runs/2026-09-12T18-50-05]], [[runs/2026-09-12T19-01-04]], [[runs/2026-09-12T19-08-27]], [[runs/2026-09-12T19-41-35]], [[runs/2026-09-12T20-08-54]], [[runs/2026-09-12T20-27-18]], [[runs/2026-09-12T20-35-53]], [[runs/2026-09-12T20-51-46]], [[runs/2026-09-12T21-03-58]].
+10 fact(s), 22 run(s) in history, 0 candidate(s). Runs: [[runs/2026-09-12T15-18-58]], [[runs/2026-09-12T15-59-13]], [[runs/2026-09-12T16-06-52]], [[runs/2026-09-12T17-19-11]], [[runs/2026-09-12T17-38-19]], [[runs/2026-09-12T17-45-13]], [[runs/2026-09-12T17-52-06]], [[runs/2026-09-12T18-04-17]], [[runs/2026-09-12T18-36-04]], [[runs/2026-09-12T18-50-05]], [[runs/2026-09-12T19-01-04]], [[runs/2026-09-12T19-08-27]], [[runs/2026-09-12T19-41-35]], [[runs/2026-09-12T20-08-54]], [[runs/2026-09-12T20-27-18]], [[runs/2026-09-12T20-35-53]], [[runs/2026-09-12T20-51-46]], [[runs/2026-09-12T21-03-58]].
 
 ## Facts
 
@@ -133,6 +133,12 @@
 
 ## History
 
+- human verdict on run 2026-09-12T20-08-54: reject — prose-digest confusion; the contract now states the rule and JSON digests make it moot (m_ec523f2d7f19, conf 0.95, evidence: [[runs/2026-09-12T20-08-54]])
+- human verdict on run 2026-09-12T18-50-05: reject — restates the run's own findings digest, already retained (m_5da94f4bb4a8, conf 0.95, evidence: [[runs/2026-09-12T18-50-05]])
+- human verdict on run 2026-09-12T15-18-58: reject — blames checker semantics for what was the probe-harness bug (fixed 50a3ea1) (m_7e7429320e18, conf 0.95, evidence: [[runs/2026-09-12T15-18-58]])
+- human verdict on run 2026-09-12T20-35-53: accept — graded queries need a unique ORDER BY tie-breaker: the failure the probe caught in run 1 (m_2cddb4c0a334, conf 0.95, evidence: [[runs/2026-09-12T20-35-53]])
+- human verdict on run 2026-09-12T18-36-04: accept — the campaign worker recipe (covered titles + open threads + seed facts) is the pattern that works (m_e5c25f975e68, conf 0.95, evidence: [[runs/2026-09-12T18-36-04]])
+- human verdict on run 2026-09-12T17-52-06: accept — serialise observation results from the exact query: true, and why later rounds passed first time (m_b18a80ba487d, conf 0.95, evidence: [[runs/2026-09-12T17-52-06]])
 - dw-explore via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 649.5s; 1 workers, 2 probes, 1 done attempt. Oracle: 14/14. (m_d6a8ca853c8a, conf 0.9, evidence: [[runs/2026-09-12T21-03-58]] oracle:2026-09-12T21-03-58#1)
 - dw-explore via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 731.4s; 1 workers, 2 probes, 1 done attempt. Oracle: 13/13. (m_97a606c00499, conf 0.9, evidence: [[runs/2026-09-12T20-51-46]] oracle:2026-09-12T20-51-46#1)
 - dw-explore via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 952.4s; 1 workers, 12 probes, 1 done attempt. Oracle: 14/14. (m_9dac42e5f967, conf 0.9, evidence: [[runs/2026-09-12T20-35-53]] oracle:2026-09-12T20-35-53#1)

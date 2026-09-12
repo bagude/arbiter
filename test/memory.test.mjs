@@ -29,6 +29,8 @@ test("foldLog applies promote and tombstone ops in order and ignores unknown ids
 	const folded = foldLog(log);
 	assert.equal(folded.get("m_a").status, "promoted");
 	assert.equal(folded.get("m_a").promotedBy, "human", "a promote op is a human ruling");
+	const moved = foldLog([a, { op: "update", id: "m_a", ts: 5000, scope: "repo:dw" }, { op: "update", id: "m_a", ts: 6000, scope: "nope" }]);
+	assert.equal(moved.get("m_a").scope, "repo:dw", "an update op may re-scope; an invalid scope is ignored");
 	assert.equal(folded.get("m_b").status, "tombstoned");
 	assert.equal(folded.get("m_b").tombstoneReason, "wrong");
 	assert.equal(folded.size, 2);

@@ -35,7 +35,8 @@ fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
 
 const { log } = memoryPaths(HOME);
 const records = foldLog(readLog(log));
-const scope = summary.task ? `task:${summary.task}` : "global";
+// A repo run learns for the repo (same rule as retention).
+const scope = summary.config?.repo ? `repo:${summary.config.repo}` : summary.task ? `task:${summary.task}` : "global";
 const ops = [
 	makeRecord({ scope, kind: "episodic", text: `human verdict on run ${runId}: ${verdict} — ${why}`, evidence: [`run:${runId}`], confidence: 0.95, source: "human", status: "promoted", ts }),
 ];
