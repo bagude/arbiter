@@ -87,6 +87,7 @@ test("lint: unbacked promotions, missing runs, stale candidates, cross-scope dup
 	records.set("m_7", rec({ id: "m_7", status: "promoted", scope: "task:orbit", kind: "semantic", text: "promoted with nothing behind it", source: "agent", ts: 70 }));
 	records.set("m_8", rec({ id: "m_8", status: "candidate", scope: "global", kind: "semantic", text: "an agent claim about orbit", source: "agent", ts: 80 }));
 	records.set("m_9", rec({ id: "m_9", status: "promoted", scope: "task:lonely", kind: "semantic", text: "no runs here", source: "human", ts: 90 }));
+	records.set("m_10", { ...rec({ id: "m_10", status: "promoted", scope: "task:orbit", kind: "semantic", text: "an agent note a human ruled on", source: "agent", ts: 95 }), promotedBy: "human" });
 	const findings = lint({ records, runSummaries: new Map([["r1", runSummaries.get("r1")]]), now: 100 * DAY, staleDays: 14 });
 	const rules = (id) => findings.filter((f) => f.id === id).map((f) => f.rule);
 	assert.deepEqual(rules("m_7"), ["unbacked-promotion"]);
@@ -95,6 +96,7 @@ test("lint: unbacked promotions, missing runs, stale candidates, cross-scope dup
 	assert.ok(findings.some((f) => f.rule === "cross-scope-duplicate" && /m_3/.test(f.detail) && /m_8/.test(f.detail)));
 	assert.ok(findings.some((f) => f.rule === "scope-without-runs" && f.scope === "task:lonely"));
 	assert.ok(!findings.some((f) => f.rule === "unbacked-promotion" && f.id === "m_5"), "a human promotion is backed");
+	assert.ok(!findings.some((f) => f.rule === "unbacked-promotion" && f.id === "m_10"), "an agent record a human promoted is backed");
 	const md = renderLint(findings, 100 * DAY);
 	assert.match(md, /^# LINT/);
 	assert.match(md, /unbacked-promotion/);

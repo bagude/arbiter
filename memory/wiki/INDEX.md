@@ -1,6 +1,6 @@
 # Arbiter memory wiki
 
-Compiled 2026-09-12T21:35:04.089Z from 80 live record(s) across 19 scope(s), 53 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
+Compiled 2026-09-12T21:35:57.509Z from 80 live record(s) across 19 scope(s), 53 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
 
 ## Repos
 
