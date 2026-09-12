@@ -60,8 +60,30 @@ function readJson(p) {
 	}
 }
 
+// Seed the novelty tally with every observation title memory already holds for
+// this repo/task (the "Findings digest: O1 title | O2 title || next: …" records), so
+// round 1 is measured against earlier runs, not against nothing.
+function seedFromMemory() {
+	const seeds = [];
+	const log = path.join(ROOT, "memory", "records.jsonl");
+	if (!fs.existsSync(log)) return seeds;
+	for (const line of fs.readFileSync(log, "utf8").split("\n")) {
+		let r;
+		try {
+			r = JSON.parse(line);
+		} catch {
+			continue;
+		}
+		const m = /Findings digest: (.+)$/s.exec(r?.text ?? "");
+		if (!m) continue;
+		for (const part of m[1].split("||")[0].split(" | ")) seeds.push(tokens(part.replace(/^O\d+\s+/, "")));
+	}
+	return seeds;
+}
+
 const rows = [];
-const seenTitles = []; // token sets of every title found so far, across rounds
+const seenTitles = seedFromMemory(); // token sets of every title found so far, across rounds
+console.log(`[campaign ${name}] novelty tally seeded with ${seenTitles.length} title(s) from memory`);
 const t0 = Date.now();
 for (let round = 1; round <= ROUNDS; round++) {
 	console.log(`[campaign ${name}] ${new Date().toISOString()} round ${round}/${ROUNDS} start`);
