@@ -6,5 +6,4 @@
 
 ## Candidates
 
-- [episodic] glob via dyad (builder=llama.cpp/qwen3-27b, critic=llama.cpp/qwen3-27b): CAP: wall 1500s >= 1500s in 1500s; 2 probes, 0 done attempts. (m_6ada4474e613, conf 0.9, supervisor)
-- [episodic] glob via dyad (builder=llama.cpp/qwen3-27b, critic=llama.cpp/qwen3-27b): CAP: wall 1500s >= 1500s in 1500.5s; 3 probes, 0 done attempts. (m_2dcc1261e849, conf 0.9, supervisor)
+- [episodic] glob via dyad (builder=llama.cpp/qwen3-27b, critic=llama.cpp/qwen3-27b): CAP: wall 1500s >= 1500s in 1500s; 2 probes, 0 done attempts. (m_6ada4474e613, conf 0.99, supervisor)

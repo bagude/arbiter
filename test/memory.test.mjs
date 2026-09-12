@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { makeRecord, foldLog, readLog, appendLog, project, renderMarkdown, retainFromRun } from "../lib/memory.mjs";
+import { makeRecord, foldLog, readLog, appendLog, project, renderMarkdown, retainFromRun, consolidate } from "../lib/memory.mjs";
 
 const rec = (over) =>
 	makeRecord({ scope: "task:orbit", kind: "episodic", text: "x", evidence: [], confidence: 0.5, source: "human", ts: 1000, ...over });
@@ -31,6 +31,56 @@ test("foldLog applies promote and tombstone ops in order and ignores unknown ids
 	assert.equal(folded.get("m_b").status, "tombstoned");
 	assert.equal(folded.get("m_b").tombstoneReason, "wrong");
 	assert.equal(folded.size, 2);
+});
+
+test("foldLog applies an update op (evidence, confidence, text) on top of a record", () => {
+	const a = rec({ id: "m_a", text: "A", evidence: ["run:1"], confidence: 0.7 });
+	const folded = foldLog([a, { op: "update", id: "m_a", ts: 2, evidence: ["run:1", "run:2"], confidence: 0.91 }]);
+	assert.deepEqual(folded.get("m_a").evidence, ["run:1", "run:2"]);
+	assert.equal(folded.get("m_a").confidence, 0.91);
+	assert.equal(folded.get("m_a").text, "A");
+});
+
+const ORBIT_A = "orbit via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 1086s; 3 workers, 12 probes, 1 done attempt. Oracle: 48/48.";
+const ORBIT_B = "orbit via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 1195s; 3 workers, 9 probes, 1 done attempt. Oracle: 48/48.";
+const GLOB_FAIL = "glob via dyad (builder=llama.cpp/qwen3-27b, critic=llama.cpp/qwen3-27b): CAP: wall 1500s >= 1500s in 1500s; 2 probes, 2 done attempts. Oracle: 58/59, 58/59.";
+const GLOB_OK = "glob via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 994s; 1 workers, 3 probes, 1 done attempt. Oracle: 59/59.";
+
+test("consolidate merges near-duplicates into the older record: evidence union, raised confidence, newer tombstoned", () => {
+	const records = foldLog([
+		rec({ id: "m_old", text: ORBIT_A, evidence: ["run:r1", "oracle:r1#1"], confidence: 0.9, status: "promoted", ts: 10 }),
+		rec({ id: "m_new", text: ORBIT_B, evidence: ["run:r2", "oracle:r2#1"], confidence: 0.9, status: "promoted", ts: 20 }),
+	]);
+	const ops = consolidate(records, { ts: 30 });
+	assert.deepEqual(ops, [
+		{ op: "update", id: "m_old", ts: 30, evidence: ["run:r1", "oracle:r1#1", "run:r2", "oracle:r2#1"], confidence: 0.99 },
+		{ op: "tombstone", id: "m_new", ts: 30, reason: "merged into m_old" },
+	]);
+	const after = foldLog([...records.values(), ...ops]);
+	assert.equal(after.get("m_old").status, "promoted");
+	assert.equal(after.get("m_new").status, "tombstoned");
+});
+
+test("consolidate never merges records that say different things, or across scope/kind, or tombstones", () => {
+	const records = foldLog([
+		rec({ id: "m_1", scope: "task:glob", text: GLOB_FAIL, ts: 1 }),
+		rec({ id: "m_2", scope: "task:glob", text: GLOB_OK, ts: 2 }),
+		rec({ id: "m_3", scope: "task:orbit", text: ORBIT_A, ts: 3 }),
+		rec({ id: "m_4", scope: "task:orbit", kind: "procedural", text: ORBIT_A, ts: 4 }),
+		rec({ id: "m_5", scope: "task:orbit", text: ORBIT_B, ts: 5, status: "tombstoned" }),
+	]);
+	assert.deepEqual(consolidate(records, { ts: 9 }), []);
+});
+
+test("consolidate is idempotent and confidence is capped", () => {
+	const records = foldLog([
+		rec({ id: "m_old", text: ORBIT_A, evidence: ["run:r1"], confidence: 0.99, ts: 10 }),
+		rec({ id: "m_new", text: ORBIT_B, evidence: ["run:r2"], confidence: 0.99, ts: 20 }),
+	]);
+	const ops = consolidate(records, { ts: 30 });
+	assert.equal(ops[0].confidence, 0.99);
+	const after = foldLog([...records.values(), ...ops]);
+	assert.deepEqual(consolidate(after, { ts: 40 }), []);
 });
 
 test("appendLog/readLog round-trip an append-only JSONL file", () => {

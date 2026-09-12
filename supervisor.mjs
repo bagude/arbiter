@@ -24,7 +24,7 @@ import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry } from "./lib/workers.mjs";
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
-import { makeRecord, foldLog, readLog, appendLog, project, retainFromRun, memoryPaths, renderAll } from "./lib/memory.mjs";
+import { makeRecord, foldLog, readLog, appendLog, project, retainFromRun, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -1046,6 +1046,9 @@ function finish(reason) {
 	// outcome; only what an agent was told is the experimental variable.
 	try {
 		appendLog(MEMORY.log, retainFromRun({ summary, timeline }));
+		// Fold what this run restated into what earlier runs already established.
+		const ops = consolidate(foldLog(readLog(MEMORY.log)));
+		if (ops.length) appendLog(MEMORY.log, ops);
 		renderAll(here);
 	} catch (err) {
 		log({ type: "warn", msg: `memory retention failed: ${err?.message ?? err}` });

@@ -9,7 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { foldLog, readLog, appendLog, project, retainFromRun, memoryPaths, renderAll as renderAllIn } from "../lib/memory.mjs";
+import { foldLog, readLog, appendLog, project, retainFromRun, consolidate, memoryPaths, renderAll as renderAllIn } from "../lib/memory.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HOME = path.join(here, "..");
@@ -68,6 +68,14 @@ const [, , cmd, ...args] = process.argv;
 		case "render":
 			console.log(`rendered ${renderAll().join(", ")}`);
 			break;
+		case "consolidate": {
+			const ops = consolidate(records);
+			if (ops.length) appendLog(LOG_FILE, ops);
+			renderAll();
+			for (const op of ops) console.log(`${op.op} ${op.id}${op.reason ? ` (${op.reason})` : ""}${op.confidence != null ? ` conf ${op.confidence}, evidence ${op.evidence.length}` : ""}`);
+			console.log(`consolidated: ${ops.filter((o) => o.op === "tombstone").length} merged`);
+			break;
+		}
 		case "project": {
 			const [scope, ...q] = args;
 			const { text, ids } = project({ records, scopes: ["global", scope], query: q.join(" ") });
