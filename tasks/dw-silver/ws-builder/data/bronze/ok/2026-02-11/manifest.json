@@ -1,0 +1,45 @@
+{
+  "state": "ok",
+  "pull_date": "2026-02-11",
+  "pulled_at": "2026-09-12T13:39:58Z",
+  "sources": [
+    {
+      "name": "occ_web",
+      "url": "https://oklahoma.gov/content/dam/ok/en/occ/documents/og/ogdatafiles"
+    },
+    {
+      "name": "arcgis",
+      "url": "https://gis.occ.ok.gov/server/rest/services/Hosted/RBDMS_WELLS/FeatureServer/220/query"
+    }
+  ],
+  "files": [
+    {
+      "path": "data/completions_wells_formations.xlsx",
+      "bytes": 367187,
+      "sha256": "0b6685afa3a4b79478203c6233c3b98172731c94b645923282e700fe70b8d030",
+      "records": 964,
+      "source": "occ_web"
+    },
+    {
+      "path": "data/itd_wells_formations.xlsx",
+      "bytes": 1028015,
+      "sha256": "5be087a9bed2ad314ddbaa063c8d48eb5002216c375b86a3b635625f8216d045",
+      "records": 2556,
+      "source": "occ_web"
+    },
+    {
+      "path": "data/rbdms_well_data.csv",
+      "bytes": 549176,
+      "sha256": "6ccb0bb0742142eed1172351106b3fd81d8c482dd14f7c69b2d609cf38fee022",
+      "records": 1980,
+      "source": "occ_web"
+    },
+    {
+      "path": "wells/wells_batch_0001.json",
+      "bytes": 1893450,
+      "sha256": "79d27273c99aa1d1361adc1f4db9f310b60d5663f69f71b785bbf0395d146a70",
+      "records": 1980,
+      "source": "arcgis"
+    }
+  ]
+}

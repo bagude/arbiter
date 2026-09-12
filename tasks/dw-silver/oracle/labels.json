@@ -1,0 +1,44 @@
+[
+  {
+    "id": "L1-nm-multipool",
+    "table": "production", "state": "NM",
+    "key": { "state": "NM", "entity_type": "well", "api_number": "30-039-82262", "lease_number": null, "district": null, "production_date": "2007-12-01" },
+    "expect": { "oil_bbl": 29.0, "gas_mcf": 3701.0, "water_bbl": 4.0, "condensate_bbl": null, "casinghead_gas_mcf": null, "days_produced": 31, "field_name": "BASIN DAKOTA (PRORATED GAS)", "operator": "CAULKINS OIL CO", "county": "RIO ARRIBA", "basin": "SAN JUAN" },
+    "raw": "wcproduction.xml, api 30-039-82262, 2007/12: pool 71599 G 3126 O 23 W 3 (31 days, ogrid 3824); pool 72319 G 575 O 6 W 1 (31 days, ogrid 3824). Sum across pools: O 29, G 3701, W 4. Dominant pool 71599 (3149 > 581) = pool.xml 'BASIN DAKOTA (PRORATED GAS)'; ogrid 3824 = ogrid.xml 'CAULKINS OIL CO'. No C record -> condensate NULL."
+  },
+  {
+    "id": "L2-nm-amended",
+    "table": "production", "state": "NM",
+    "key": { "state": "NM", "entity_type": "well", "api_number": "30-039-21030", "lease_number": null, "district": null, "production_date": "2017-09-01" },
+    "expect": { "water_bbl": 4.0, "days_produced": 29, "operator": "HILCORP ENERGY COMPANY" },
+    "raw": "wcproduction.xml, api 30-039-21030, 2017/9, pool 72319, kind W has two records: prod_amt 3 / 28 days / ogrid 217817 / mod_dte 2017-12-06T21:04:28.653 and prod_amt 4 / 29 days / ogrid 372171 / mod_dte 2023-06-29T19:05:16.493. Latest mod_dte wins: W=4, days 29; the month's records are mostly ogrid 372171 = 'HILCORP ENERGY COMPANY'."
+  },
+  {
+    "id": "L3-nm-wells",
+    "table": "wells", "state": "NM",
+    "key": { "state": "NM", "api_number": "30-005-00299" },
+    "expect": { "well_name": "DEKALB A FEDERAL #001", "operator": "SLAYTON RESOURCES INC", "county": "CHAVES", "well_type": "OIL", "well_status": "ACTIVE", "latitude": 33.3588181, "longitude": -104.2519379, "source_file": "wells/wells_batch_0001.json" },
+    "raw": "wells_batch_0001.json feature: id '30-005-00299', name 'DEKALB A FEDERAL #001', type 'Oil', status 'Active', ogrid_name 'SLAYTON RESOURCES INC', county 'Chaves', latitude 33.3588181, longitude -104.2519379."
+  },
+  {
+    "id": "L4-tx-wells",
+    "table": "wells", "state": "TX",
+    "key": { "state": "TX", "api_number": "42-421-30441" },
+    "expect": { "well_name": null, "operator": null, "county": "SHERMAN", "well_type": "GAS", "well_status": null, "latitude": 36.44974345, "longitude": -102.10609833 },
+    "raw": "wells_batch_0001.json feature: API '42130441' (8 digits: county 421, unique 30441), GIS_LAT83 36.44974345, GIS_LONG83 -102.10609833. OG_WELL_COMPLETION.dsv rows with API_COUNTY_CODE 421 + API_UNIQUE_NO 30441 all have OIL_GAS_CODE G and COUNTY_NAME SHERMAN. TX ArcGIS carries no name/operator; 14B2 code is not a status."
+  },
+  {
+    "id": "L5-ok-wells",
+    "table": "wells", "state": "OK",
+    "key": { "state": "OK", "api_number": "35-003-00001" },
+    "expect": { "well_name": "KIRCHER", "operator": "CHAMPLIN EXPLORATION INC", "county": "ALFALFA", "well_type": "GAS", "well_status": "P&A", "latitude": 36.85323, "longitude": -98.3895 },
+    "raw": "wells_batch_0001.json feature: api 3500300001, well_name 'KIRCHER', operator 'CHAMPLIN EXPLORATION INC', county 'ALFALFA', welltype 'GAS', wellstatus 'PA', sh_lat 36.85323, sh_lon -98.3895."
+  },
+  {
+    "id": "L6-ok-completion-row1",
+    "table": "completions", "state": "OK",
+    "key": { "state": "OK", "api_number": "35-003-00099", "completion_no": 4, "row_no": 1 },
+    "expect": { "well_name": "MYRTLE COLLINS", "well_number": "2", "county": "ALFALFA", "well_type": "GAS", "well_status": "P&A", "formation_name": "MISENER-HUNTON", "formation_code": "319MSRH", "spud_date": "1965-12-07", "completion_date": "1965-12-20", "first_prod_date": "1965-12-20", "test_date": "2009-03-20", "oil_bbl_per_day": 2.0, "gas_mcf_per_day": 5.0, "water_bbl_per_day": 12.0, "otc_prod_unit_no": null },
+    "raw": "completions_wells_formations.xlsx data row 1: API_Number 3500300099, Completion_No 4, Well_Name 'MYRTLE COLLINS', Well_Number 2, County '003-ALFALFA', Well_Type 'GAS', Well_Status 'PA', Formation_Name 'MISENER-HUNTON', Formation_Code '319MSRH', Spud '1965-12-07', Well_Completion '1965-12-20', First_Prod '1965-12-20', Test_Date '2009-03-20', Oil_BBL_Per_Day 2, Gas_MCF_Per_Day 5, Water_BBL_Per_Day 12, OTC_Prod_Unit_No ' ' (blank -> NULL)."
+  }
+]

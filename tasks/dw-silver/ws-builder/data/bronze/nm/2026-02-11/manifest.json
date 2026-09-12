@@ -1,0 +1,104 @@
+{
+  "state": "nm",
+  "pull_date": "2026-02-11",
+  "pulled_at": "2026-09-12T13:39:53Z",
+  "sources": [
+    {
+      "name": "ocd_ftp",
+      "url": "ftp://164.64.106.6/Public/OCD/OCD Interface v1.1"
+    },
+    {
+      "name": "arcgis",
+      "url": "https://gis.emnrd.nm.gov/arcgis/rest/services/OCDView/Wells_Public/FeatureServer/0/query"
+    }
+  ],
+  "files": [
+    {
+      "path": "production/ogrid.zip",
+      "bytes": 7782,
+      "sha256": "01cd79b8fe30ccffc50bbaf3ac7f44834b69bb6dd7b4c19b64281bf61b60323c",
+      "members": [
+        {
+          "name": "ogrid.xml",
+          "bytes": 109660
+        }
+      ],
+      "source": "ocd_ftp"
+    },
+    {
+      "path": "production/ogrid/ogrid.xml",
+      "bytes": 109660,
+      "sha256": "2e601dfa9400dd384dac77d01602b298cab32378cc0dad9f18942fe0bba5b8b0",
+      "records": 59,
+      "source": "ocd_ftp",
+      "from": "ogrid.zip"
+    },
+    {
+      "path": "production/pool.zip",
+      "bytes": 2485,
+      "sha256": "6dd1ef8d864f1ff37c44c9048359c3c8fedc07a9ca1dd0e3c19c574af24a50df",
+      "members": [
+        {
+          "name": "pool.xml",
+          "bytes": 47356
+        }
+      ],
+      "source": "ocd_ftp"
+    },
+    {
+      "path": "production/pool/pool.xml",
+      "bytes": 47356,
+      "sha256": "c9f4507a13e2f7c189b2b4d89e90e0a26361ccd85f76a19b972751ba06c59883",
+      "records": 29,
+      "source": "ocd_ftp",
+      "from": "pool.zip"
+    },
+    {
+      "path": "production/wchistory.zip",
+      "bytes": 14680,
+      "sha256": "aead04473be0dfebaa081c382066ec7aa86b3664943035cd3f89887399ca033e",
+      "members": [
+        {
+          "name": "wchistory.xml",
+          "bytes": 446556
+        }
+      ],
+      "source": "ocd_ftp"
+    },
+    {
+      "path": "production/wchistory/wchistory.xml",
+      "bytes": 446556,
+      "sha256": "b13878456c885d83a02d4547016c3046f5ff37bad51f7b30c74f51cb18fe5b27",
+      "records": 183,
+      "source": "ocd_ftp",
+      "from": "wchistory.zip"
+    },
+    {
+      "path": "production/wcproduction.zip",
+      "bytes": 335615,
+      "sha256": "e12ce2b019c7968793cdb6afeb9707950862377723a4986caba84dee51b905fc",
+      "members": [
+        {
+          "name": "wcproduction.xml",
+          "bytes": 21405252
+        }
+      ],
+      "source": "ocd_ftp"
+    },
+    {
+      "path": "production/wcproduction/wcproduction.xml",
+      "bytes": 21405252,
+      "sha256": "77d4953b8d872e9f1c153202f02e5557cf157336cfda708f44d1f9e35da82faf",
+      "records": 21410,
+      "source": "ocd_ftp",
+      "from": "wcproduction.zip"
+    },
+    {
+      "path": "wells/wells_batch_0001.json",
+      "bytes": 57432,
+      "sha256": "112737a15f899a5fc4f31a89d643ea5b2f642f8a170dbba66378e4ba029d9a2b",
+      "records": 40,
+      "source": "arcgis"
+    }
+  ]
+}
