@@ -1,6 +1,6 @@
 # Arbiter memory wiki
 
-Compiled 2026-09-12T21:36:54.049Z from 80 live record(s) across 16 scope(s), 53 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
+Compiled 2026-09-12T21:54:26.023Z from 80 live record(s) across 16 scope(s), 53 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
 
 ## Repos
 
@@ -17,15 +17,15 @@ Compiled 2026-09-12T21:36:54.049Z from 80 live record(s) across 16 scope(s), 53 
 - [[scopes/task-mdtable]] — 2 facts, 0 candidates, last run: 2026-09-12T07-14-49 SUCCESS
 - [[scopes/task-orbit]] — 1 fact, 0 candidates, last run: 2026-09-11T21-35-14 SUCCESS
 - [[scopes/task-pathnorm]] — 1 fact, 0 candidates, last run: 2026-09-12T07-25-47 SUCCESS
-- [[scopes/task-review-guard]] — 2 facts, 0 candidates, last run: 2026-09-12T08-24-41 SUCCESS
-- [[scopes/task-run-analysis]] — 1 fact, 0 candidates, last run: 2026-09-12T05-30-35 SUCCESS
+- [[scopes/task-review-guard]] — 11 facts, 0 candidates, last run: 2026-09-12T08-24-41 SUCCESS
+- [[scopes/task-run-analysis]] — 4 facts, 0 candidates, last run: 2026-09-12T05-30-35 SUCCESS
 - [[scopes/task-semver]] — 1 fact, 0 candidates, last run: 2026-09-12T06-51-06 SUCCESS
 - [[scopes/task-tmpl]] — 2 facts, 0 candidates, last run: 2026-09-12T08-05-48 SUCCESS
 - [[scopes/task-toposort]] — 1 fact, 0 candidates, last run: 2026-09-12T08-16-09 SUCCESS
 
 ## Global
 
-- [[scopes/global]] — 13 facts, 0 candidates
+- [[scopes/global]] — 1 fact, 0 candidates
 
 ## Guards
 
