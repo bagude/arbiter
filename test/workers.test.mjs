@@ -125,6 +125,14 @@ test("guard reports are counted by name, kind and role and never create a worker
 	assert.equal(audit[0].agent, "orchestrator");
 });
 
+test("a guard report from a worker is attributed to its lifecycle id once the transcript is bound", () => {
+	const { tracker, state } = replay([{ ev: "subagents:started", data: { id: "w1" } }]);
+	bindTranscript(tracker, state, "C:/s/tasks/2026_abc.jsonl");
+	const out = applyLifecycleEvent(tracker, state, [], { ev: "guard:path_denied", data: { role: "worker:2026_abc", tool: "read", fragment: "../x" }, now: 5 });
+	assert.equal(out.audit[0].agent, "worker:w1");
+	assert.deepEqual(tracker.guards, { path: { denied: { "worker:w1": 1 } } });
+});
+
 test("a worker that terminated before its transcript appeared is swept from the FIFO", () => {
 	const { tracker } = replay([
 		{ ev: "subagents:created", data: { id: "dead", isBackground: true } },
