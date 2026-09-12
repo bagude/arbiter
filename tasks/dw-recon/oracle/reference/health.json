@@ -1,0 +1,219 @@
+{
+  "report_of": "2026-02-11",
+  "generated_at": "2026-09-12T15:58:57Z",
+  "kpi": {
+    "TX": {
+      "bronze": {
+        "pull_date": "2026-02-11",
+        "landed_at": "2026-09-12T15:54:44Z",
+        "files": 4,
+        "bytes": 229435,
+        "records": 2919
+      },
+      "silver": {
+        "wells": {
+          "rows": 230,
+          "with_production": 0
+        },
+        "production": {
+          "rows": 0,
+          "first_month": null,
+          "last_month": null,
+          "freshness_months": null,
+          "entities": 0,
+          "gap_months": 0
+        },
+        "dropped": {
+          "wells.duplicate_api": 1,
+          "wells.truncated_api": 57
+        }
+      },
+      "gold": {
+        "production_monthly": {
+          "rows": 0
+        },
+        "decline_curve_inputs": {
+          "rows": 0
+        },
+        "wells": {
+          "rows": 230
+        },
+        "parity": true
+      }
+    },
+    "NM": {
+      "bronze": {
+        "pull_date": "2026-02-11",
+        "landed_at": "2026-09-12T15:54:44Z",
+        "files": 9,
+        "bytes": 22426818,
+        "records": 21721
+      },
+      "silver": {
+        "wells": {
+          "rows": 40,
+          "with_production": 40
+        },
+        "production": {
+          "rows": 9334,
+          "first_month": "1973-10-01",
+          "last_month": "2025-12-01",
+          "freshness_months": 2,
+          "entities": 40,
+          "gap_months": 3167
+        },
+        "dropped": {
+          "production.amended_duplicates": 5,
+          "production.days_out_of_range": 127
+        }
+      },
+      "gold": {
+        "production_monthly": {
+          "rows": 9334
+        },
+        "decline_curve_inputs": {
+          "rows": 6861
+        },
+        "wells": {
+          "rows": 40
+        },
+        "parity": true
+      }
+    },
+    "OK": {
+      "bronze": {
+        "pull_date": "2026-02-11",
+        "landed_at": "2026-09-12T15:54:47Z",
+        "files": 4,
+        "bytes": 3839809,
+        "records": 7480
+      },
+      "silver": {
+        "wells": {
+          "rows": 1980,
+          "with_production": 0
+        },
+        "completions": {
+          "rows": 964
+        },
+        "dropped": {}
+      },
+      "gold": {
+        "wells": {
+          "rows": 1980
+        },
+        "completions": {
+          "rows": 964
+        },
+        "parity": true
+      }
+    }
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "error",
+      "layer": "bronze",
+      "state": "TX",
+      "title": "TX pull carries no monthly production table",
+      "description": "The bronze manifest lists OG_COUNTY_CYCLE, OG_OPERATOR_DW, OG_WELL_COMPLETION and one wells page but no OG_LEASE_CYCLE.dsv, which the silver contract names as the only TX production source. Silver TX production is therefore empty and gold has no TX rows; the county rollup cannot be reconciled until the table is re-fetched.",
+      "evidence": [
+        {
+          "file": "data/bronze/tx/2026-02-11/manifest.json",
+          "quote": "\"path\": \"OG_WELL_COMPLETION.dsv\""
+        },
+        {
+          "file": "contract/contract-silver.md",
+          "quote": "When `OG_LEASE_CYCLE.dsv` is absent the TX production file is written empty"
+        },
+        {
+          "kpi": "TX.silver.production.rows"
+        }
+      ]
+    },
+    {
+      "id": "F2",
+      "severity": "warn",
+      "layer": "silver",
+      "state": "TX",
+      "title": "One in five TX ArcGIS well records has a truncated API and was dropped",
+      "description": "The wells page holds APIs shortened to three characters; the silver contract drops and counts them as wells.truncated_api rather than guessing. Coordinates for those wells are lost until the source is re-pulled with full APIs.",
+      "evidence": [
+        {
+          "kpi": "TX.silver.dropped"
+        },
+        {
+          "file": "data/silver/manifest.json",
+          "quote": "\"wells.truncated_api\""
+        },
+        {
+          "file": "contract/contract-silver.md",
+          "quote": "wells.truncated_api"
+        }
+      ]
+    },
+    {
+      "id": "F3",
+      "severity": "info",
+      "layer": "silver",
+      "state": "NM",
+      "title": "NM production is complete through the pull month and multi-pool months are summed",
+      "description": "Silver NM production covers 40 wells with 9334 well-months; the latest month is within the pull's freshness window. Per the contract, well-months spanning several pools are one row with volumes summed per kind and the dominant pool as field_name, and re-filed records are resolved by the latest mod_dte (5 amended duplicates dropped).",
+      "evidence": [
+        {
+          "kpi": "NM.silver.production.last_month"
+        },
+        {
+          "kpi": "NM.silver.production.freshness_months"
+        },
+        {
+          "file": "contract/contract-silver.md",
+          "quote": "volumes are summed across pools per kind"
+        },
+        {
+          "file": "data/silver/manifest.json",
+          "quote": "\"production.amended_duplicates\""
+        }
+      ]
+    },
+    {
+      "id": "F4",
+      "severity": "info",
+      "layer": "cross",
+      "state": "OK",
+      "title": "OK contributes wells and completions, no monthly production",
+      "description": "The OK pull has the ArcGIS wells page, the RBDMS CSV and the completions/ITD sheets but no production source; by contract OK feeds the wells and completions tables only, and gold carries them through with row parity.",
+      "evidence": [
+        {
+          "file": "contract/contract-silver.md",
+          "quote": "`completions` for OK"
+        },
+        {
+          "kpi": "OK.gold.parity"
+        },
+        {
+          "kpi": "OK.silver.completions.rows"
+        }
+      ]
+    },
+    {
+      "id": "F5",
+      "severity": "info",
+      "layer": "gold",
+      "state": null,
+      "title": "Gold row parity holds for every state",
+      "description": "For each state the gold production_monthly (or completions) and wells row counts equal the silver counts, so the gold build neither dropped nor duplicated rows.",
+      "evidence": [
+        {
+          "kpi": "TX.gold.parity"
+        },
+        {
+          "kpi": "NM.gold.parity"
+        },
+        {
+          "kpi": "OK.gold.parity"
+        }
+      ]
+    }
+  ]
+}

@@ -179,3 +179,13 @@ test("repo scope: valid for records, and retainFromRun files a repo run under re
 	const plain = retainFromRun({ summary: { ...summary, config: { pattern: "orchestrator", roles: {} } }, timeline: [], ts: 5 });
 	assert.ok(plain.every((r) => r.scope === "task:dw-bronze"));
 });
+
+test("retainFromRun keeps a validator's KPI digest on the episodic record", () => {
+	const summary = { runId: "r2", task: "dw-recon", reason: "SUCCESS: oracle passed", wallSec: 10, mailByKind: {}, doneAttempts: 1, config: { pattern: "orchestrator", roles: {}, repo: "data-warehousers" } };
+	const timeline = [{ kind: "oracle", from: "supervisor", to: "both", body: "Oracle run #1: 12/12 passed. 12/12 grounding checks; this checks numbers and citations, not insight. KPI digest: TX: landed 2026-02-11 (4 files); NM: production 9334 rows to 2025-12-01" }];
+	const [ep] = retainFromRun({ summary, timeline, ts: 5 });
+	assert.match(ep.text, /Oracle: 12\/12\. KPI digest: TX: landed 2026-02-11/);
+	assert.equal(ep.scope, "repo:data-warehousers");
+	const plain = retainFromRun({ summary, timeline: [{ kind: "oracle", from: "supervisor", to: "both", body: "Oracle run #1: 48/48 passed." }], ts: 5 })[0];
+	assert.ok(!/KPI digest/.test(plain.text));
+});

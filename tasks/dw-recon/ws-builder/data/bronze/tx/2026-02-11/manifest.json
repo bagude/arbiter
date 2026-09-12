@@ -1,0 +1,48 @@
+{
+  "state": "tx",
+  "pull_date": "2026-02-11",
+  "pulled_at": "2026-09-12T15:54:44Z",
+  "sources": [
+    {
+      "name": "mft_pdq",
+      "url": "https://mft.rrc.texas.gov/link/1f5ddb8d-329a-4459-b7f8-177b4f5ee60d"
+    },
+    {
+      "name": "arcgis",
+      "url": "https://gis.rrc.texas.gov/server/rest/services/rrc_public/RRC_Public_Viewer_Srvs/MapServer/1/query"
+    }
+  ],
+  "files": [
+    {
+      "path": "OG_COUNTY_CYCLE.dsv",
+      "bytes": 50021,
+      "sha256": "bc123530eec02c7aaff7a0da8d28de99c23f204e3a6cb264d1f6feeb63c8b0d0",
+      "records": 796,
+      "source": "mft_pdq",
+      "from": "PDQ_DSV.zip"
+    },
+    {
+      "path": "OG_OPERATOR_DW.dsv",
+      "bytes": 26082,
+      "sha256": "a5d383c2b5e3505d8c3e1a17344a8d9d23bd56ac09c8de91b0847d91ce2e30ad",
+      "records": 300,
+      "source": "mft_pdq",
+      "from": "PDQ_DSV.zip"
+    },
+    {
+      "path": "OG_WELL_COMPLETION.dsv",
+      "bytes": 110793,
+      "sha256": "df7b3de4137a88d1873c5cde581fde3f3a2605e8f1750311e681da0aff49f9de",
+      "records": 1535,
+      "source": "mft_pdq",
+      "from": "PDQ_DSV.zip"
+    },
+    {
+      "path": "wells/wells_batch_0001.json",
+      "bytes": 42539,
+      "sha256": "787e0e62ae111c22301aad9a85c1953c82f991c24976e6894cf46dc97be7a94c",
+      "records": 288,
+      "source": "arcgis"
+    }
+  ]
+}

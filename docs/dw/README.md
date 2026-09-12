@@ -7,6 +7,7 @@ The user's oil & gas medallion pipeline (`C:\Users\user\Downloads\claude_playgro
 | bronze | `contract-bronze.md` | `tasks/dw-bronze` | the bytes on disk: sha256 against the remote, independent record counts, manifest truth, idempotence |
 | silver | `contract-silver.md` | `tasks/dw-silver` | an independent minimal reader over the same bronze (`oracle/reference/silver.py`) plus hand-traced `labels.json` |
 | gold | `contract-gold.md` | `tasks/dw-gold` | independent recomputation from oracle-passed silver, 10 assertions, TX county rollup reconciliation |
+| recon | `contract-recon.md` | `tasks/dw-recon` | the reconciliation agent: ad hoc health report over a pipeline state; KPI block recomputed independently, findings grounded in files/quotes or KPI paths; each verdict's KPI digest lands in `repo:data-warehousers` memory (grounding oracle kind) |
 
 - Seed: `tools/dw/carve.py` carves a real slice (TX county 421, NM 40 wells, OK Alfalfa) into `tasks/dw-bronze/ws-builder/remote/`; `tasks/dw-seed/CARVE-nm.json` records the carve. Downstream workspaces carry the reference output of the tier below (`dw-silver/ws-builder/data/bronze`, `dw-gold/ws-builder/data/silver`).
 - Audit of the real bronze: `bronze-audit-real.md` (15/29 checks pass; TX has no production table, NM wells and production are partial, OK's manifest contradicts its directory).
