@@ -36,6 +36,15 @@ test("worker role defaults: max 1, foreground", () => {
 	assert.equal(cfg.roles.worker.max, 1);
 	assert.equal(cfg.roles.worker.background, false);
 });
+test("guards: context_diet is off by default, `true` means defaults, an object passes through, junk is rejected", () => {
+	const roles = { builder: { provider: "llama.cpp", model: "qwen3-27b" } };
+	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles }), env: {} }).guards.context_diet, null);
+	assert.deepEqual(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { context_diet: true } }), env: {} }).guards.context_diet, {});
+	assert.deepEqual(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { context_diet: { ageAfterTurns: 3 } } }), env: {} }).guards.context_diet, { ageAfterTurns: 3 });
+	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { context_diet: false } }), env: {} }).guards.context_diet, null);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { context_diet: "yes" } }), env: {} }), /guards\.context_diet/);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { nope: true } }), env: {} }), /unknown guard "nope"/);
+});
 test("parseArgs reads --config", () => {
 	assert.equal(parseArgs(["node", "supervisor.mjs", "--config", "configs/x.json"]).configPath, "configs/x.json");
 });

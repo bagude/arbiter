@@ -64,7 +64,12 @@ const LIFECYCLE = path.join(RUN, "lifecycle.jsonl");
 // In-band guards loaded into every agent process (and copied into the workspace for
 // pi-subagents workers). Each is a policy in lib/ plus a thin tool_call adapter on
 // ext/guard-kit.ts; see docs/backlog.md §2a for the rule on what belongs here.
-const GUARDS = [path.join(here, "ext", "path-guard.ts"), path.join(here, "ext", "guards", "bash-timeout.ts")];
+const GUARDS = [
+	path.join(here, "ext", "path-guard.ts"),
+	path.join(here, "ext", "guards", "bash-timeout.ts"),
+	// Opt-in (registers nothing unless the run config enables it — see CONFIG.guards).
+	path.join(here, "ext", "guards", "context-diet.ts"),
+];
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
 const startedAt = Date.now();
@@ -239,6 +244,9 @@ function launch(name) {
 			// One number, one source: the bash-timeout guard injects this into every bash
 			// call that lacks a timeout; checkBashTimeout() below is now the fallback.
 			ARBITER_BASH_TIMEOUT_SEC: String(CAPS.bashTimeoutSec),
+			// Opt-in context diet: "" leaves the guard unregistered; a JSON object of
+			// options (possibly {}) turns it on for every role in the run.
+			ARBITER_CONTEXT_DIET: CONFIG.guards.context_diet ? JSON.stringify(CONFIG.guards.context_diet) : "",
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
