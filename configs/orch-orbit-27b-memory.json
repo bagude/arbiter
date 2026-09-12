@@ -1,0 +1,5 @@
+{ "task": "orbit", "pattern": "orchestrator",
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
+  "caps": { "toolCalls": 250, "wallSec": 6000, "usd": 5, "doneAttempts": 5 },
+  "memory": true,
+  "_note": "Pair of configs/orch-orbit-27b.json with memory recall on: the orchestrator is handed the promoted orbit records (the split that passed, the outcome) at launch. Compare against runs/2026-09-11T21-35-14 on time to first spawn, probes, wallSec, and whether the split is reused." }
