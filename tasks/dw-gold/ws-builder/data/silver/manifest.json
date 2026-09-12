@@ -1,0 +1,27 @@
+{
+  "rows": {
+    "wells": {
+      "TX": 230,
+      "NM": 40,
+      "OK": 1980
+    },
+    "production": {
+      "TX": 0,
+      "NM": 9334
+    },
+    "completions": {
+      "OK": 964
+    }
+  },
+  "dropped": {
+    "TX": {
+      "wells.duplicate_api": 1,
+      "wells.truncated_api": 57
+    },
+    "NM": {
+      "production.amended_duplicates": 5,
+      "production.days_out_of_range": 127
+    },
+    "OK": {}
+  }
+}
