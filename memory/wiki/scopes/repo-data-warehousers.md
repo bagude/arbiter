@@ -1,0 +1,19 @@
+# repo:data-warehousers
+
+3 fact(s), 3 run(s) in history, 1 candidate(s). Runs: [[runs/2026-09-12T15-18-58]], [[runs/2026-09-12T15-59-13]], [[runs/2026-09-12T16-06-52]].
+
+## Facts
+
+- [procedural] dw-explore: delegation that passed the oracle — worker 1: You are the data explorer for an oil & gas data warehouse (Texas RRC, New Mexico OCD, Oklahoma OCC). (m_5aa05c202015, conf 0.7, evidence: [[runs/2026-09-12T16-06-52]] oracle:2026-09-12T16-06-52#1)
+- [procedural] dw-recon: delegation that passed the oracle — worker 1: Task: build a health report for an oil & gas data warehouse. (m_5b2a31b64016, conf 0.7, evidence: [[runs/2026-09-12T15-59-13]] oracle:2026-09-12T15-59-13#1)
+- [procedural] dw-bronze: delegation that passed the oracle — worker 1: You are implementing the deliverable `src/bronze.py` in this workspace (CWD: the workspace root, which contains README.m | worker 2: READ-ONLY reconnaissance task. | worker 3: READ-ONLY audit task (you may not modify anything; the earlier recon worker already mapped this repo — work from its fin | worker 4: Task: adjust the existing `src/bronze.py` in this workspace so its record-counting semantics exactly match the acceptanc (m_813d05dbdf4d, conf 0.7, evidence: [[runs/2026-09-12T15-18-58]] oracle:2026-09-12T15-18-58#1)
+
+## History
+
+- dw-explore via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 814.8s; 1 workers, 3 probes, 1 done attempt. Oracle: 17/17. Findings digest: O1 Two Bravo Dome condensate wells hold 59.8% of all NM lifetime oil | O2 December 1992 single month equals 75.6% of all-time fleet oil | O3 Fleet leaders are 100% condensate, in the Bravo Dome CO2-EOR field | O4 33 of 40 wells show catch-up first producing months | O5 28, 25, 24 of 40 wells reach 12, 24, 36 producing months | O6 Median month-12 oil rate is 0.2% of the (inflated) initial rate | O7 31 rows report more days_produced than the month has days | O8 28.3% of each well's first-to-last span has no production row | O9 OK completions contain 779 duplicate rows; one well has 525 | O10 9 o (m_8f13785ca58c, conf 0.9, evidence: [[runs/2026-09-12T16-06-52]] oracle:2026-09-12T16-06-52#1)
+- dw-recon via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 434.6s; 1 workers, 2 probes, 1 done attempt. Oracle: 15/15. KPI digest: TX: landed 2026-02-11 (4 files, 2919 records); silver wells 230, production 0 rows to None (freshness None mo); gold parity ok | NM: landed 2026-02-11 (9 files, 21721 records); silver wells 40, production 9334 rows to 2025-12-01 (freshness 2 mo); gold parity ok | OK: landed 2026-02-11 (4 files, 7480 records); silver wells 1980, completions 964; gold parity ok (m_0816f0e9fabb, conf 0.9, evidence: [[runs/2026-09-12T15-59-13]] oracle:2026-09-12T15-59-13#1)
+- dw-bronze via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 1728.8s; 4 workers, 3 probes, 1 done attempt. Oracle: 51/51. (m_8598f8d08a3b, conf 0.9, evidence: [[runs/2026-09-12T15-18-58]] oracle:2026-09-12T15-18-58#1)
+
+## Candidates
+
+- [semantic, agent] For the dw-bronze task, the hidden checker's record semantics differ from the spec's hints: .dsv records are physical binary lines minus one (no csv module), .csv uses the csv module over utf-8 with the header skipped, .xlsx counts read-only iter_rows of the first sheet minus the header, and .xml counts occurrences of the literal SqlRowSet1 namespaced opening-tag pattern — the spec's "use the csv module" guidance applies only to .csv. (m_ad52aab846ba, conf 0.4, evidence: [[runs/2026-09-12T15-18-58]] mail:2026-09-12T15-18-58#4)

@@ -24,7 +24,7 @@ import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry } from "./lib/workers.mjs";
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
-import { makeRecord, foldLog, readLog, appendLog, project, retainFromRun, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
+import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -141,14 +141,16 @@ for (const role of PDEF.roles) {
 	const needsContext = role === "critic" || role === "orchestrator" || SOLO;
 	prompts[role] = needsContext ? `${base}\n\n# ${contextHeading}\n\n${taskContext}` : base;
 }
-// Memory recall (opt-in): a budgeted projection of promoted records for this task,
-// appended to every role's prompt. What was injected is recorded in summary.json so
-// the run is reproducible; a run with memory off is told nothing.
+// Memory recall (opt-in): the wiki's scope pages for this run (repo, task, global —
+// Facts first, then History), within a character budget, appended to every role's
+// prompt. What was injected is recorded in summary.json so the run is reproducible;
+// a run with memory off is told nothing. The wiki is recompiled first so a run
+// always reads the current log.
 const MEMORY = memoryPaths(here);
 const MEMORY_INJECTED = [];
 if (CONFIG.memory) {
 	const scopes = ["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : [])];
-	const { text, ids } = project({ records: foldLog(readLog(MEMORY.log)), scopes, query: taskContext, budgetChars: CONFIG.memory.budgetChars });
+	const { text, ids } = recall({ pages: renderAll(here), scopes, budgetChars: CONFIG.memory.budgetChars });
 	if (text) {
 		for (const role of Object.keys(prompts)) prompts[role] = `${prompts[role]}\n\n${text}`;
 		MEMORY_INJECTED.push(...ids);
