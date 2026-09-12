@@ -81,6 +81,14 @@ test("bash: the workspace's .pi directory is protected too", () => {
 	assert.equal(decide("bash", { command: "cat .pi/agents/worker.md" }).ok, false);
 });
 
+test("bash: /dev/null redirects and glob paths inside the workspace are not escapes (found live: a research worker was denied 4 times)", () => {
+	assert.equal(decide("bash", { command: "grep -c silent_turn runs/*/audit.jsonl 2>/dev/null" }).ok, true);
+	assert.equal(decide("bash", { command: "ls runs/*/summary.json | head; cat runs/2026-09-10T01-58-05/audit.jsonl > /dev/null" }).ok, true);
+	assert.equal(decide("bash", { command: "node -e 'x' < /dev/null" }).ok, true);
+	assert.equal(decide("bash", { command: "cat /dev/../etc/passwd" }).ok, false);
+	assert.equal(decide("bash", { command: "cat /etc/passwd" }).ok, false);
+});
+
 test("bash: a dot-dot inside a version range is not a path segment", () => {
 	assert.equal(decide("bash", { command: "npm view foo@1..2" }).ok, true);
 });
