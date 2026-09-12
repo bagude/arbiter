@@ -5,6 +5,8 @@ implementation should import it too rather than restate it.
 """
 from __future__ import annotations
 
+import html
+
 import pyarrow as pa
 
 TS = pa.timestamp("us", tz="UTC")
@@ -115,10 +117,14 @@ DROP_REASONS = (
 
 
 def norm_text(v) -> str | None:
-    """Strip, collapse internal whitespace, upper-case; empty -> None."""
+    """Decode XML/HTML entities (&amp; &#x20; …), strip, collapse internal whitespace, upper-case; empty -> None.
+
+    The agencies' SQL-Server XML carries names like 'BC &amp; D OPERATING INC.'; the
+    entity is source encoding, not data (found by the data explorer, run 2026-09-12T16-06-52).
+    """
     if v is None:
         return None
-    s = " ".join(str(v).split())
+    s = " ".join(html.unescape(str(v)).split())
     return s.upper() if s else None
 
 

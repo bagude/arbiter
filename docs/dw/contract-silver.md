@@ -26,7 +26,7 @@ Every drop reason below is counted here; a reason with zero drops may be omitted
 ## 2. Common rules
 
 - **API number**: `SS-CCC-WWWWW` (state code, county code, well number), digits only.
-- **Text**: stripped of leading/trailing whitespace, internal runs of whitespace collapsed to one space, upper-cased; empty → NULL. Applies to `well_name`, `operator`, `county`, `field_name`, `formation_*`, `well_number`, `otc_prod_unit_no`.
+- **Text**: XML/HTML entities decoded first (`&amp;` → `&`, `&#x20;` → space — the agencies' XML encodes them and they are not data), then stripped of leading/trailing whitespace, internal runs of whitespace collapsed to one space, upper-cased; empty → NULL. `norm_text` in `silver_schema.py` is the definition. Applies to `well_name`, `operator`, `county`, `field_name`, `formation_*`, `well_number`, `otc_prod_unit_no`.
 - **NULL vs zero**: NULL = not reported / not applicable; 0 = reported as zero. Never turn a reported 0 into NULL or a missing value into 0.
 - **Codes not in a table** map to `OTHER` (well_type, well_status) or NULL (basin, county-from-FIPS). Tables are in `silver_schema.py`; they are exhaustive for the seed.
 - **Dates**: `date32`; `production_date` is the first day of the month.

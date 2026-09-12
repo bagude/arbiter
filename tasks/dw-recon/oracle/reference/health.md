@@ -1,4 +1,4 @@
-# Pipeline health — pull 2026-02-11 (generated 2026-09-12T15:58:57Z)
+# Pipeline health — pull 2026-02-11 (generated 2026-09-12T16:21:49Z)
 
 - **TX** [ERROR]: landed 2026-09-12T15:54:44Z (4 files, 2919 records); silver wells 230, production 0 rows None→None (freshness None months, 0 gap-months); gold parity ok
 - **NM** [ok]: landed 2026-09-12T15:54:44Z (9 files, 21721 records); silver wells 40, production 9334 rows 1973-10-01→2025-12-01 (freshness 2 months, 3167 gap-months); gold parity ok

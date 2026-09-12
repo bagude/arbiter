@@ -26,7 +26,7 @@ Reads only `data/bronze/`; writes only under `--out`; exits 0; standard library 
 
 ### Common rules
 
-- API number `SS-CCC-WWWWW`. Text fields: strip, collapse internal whitespace to one space, upper-case, empty → NULL. NULL = not reported; 0 = reported zero; never convert one into the other. Codes outside a table → `OTHER` (well_type/well_status) or NULL (basin, county from FIPS). Dates are `date32`; `production_date` is the first of the month.
+- API number `SS-CCC-WWWWW`. Text fields (`norm_text` in the contract module): decode XML/HTML entities (`&amp;` → `&`, `&#x20;` → space), strip, collapse internal whitespace to one space, upper-case, empty → NULL. NULL = not reported; 0 = reported zero; never convert one into the other. Codes outside a table → `OTHER` (well_type/well_status) or NULL (basin, county from FIPS). Dates are `date32`; `production_date` is the first of the month.
 
 ### `wells` — one row per well of the ArcGIS pages (`wells/wells_batch_*.json`, in page then feature order)
 
