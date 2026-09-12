@@ -23,6 +23,7 @@ import { writeWorkerDefinition, installWorkspaceExtension } from "./lib/worker-d
 import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry } from "./lib/workers.mjs";
 import { messages } from "./lib/messages.mjs";
+import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -986,71 +987,28 @@ function finish(reason) {
 	if (finished) return;
 	finished = true;
 	const t = totals();
-	const byKind = {};
-	for (const m of timeline) if (m.from !== "supervisor") byKind[m.kind] = (byKind[m.kind] ?? 0) + 1;
-	// Console/KPI tools read builderModel/criticModel for every run, old and new —
-	// "builder" falls back to "worker" and "critic" falls back to "orchestrator" so
-	// those tools keep working once the orchestrator pattern lands.
-	const builderRole = ROLES.builder ?? ROLES.worker;
-	const criticRole = ROLES.critic ?? ROLES.orchestrator;
-	const summary = {
+	// summary.json and transcript.md are built from plain data in lib/transcript.mjs,
+	// pinned by fixtures; this only supplies the inputs and writes the files.
+	const summary = buildSummary({
 		runId,
 		reason,
-		model: Object.values(ROLES).map((r) => r.model).join(" + "),
-		builderModel: builderRole ? `${builderRole.provider}/${builderRole.model}` : "none",
-		criticModel: criticRole ? `${criticRole.provider}/${criticRole.model}` : "none (solo ablation)",
+		pattern: PATTERN,
+		roles: ROLES,
 		config: CONFIG,
-		wallSec: Number(t.wallSec.toFixed(1)),
-		costUsd: Number(t.cost.toFixed(4)),
-		toolCalls: Object.fromEntries(Object.values(state).map((a) => [a.name, a.toolCalls])),
-		costByAgent: Object.fromEntries(Object.values(state).map((a) => [a.name, Number(a.cost.toFixed(4))])),
-		mail: mailCount,
-		mailByKind: byKind,
+		totals: t,
+		state,
+		timeline,
+		mailCount,
 		doneAttempts,
 		nudges,
-		// How many pi-subagents children the run produced, and — the question the
-		// pattern exists to answer — whether the orchestrator had verified the workspace
-		// host-side at least once before the first oracle, or just relayed a claim.
-		workers: Object.values(state).filter((s) => s.role === "worker").length,
-		// null, not false, when no oracle ever ran: a run that hit the wall cap before any
-		// done never reached the question, and tabulating that as "did not probe" is a
-		// wrong answer rather than a missing one, for the only hand-scored boolean here.
-		// A quiescence-triggered oracle counts as the first oracle, deliberately — it is
-		// still the moment the workspace was first graded.
-		...(PATTERN === "orchestrator" ? { orchestratorProbedBeforeDone: probeCountAtFirstOracle === null ? null : probeCountAtFirstOracle > 0 } : {}),
+		probeCountAtFirstOracle,
 		guards: tracker.guards,
 		caps: CAPS,
 		task: TASK_NAME,
-		oracleGate: PDEF.verifier ? `${PDEF.verifier} approval (hash+quiescence)` : "solo: builder done or quiescence",
-		sandbox: "none (Gondolin requires QEMU; not installed). Controls: hardened flags, tool asymmetry, host-side oracle, budgets.",
-	};
+		verifier: PDEF.verifier,
+	});
 	fs.writeFileSync(path.join(RUN, "summary.json"), JSON.stringify(summary, null, 2));
-	const md = [`# arbiter transcript — ${runId}`, "", `**Outcome:** ${reason}`, ""];
-	// Delegation tree: one entry per worker the orchestrator spawned, each followed by
-	// its resumes and its final report, in the order the worker experienced them — the
-	// interleaved timeline below already has this, but not as a single readable branch.
-	if (PATTERN === "orchestrator") {
-		md.push("## Delegation", "");
-		const byWorker = new Map();
-		for (const m of timeline) {
-			// A spawn still carrying the "worker" placeholder is a `subagent` call that
-			// never produced a worker; handle() drops those as they are seen, and this is
-			// the belt to that pair of braces — an unclaimed entry must never render as a
-			// worker literally called "worker".
-			if (m.kind === "spawn" && m.to === "worker") continue;
-			if (m.kind === "spawn") byWorker.set(m.to, [`- **${m.to}** spawned at ${((m.ts - startedAt) / 1000).toFixed(0)}s — brief: ${m.body.replace(/\s+/g, " ").slice(0, 200)}`]);
-			if ((m.kind === "resume" || m.kind === "report") && byWorker.has(m.kind === "resume" ? m.to : m.from)) {
-				byWorker.get(m.kind === "resume" ? m.to : m.from).push(`  - ${m.kind} at ${((m.ts - startedAt) / 1000).toFixed(0)}s: ${m.body.replace(/\s+/g, " ").slice(0, 160)}`);
-			}
-		}
-		for (const lines of byWorker.values()) md.push(...lines);
-		md.push("");
-	}
-	for (const m of timeline) {
-		const t0 = ((m.ts - startedAt) / 1000).toFixed(0);
-		md.push(`### [${t0}s] ${m.n ? `#${m.n} ` : ""}${m.from} → ${m.to} (${m.kind})`, "", m.body, "");
-	}
-	fs.writeFileSync(path.join(RUN, "transcript.md"), md.join("\n"));
+	fs.writeFileSync(path.join(RUN, "transcript.md"), renderTranscript({ runId, reason, startedAt, timeline, pattern: PATTERN }));
 	log({ type: "finish", msg: `FINISH: ${reason} | $${t.cost.toFixed(3)} | ${t.toolCalls} tool calls | ${mailCount} mails | ${t.wallSec.toFixed(0)}s` });
 	// Kill the agent processes before touching WSROOT — on Windows, removing a
 	// directory that's still a live process's cwd fails with EPERM (found live:
