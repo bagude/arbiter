@@ -1,9 +1,10 @@
 # repo:data-warehousers
 
-5 fact(s), 10 run(s) in history, 4 candidate(s). Runs: [[runs/2026-09-12T15-18-58]], [[runs/2026-09-12T15-59-13]], [[runs/2026-09-12T16-06-52]], [[runs/2026-09-12T17-19-11]], [[runs/2026-09-12T17-38-19]], [[runs/2026-09-12T17-45-13]], [[runs/2026-09-12T17-52-06]], [[runs/2026-09-12T18-04-17]], [[runs/2026-09-12T18-36-04]], [[runs/2026-09-12T18-50-05]], [[runs/2026-09-12T19-01-04]].
+6 fact(s), 11 run(s) in history, 4 candidate(s). Runs: [[runs/2026-09-12T15-18-58]], [[runs/2026-09-12T15-59-13]], [[runs/2026-09-12T16-06-52]], [[runs/2026-09-12T17-19-11]], [[runs/2026-09-12T17-38-19]], [[runs/2026-09-12T17-45-13]], [[runs/2026-09-12T17-52-06]], [[runs/2026-09-12T18-04-17]], [[runs/2026-09-12T18-36-04]], [[runs/2026-09-12T18-50-05]], [[runs/2026-09-12T19-01-04]], [[runs/2026-09-12T19-08-27]].
 
 ## Facts
 
+- [procedural] dw-silver: delegation that passed the oracle — worker 1: You are implementing the deliverable `src/silver.py` (currently a stub) in this workspace (CWD = workspace root). (m_673a9522b9b9, conf 0.7, evidence: [[runs/2026-09-12T19-08-27]] oracle:2026-09-12T19-08-27#1)
 - [procedural] dw-recon: delegation that passed the oracle — worker 1: Task: build a health report for an oil & gas data warehouse in this workspace (CWD = workspace root). (m_0b4cd2f8331e, conf 0.7, evidence: [[runs/2026-09-12T19-01-04]] oracle:2026-09-12T19-01-04#1)
 - [procedural] dw-explore: delegation that passed the oracle — worker 1: You are writing the final deliverable files for a data-exploration task in this workspace (CWD = workspace root). (m_1f6569ccf449, conf 0.7, evidence: [[runs/2026-09-12T17-38-19]] oracle:2026-09-12T17-38-19#1)
 - [procedural] dw-explore: delegation that passed the oracle — worker 1: You are the data explorer for an oil & gas data warehouse (Texas RRC, New Mexico OCD, Oklahoma OCC). (m_5aa05c202015, conf 0.99, evidence: [[runs/2026-09-12T16-06-52]] oracle:2026-09-12T16-06-52#1 [[runs/2026-09-12T17-19-11]] oracle:2026-09-12T17-19-11#1 [[runs/2026-09-12T17-45-13]] oracle:2026-09-12T17-45-13#1 [[runs/2026-09-12T17-52-06]] oracle:2026-09-12T17-52-06#1 [[runs/2026-09-12T18-04-17]] oracle:2026-09-12T18-04-17#1 [[runs/2026-09-12T18-36-04]] oracle:2026-09-12T18-36-04#1 [[runs/2026-09-12T18-50-05]] oracle:2026-09-12T18-50-05#1)
@@ -24,6 +25,7 @@
 
 ## History
 
+- dw-silver via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 1987.9s; 1 workers, 2 probes, 1 done attempt. Oracle: 42/42. (m_7c94613d425f, conf 0.9, evidence: [[runs/2026-09-12T19-08-27]] oracle:2026-09-12T19-08-27#1)
 - dw-explore via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 658.2s; 1 workers, 3 probes, 1 done attempt. Oracle: 18/18. (m_9be91b5832c9, conf 0.9, evidence: [[runs/2026-09-12T18-50-05]] oracle:2026-09-12T18-50-05#1)
 - dw-explore via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 839.5s; 1 workers, 2 probes, 1 done attempt. Oracle: 14/14. (m_ef1c3ed45524, conf 0.9, evidence: [[runs/2026-09-12T18-36-04]] oracle:2026-09-12T18-36-04#1)
 - dw-explore via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 1907.1s; 1 workers, 9 probes, 1 done attempt. Oracle: 15/15. (m_6d2af6515afb, conf 0.9, evidence: [[runs/2026-09-12T18-04-17]] oracle:2026-09-12T18-04-17#1)
