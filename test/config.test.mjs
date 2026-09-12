@@ -59,3 +59,10 @@ test("parseArgs reads --config", () => {
 test("every pattern's prompt files exist", () => {
 	for (const [name, p] of Object.entries(PATTERNS)) for (const f of Object.values(p.prompt)) assert.ok(fs.existsSync(path.join("prompts", f)), `${name}: prompts/${f}`);
 });
+
+test("repo: absent means null; a name is kept; junk is rejected", () => {
+	const base = { task: "dw-bronze", pattern: "dyad", roles: { builder: { provider: "p", model: "m" }, critic: { provider: "p", model: "m" } } };
+	assert.equal(loadConfig({ configPath: tmpConfig(base), env: {} }).repo, null);
+	assert.equal(loadConfig({ configPath: tmpConfig({ ...base, repo: "data-warehousers" }), env: {} }).repo, "data-warehousers");
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ ...base, repo: "../x" }), env: {} }), /repo/);
+});

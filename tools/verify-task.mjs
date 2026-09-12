@@ -52,8 +52,63 @@ function runProbe(taskDir) {
 	}
 }
 
+// validate.mjs-shaped tasks (a Python or grounding oracle): the workspace is copied
+// whole, oracle/reference/* becomes src/, and validate.mjs must report pass === total;
+// the shipped workspace as-is must not.
+function runValidate(taskDir, withReference) {
+	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-verify-"));
+	try {
+		fs.cpSync(path.join(taskDir, "ws-builder"), scratch, { recursive: true });
+		if (withReference) fs.cpSync(path.join(taskDir, "oracle", "reference"), path.join(scratch, "src"), { recursive: true });
+		const r = spawnSync(process.execPath, [path.join(taskDir, "oracle", "validate.mjs"), scratch], { encoding: "utf8", timeout: 120_000 });
+		const last = (r.stdout ?? "").trim().split("\n").filter(Boolean).pop() ?? "";
+		try {
+			const v = JSON.parse(last);
+			return { pass: Number(v.pass ?? 0), total: Number(v.total ?? 0), summary: String(v.summary ?? "") };
+		} catch {
+			return { pass: 0, total: 0, summary: `validate printed no JSON: ${(r.stderr ?? "").slice(0, 200)}` };
+		}
+	} finally {
+		fs.rmSync(scratch, { recursive: true, force: true });
+	}
+}
+
+function runValidateProbe(taskDir) {
+	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-verify-"));
+	try {
+		fs.cpSync(path.join(taskDir, "ws-builder"), scratch, { recursive: true });
+		fs.cpSync(path.join(taskDir, "oracle", "reference"), path.join(scratch, "src"), { recursive: true });
+		const r = spawnSync(process.execPath, [path.join(taskDir, "oracle", "probe.mjs"), scratch], { encoding: "utf8", input: "[]", timeout: 120_000 });
+		const last = (r.stdout ?? "").trim().split("\n").filter(Boolean).pop() ?? "";
+		try {
+			const parsed = JSON.parse(last);
+			return { ok: Array.isArray(parsed), error: Array.isArray(parsed) ? undefined : "probe output is not an array" };
+		} catch {
+			return { ok: false, error: `probe printed no JSON: ${(r.stderr ?? "").slice(0, 200)}` };
+		}
+	} finally {
+		fs.rmSync(scratch, { recursive: true, force: true });
+	}
+}
+
+function verifyValidateTask(name, taskDir) {
+	const problems = [];
+	const need = ["spec.md", "ws-builder/README.md", "oracle/validate.mjs", "oracle/probe.mjs", "oracle/reference"];
+	for (const f of need) if (!fs.existsSync(path.join(taskDir, f))) problems.push(`missing ${f}`);
+	if (problems.length) return { task: name, ok: false, problems };
+	const ref = runValidate(taskDir, true);
+	const stub = runValidate(taskDir, false);
+	const probe = runValidateProbe(taskDir);
+	if (ref.total === 0) problems.push("validator ran no checks");
+	if (ref.pass !== ref.total) problems.push(`reference fails ${ref.total - ref.pass}/${ref.total} checks: ${ref.summary.slice(0, 300)}`);
+	if (stub.total > 0 && stub.pass === stub.total) problems.push("stub workspace passes the validator");
+	if (!probe.ok) problems.push(`probe: ${probe.error}`);
+	return { task: name, ok: problems.length === 0, tests: ref.total, reference: `${ref.pass}/${ref.total}`, stub: `${stub.pass}/${stub.total}`, probe: probe.ok, problems };
+}
+
 export function verifyTask(name) {
 	const taskDir = path.join(TASKS, name);
+	if (fs.existsSync(path.join(taskDir, "oracle", "validate.mjs")) && fs.existsSync(path.join(taskDir, "oracle", "reference"))) return verifyValidateTask(name, taskDir);
 	const problems = [];
 	const need = ["spec.md", "ws-builder/README.md", `ws-builder/src/${name}.mjs`, `oracle/${name}.test.mjs`, "oracle/reference.mjs", "oracle/probe.mjs"];
 	for (const f of need) if (!fs.existsSync(path.join(taskDir, f))) problems.push(`missing ${f}`);
@@ -73,7 +128,7 @@ export function verifyTask(name) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	let names = process.argv.slice(2);
-	if (names[0] === "--all") names = fs.readdirSync(TASKS).filter((n) => fs.existsSync(path.join(TASKS, n, "oracle", "reference.mjs")));
+	if (names[0] === "--all") names = fs.readdirSync(TASKS).filter((n) => fs.existsSync(path.join(TASKS, n, "oracle", "reference.mjs")) || fs.existsSync(path.join(TASKS, n, "oracle", "reference")));
 	let bad = 0;
 	for (const n of names) {
 		const r = verifyTask(n);

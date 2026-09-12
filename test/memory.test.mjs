@@ -168,3 +168,14 @@ test("retainFromRun on a failed run keeps the episodic record as a candidate and
 	assert.match(out[0].text, /CAP: wall 1500s >= 1500s in 1500s; 2 probes, 2 done attempts\. Oracle: 58\/59, 58\/59\./);
 	assert.deepEqual(out[0].evidence, ["run:r2", "oracle:r2#1", "oracle:r2#2"]);
 });
+
+test("repo scope: valid for records, and retainFromRun files a repo run under repo:<name> instead of task:<name>", () => {
+	assert.equal(rec({ scope: "repo:data-warehousers" }).scope, "repo:data-warehousers");
+	assert.throws(() => rec({ scope: "repo:../x" }), /scope/);
+	const summary = { runId: "r1", task: "dw-bronze", reason: "SUCCESS: oracle passed", wallSec: 10, mailByKind: { probe: 1 }, doneAttempts: 1, config: { pattern: "orchestrator", roles: {}, repo: "data-warehousers" } };
+	const out = retainFromRun({ summary, timeline: [], ts: 5 });
+	assert.ok(out.length >= 1);
+	assert.ok(out.every((r) => r.scope === "repo:data-warehousers"));
+	const plain = retainFromRun({ summary: { ...summary, config: { pattern: "orchestrator", roles: {} } }, timeline: [], ts: 5 });
+	assert.ok(plain.every((r) => r.scope === "task:dw-bronze"));
+});

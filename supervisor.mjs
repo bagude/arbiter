@@ -147,7 +147,8 @@ for (const role of PDEF.roles) {
 const MEMORY = memoryPaths(here);
 const MEMORY_INJECTED = [];
 if (CONFIG.memory) {
-	const { text, ids } = project({ records: foldLog(readLog(MEMORY.log)), scopes: ["global", `task:${TASK_NAME}`], query: taskContext, budgetChars: CONFIG.memory.budgetChars });
+	const scopes = ["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : [])];
+	const { text, ids } = project({ records: foldLog(readLog(MEMORY.log)), scopes, query: taskContext, budgetChars: CONFIG.memory.budgetChars });
 	if (text) {
 		for (const role of Object.keys(prompts)) prompts[role] = `${prompts[role]}\n\n${text}`;
 		MEMORY_INJECTED.push(...ids);
@@ -532,7 +533,7 @@ function pumpBus() {
 			case "deliver": deliver(route.to, frame(msg), `mail #${msg.n} from ${msg.from}`); break;
 			case "memory": {
 				// Stored as a candidate only; the writer never promotes its own observation.
-				const record = makeRecord({ scope: `task:${TASK_NAME}`, kind: "semantic", text: msg.body.slice(0, 500), evidence: [`run:${runId}`, `mail:${runId}#${msg.n}`], confidence: 0.4, source: "agent" });
+				const record = makeRecord({ scope: CONFIG.repo ? `repo:${CONFIG.repo}` : `task:${TASK_NAME}`, kind: "semantic", text: msg.body.slice(0, 500), evidence: [`run:${runId}`, `mail:${runId}#${msg.n}`], confidence: 0.4, source: "agent" });
 				appendLog(MEMORY.log, [record]);
 				log({ agent: route.from, type: "memory", msg: `candidate ${record.id}: ${record.text.replace(/\s+/g, " ").slice(0, 200)}` });
 				deliver(route.from, M.memoryAck(), "memory candidate recorded");

@@ -1,0 +1,19 @@
+{
+  "src_repo": "C:\\Users\\user\\Downloads\\claude_playground\\data-warehousers",
+  "carved_at": "2026-09-12T08:27:18",
+  "tx": {
+    "OG_WELL_COMPLETION": 1535,
+    "OG_COUNTY_CYCLE": 796,
+    "OG_OPERATOR_DW": 300,
+    "OG_LEASE_CYCLE": null,
+    "arcgis_features": 288,
+    "arcgis_truncated_api": 57
+  },
+  "ok": {
+    "arcgis_features": 1980,
+    "apis": 1980,
+    "rbdms_csv": 1980,
+    "completions": 964,
+    "itd": 2556
+  }
+}
