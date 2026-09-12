@@ -107,6 +107,10 @@ function seedFromRuns() {
 	}
 	const log = path.join(ROOT, "memory", "records.jsonl");
 	let fromMemory = 0;
+	// Memory titles count only from this config's own scope (repo:<repo> or
+	// task:<task>): a seed-data exploration's titles must not brake a real-data one.
+	const cfg = readJson(path.resolve(config)) ?? {};
+	const scope = cfg.repo ? `repo:${cfg.repo}` : `task:${cfg.task}`;
 	if (fs.existsSync(log)) {
 		for (const line of fs.readFileSync(log, "utf8").split("\n")) {
 			let r;
@@ -115,6 +119,7 @@ function seedFromRuns() {
 			} catch {
 				continue;
 			}
+			if (r?.scope !== scope) continue;
 			const m = /Findings digest: (.+)$/s.exec(r?.text ?? "");
 			if (!m) continue;
 			for (const part of m[1].split("||")[0].split(" | ")) {
