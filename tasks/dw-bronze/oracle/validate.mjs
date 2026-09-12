@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { runCandidate, runChecker, interfaceChecks, REQ } from "./harness.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const ws = process.argv[2];
+const ws = process.argv[2] ? path.resolve(process.argv[2]) : undefined;
 const out = (o) => console.log(JSON.stringify(o));
 if (!ws || !fs.existsSync(ws)) {
 	out({ pass: 0, total: 1, summary: "no workspace dir given" });

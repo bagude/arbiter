@@ -7,6 +7,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+// A relative workspace path would be resolved by uv against cwd (= the workspace) — resolve it once here.
+const abs = (ws) => path.resolve(ws);
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const REFERENCE = path.join(here, "reference", "silver.py");
 export const CHECKER = path.join(here, "silver_check.py");
@@ -15,6 +18,7 @@ export const MAX_LINES = 450;
 export const FORBIDDEN = ["requests", "httpx", "urllib", "socket", "ftplib", "subprocess", "os.system"];
 
 function uv(ws, extra, env = {}) {
+	ws = abs(ws);
 	return spawnSync("uv", ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(ws, "requirements.txt"), "python", ...extra], { cwd: ws, encoding: "utf8", timeout: 45_000, env: { ...process.env, ...env } });
 }
 

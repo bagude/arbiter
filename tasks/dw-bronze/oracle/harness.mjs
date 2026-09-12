@@ -6,6 +6,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+// A relative workspace path would be resolved by uv against cwd (= the workspace) — resolve it once here.
+const abs = (ws) => path.resolve(ws);
+
 export const REQ = "requirements.txt";
 export const MAX_LINES = 250;
 export const FORBIDDEN = ["requests", "httpx", "urllib", "socket", "ftplib", "http.client", "subprocess", "aiohttp", "os.system"];
@@ -15,6 +18,7 @@ export function uvArgs(ws) {
 }
 
 export function runCandidate(ws, src, outDir, states = null) {
+	ws = abs(ws);
 	const args = [...uvArgs(ws), src, "--remote", path.join(ws, "remote"), "--out", outDir, "--pull-date", "2026-02-11"];
 	if (states) args.push("--states", ...states);
 	const r = spawnSync("uv", args, { cwd: ws, encoding: "utf8", timeout: 40_000 });

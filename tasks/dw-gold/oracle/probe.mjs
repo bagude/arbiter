@@ -14,7 +14,7 @@ import path from "node:path";
 import { REFERENCE, runChecker, runGold } from "./harness.mjs";
 
 const TABLES = ["production_monthly", "decline_curve_inputs", "wells", "completions"];
-const ws = process.argv[2];
+const ws = process.argv[2] ? path.resolve(process.argv[2]) : undefined;
 let probes;
 try {
 	probes = JSON.parse(fs.readFileSync(0, "utf8"));

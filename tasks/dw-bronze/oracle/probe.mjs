@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { runCandidate, runChecker } from "./harness.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const ws = process.argv[2];
+const ws = process.argv[2] ? path.resolve(process.argv[2]) : undefined;
 let probes;
 try {
 	probes = JSON.parse(fs.readFileSync(0, "utf8"));
