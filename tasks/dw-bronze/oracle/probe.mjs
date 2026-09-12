@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runCandidate, runChecker } from "./harness.mjs";
+import { runCandidate, runChecker, TASK_WS } from "./harness.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ws = process.argv[2] ? path.resolve(process.argv[2]) : undefined;
@@ -44,7 +44,7 @@ try {
 			results.push({ id, ok: true, value: { state, pass: 0, total: 1, failed: [`bronze.py exited ${r.status}: ${r.tail}`] } });
 			continue;
 		}
-		const res = runChecker(path.join(here, "bronze_check.py"), ["check", "--remote", path.join(ws, "remote"), "--bronze", out, "--states", state]);
+		const res = runChecker(path.join(here, "bronze_check.py"), ["check", "--remote", path.join(TASK_WS, "remote"), "--bronze", out, "--states", state]);
 		if (!res) results.push({ id, ok: false, error: "checker produced no result" });
 		else results.push({ id, ok: true, value: { state, pass: res.pass, total: res.total, failed: res.checks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.detail}`) } });
 	}

@@ -10,6 +10,8 @@ import { spawnSync } from "node:child_process";
 const abs = (ws) => path.resolve(ws);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// Inputs come from the task's pristine workspace (probes run in a scratch dir with only src/).
+export const TASK_WS = path.join(here, "..", "ws-builder");
 export const REFERENCE = path.join(here, "reference", "gold.py");
 export const CHECKER = path.join(here, "gold_check.py");
 export const MAX_LINES = 300;
@@ -17,17 +19,17 @@ export const FORBIDDEN = ["requests", "httpx", "urllib", "socket", "ftplib", "su
 
 function uv(ws, extra) {
 	ws = abs(ws);
-	return spawnSync("uv", ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(ws, "requirements.txt"), "python", ...extra], { cwd: ws, encoding: "utf8", timeout: 45_000 });
+	return spawnSync("uv", ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(TASK_WS, "requirements.txt"), "python", ...extra], { cwd: TASK_WS, encoding: "utf8", timeout: 45_000 });
 }
 
 export function runGold(ws, script, outFile) {
-	const r = uv(ws, [script, "--silver", path.join(ws, "data", "silver"), "--out", outFile, "--county-cycle", path.join(ws, "data", "reference", "OG_COUNTY_CYCLE.dsv")]);
+	const r = uv(ws, [script, "--silver", path.join(TASK_WS, "data", "silver"), "--out", outFile, "--county-cycle", path.join(TASK_WS, "data", "reference", "OG_COUNTY_CYCLE.dsv")]);
 	const tail = `${r.stdout ?? ""}\n${r.stderr ?? ""}`.trim().split("\n").slice(-4).join(" / ").slice(0, 400);
 	return { status: r.status ?? -1, tail: r.error ? `${r.error.message} ${tail}` : tail };
 }
 
 export function runChecker(ws, expected, actual, extra = []) {
-	const r = uv(ws, [CHECKER, "--expected", expected, "--actual", actual, "--silver", path.join(ws, "data", "silver"), "--county-cycle", path.join(ws, "data", "reference", "OG_COUNTY_CYCLE.dsv"), ...extra]);
+	const r = uv(ws, [CHECKER, "--expected", expected, "--actual", actual, "--silver", path.join(TASK_WS, "data", "silver"), "--county-cycle", path.join(TASK_WS, "data", "reference", "OG_COUNTY_CYCLE.dsv"), ...extra]);
 	try {
 		return JSON.parse(r.stdout);
 	} catch {

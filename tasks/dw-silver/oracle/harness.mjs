@@ -11,6 +11,8 @@ import { spawnSync } from "node:child_process";
 const abs = (ws) => path.resolve(ws);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// Inputs come from the task's pristine workspace (probes run in a scratch dir with only src/).
+export const TASK_WS = path.join(here, "..", "ws-builder");
 export const REFERENCE = path.join(here, "reference", "silver.py");
 export const CHECKER = path.join(here, "silver_check.py");
 export const LABELS = path.join(here, "labels.json");
@@ -19,20 +21,20 @@ export const FORBIDDEN = ["requests", "httpx", "urllib", "socket", "ftplib", "su
 
 function uv(ws, extra, env = {}) {
 	ws = abs(ws);
-	return spawnSync("uv", ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(ws, "requirements.txt"), "python", ...extra], { cwd: ws, encoding: "utf8", timeout: 45_000, env: { ...process.env, ...env } });
+	return spawnSync("uv", ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(TASK_WS, "requirements.txt"), "python", ...extra], { cwd: TASK_WS, encoding: "utf8", timeout: 45_000, env: { ...process.env, ...env } });
 }
 
 /** Run a silver script from the workspace (cwd = ws so contract/ resolves). */
 export function runSilver(ws, script, outDir, states = null) {
-	const args = [script, "--bronze", path.join(ws, "data", "bronze"), "--out", outDir];
+	const args = [script, "--bronze", path.join(TASK_WS, "data", "bronze"), "--out", outDir];
 	if (states) args.push("--states", ...states);
-	const r = uv(ws, args, { DW_CONTRACT: path.join(ws, "contract") });
+	const r = uv(ws, args, { DW_CONTRACT: path.join(TASK_WS, "contract") });
 	const tail = `${r.stdout ?? ""}\n${r.stderr ?? ""}`.trim().split("\n").slice(-4).join(" / ").slice(0, 400);
 	return { status: r.status ?? -1, tail: r.error ? `${r.error.message} ${tail}` : tail };
 }
 
 export function runChecker(ws, expected, actual, extra = []) {
-	const r = uv(ws, [CHECKER, "--expected", expected, "--actual", actual, "--contract", path.join(ws, "contract"), "--labels", LABELS, ...extra]);
+	const r = uv(ws, [CHECKER, "--expected", expected, "--actual", actual, "--contract", path.join(TASK_WS, "contract"), "--labels", LABELS, ...extra]);
 	try {
 		return JSON.parse(r.stdout);
 	} catch {
@@ -51,7 +53,9 @@ export function interfaceChecks(src) {
 
 /** The contract file in the workspace must be the oracle's copy, untouched. */
 export function contractUntouched(ws) {
-	const a = fs.readFileSync(path.join(ws, "contract", "silver_schema.py"), "utf8").replace(/\r\n/g, "\n");
+	const p = path.join(ws, "contract", "silver_schema.py");
+	if (!fs.existsSync(p)) return { ok: true, label: "no contract copy in the graded dir (inputs are the task's own)" };
+	const a = fs.readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 	const b = fs.readFileSync(path.join(here, "silver_schema.py"), "utf8").replace(/\r\n/g, "\n");
 	return { ok: a === b, label: "contract/silver_schema.py is unmodified" };
 }

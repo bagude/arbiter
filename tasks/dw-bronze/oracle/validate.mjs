@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runCandidate, runChecker, interfaceChecks, REQ } from "./harness.mjs";
+import { runCandidate, runChecker, interfaceChecks, TASK_WS } from "./harness.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ws = process.argv[2] ? path.resolve(process.argv[2]) : undefined;
@@ -36,7 +36,7 @@ try {
 	const r2 = runCandidate(ws, src, b2);
 	checks.push({ ok: r2.status === 0, label: `second run exits 0 (exit ${r2.status})` });
 	if (r1.status === 0 && r2.status === 0) {
-		const res = runChecker(path.join(here, "bronze_check.py"), ["check", "--remote", path.join(ws, "remote"), "--bronze", b1, "--bronze2", b2]);
+		const res = runChecker(path.join(here, "bronze_check.py"), ["check", "--remote", path.join(TASK_WS, "remote"), "--bronze", b1, "--bronze2", b2]);
 		if (!res) checks.push({ ok: false, label: "bronze_check.py produced no result" });
 		else for (const c of res.checks) checks.push({ ok: c.ok, label: `${c.state}/${c.name}: ${c.detail}` });
 	}

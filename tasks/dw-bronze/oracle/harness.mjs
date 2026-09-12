@@ -4,7 +4,14 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+
+// Inputs (remote/, requirements.txt) always come from the task's pristine workspace:
+// the supervisor runs probes in a scratch dir holding only the candidate's src/, and a
+// candidate must not be able to grade itself against inputs it edited.
+const here = path.dirname(fileURLToPath(import.meta.url));
+export const TASK_WS = path.join(here, "..", "ws-builder");
 
 // A relative workspace path would be resolved by uv against cwd (= the workspace) — resolve it once here.
 const abs = (ws) => path.resolve(ws);
@@ -14,14 +21,14 @@ export const MAX_LINES = 250;
 export const FORBIDDEN = ["requests", "httpx", "urllib", "socket", "ftplib", "http.client", "subprocess", "aiohttp", "os.system"];
 
 export function uvArgs(ws) {
-	return ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(ws, REQ), "python"];
+	return ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(TASK_WS, REQ), "python"];
 }
 
 export function runCandidate(ws, src, outDir, states = null) {
 	ws = abs(ws);
-	const args = [...uvArgs(ws), src, "--remote", path.join(ws, "remote"), "--out", outDir, "--pull-date", "2026-02-11"];
+	const args = [...uvArgs(ws), src, "--remote", path.join(TASK_WS, "remote"), "--out", outDir, "--pull-date", "2026-02-11"];
 	if (states) args.push("--states", ...states);
-	const r = spawnSync("uv", args, { cwd: ws, encoding: "utf8", timeout: 40_000 });
+	const r = spawnSync("uv", args, { cwd: TASK_WS, encoding: "utf8", timeout: 40_000 });
 	const tail = `${r.stdout ?? ""}\n${r.stderr ?? ""}`.trim().split("\n").slice(-4).join(" / ").slice(0, 400);
 	return { status: r.status ?? -1, tail: r.error ? `${r.error.message} ${tail}` : tail };
 }
