@@ -87,7 +87,7 @@ const [, , cmd, ...args] = process.argv;
 		case "recall": {
 			const bi = args.indexOf("--budget");
 			const budgetChars = bi >= 0 ? Number(args[bi + 1]) : 2000;
-			const scopes = args.filter((a, i) => a !== "--budget" && i !== bi + 1);
+			const scopes = args.filter((a, i) => a !== "--budget" && (bi < 0 || i !== bi + 1));
 			const { text, ids } = recall({ pages: renderAll(), scopes: ["global", ...scopes], budgetChars });
 			console.log(text || "(nothing promoted in scope)");
 			console.error(`ids: ${ids.join(", ")}`);

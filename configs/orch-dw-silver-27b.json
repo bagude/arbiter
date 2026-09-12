@@ -1,4 +1,4 @@
-{ "task": "dw-silver", "pattern": "orchestrator", "repo": "data-warehousers", "memory": true,
+{ "task": "dw-silver", "pattern": "orchestrator", "repo": "data-warehousers", "memory": { "budgetChars": 4000 },
   "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
   "caps": { "toolCalls": 400, "wallSec": 3600, "usd": 5, "doneAttempts": 5, "bashTimeoutSec": 120 },
   "_note": "data-warehousers tier 2: silver tables from trusted bronze. Oracle = independent reference reader + labels (silver_check.py). Memory scope repo:data-warehousers." }

@@ -1,4 +1,4 @@
-{ "task": "dw-recon", "pattern": "orchestrator", "repo": "data-warehousers", "memory": true,
+{ "task": "dw-recon", "pattern": "orchestrator", "repo": "data-warehousers", "memory": { "budgetChars": 4000 },
   "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
   "caps": { "toolCalls": 300, "wallSec": 2400, "usd": 5, "doneAttempts": 5, "bashTimeoutSec": 120 },
   "_note": "data-warehousers reconciliation agent: ad hoc health report over a pipeline state. Oracle = grounding (KPI block recomputed independently; findings must cite real files/quotes or KPI paths). Each verdict carries a KPI digest that retention stores in repo:data-warehousers." }
