@@ -1,10 +1,10 @@
 # Arbiter memory wiki
 
-Compiled 2026-09-12T19:41:35.688Z from 68 live record(s) across 16 scope(s), 47 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
+Compiled 2026-09-12T19:53:33.552Z from 70 live record(s) across 16 scope(s), 48 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
 
 ## Repos
 
-- [[scopes/repo-data-warehousers]] — 6 facts, 4 candidates, last run: 2026-09-12T19-08-27 SUCCESS
+- [[scopes/repo-data-warehousers]] — 7 facts, 4 candidates, last run: 2026-09-12T19-41-35 SUCCESS
 
 ## Tasks
 
@@ -35,6 +35,7 @@ Compiled 2026-09-12T19:41:35.688Z from 68 live record(s) across 16 scope(s), 47 
 
 ## Runs
 
+- [[runs/2026-09-12T19-41-35]] — SUCCESS, dw-gold
 - [[runs/2026-09-12T19-08-27]] — SUCCESS, dw-silver
 - [[runs/2026-09-12T19-01-04]] — SUCCESS, dw-recon
 - [[runs/2026-09-12T18-50-05]] — SUCCESS, dw-explore

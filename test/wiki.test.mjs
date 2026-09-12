@@ -13,7 +13,9 @@ function fixture() {
 		rec({ id: "m_3", status: "candidate", scope: "task:orbit", kind: "semantic", text: "an agent claim about orbit", confidence: 0.4, source: "agent", evidence: ["run:r1", "mail:r1#3"], ts: 30 }),
 		rec({ id: "m_4", status: "tombstoned", scope: "task:orbit", kind: "semantic", text: "a forgotten claim", ts: 40 }),
 		rec({ id: "m_5", status: "promoted", scope: "global", kind: "semantic", text: "llama.cpp qwen3-27b omits bash timeouts", confidence: 0.6, source: "human", ts: 50 }),
-		rec({ id: "m_6", status: "promoted", scope: "repo:dw", kind: "episodic", text: "dw-recon: SUCCESS in 435s. Oracle: 15/15. KPI digest: TX landed 2026-02-11", confidence: 0.9, source: "supervisor", evidence: ["run:r2", "oracle:r2#1"], ts: 60 }),
+		rec({ id: "m_6", status: "promoted", scope: "repo:dw", kind: "episodic", text: "dw-recon via orchestrator: SUCCESS in 435s. Oracle: 15/15. KPI digest: TX landed 2026-02-11", confidence: 0.9, source: "supervisor", evidence: ["run:r2", "oracle:r2#1"], ts: 60 }),
+		rec({ id: "m_7", status: "promoted", scope: "repo:dw", kind: "episodic", text: "dw-explore via orchestrator: SUCCESS in 800s. Oracle: 17/17. Findings digest: O1 Two wells hold 60% of oil | O2 December 1992 holds 76% || next: is 1992 a catch-up?", confidence: 0.9, source: "supervisor", evidence: ["run:r3", "oracle:r3#1"], ts: 70 }),
+		rec({ id: "m_8", status: "promoted", scope: "repo:dw", kind: "episodic", text: "dw-explore via orchestrator: SUCCESS in 600s. Oracle: 14/14. Findings digest: O1 Only NM has production | O2 Two wells hold 60% of oil || next: water cut?", confidence: 0.9, source: "supervisor", evidence: ["run:r4", "oracle:r4#1"], ts: 80 }),
 	]);
 	const runSummaries = new Map([
 		["r1", { runId: "r1", task: "orbit", reason: "SUCCESS: oracle passed", wallSec: 1086, workers: 3, doneAttempts: 1, toolCalls: 120, config: { pattern: "orchestrator", roles: { orchestrator: { provider: "llama.cpp", model: "qwen3-27b" } } }, guards: { path: { denied: { orchestrator: 2 } }, bash_timeout: { rewritten: { "worker:a": 5 } } }, memory: { injected: [] } }],
@@ -64,10 +66,15 @@ test("recall reads pages in scope order (repo, task, global), Facts before Histo
 	const full = recall({ pages, scopes: ["global", "task:orbit", "repo:dw"], budgetChars: 10_000 });
 	assert.match(full.text, /^# MEMORY \(wiki excerpt; scopes: repo:dw, task:orbit, global\)\n/);
 	assert.ok(full.text.indexOf("## repo:dw") < full.text.indexOf("## task:orbit") && full.text.indexOf("## task:orbit") < full.text.indexOf("## global"));
-	assert.deepEqual(full.ids, ["m_6", "m_1", "m_2", "m_5"]);
+	assert.deepEqual(full.ids, ["m_8", "m_6", "m_7", "m_1", "m_2", "m_5"]);
 	assert.doesNotMatch(full.text, /agent claim|forgotten/);
-	// a run's digest is carried once, in its own section, and stripped from the History line
-	assert.match(full.text, /## repo:dw\n- \[\[runs\/r2\]\] KPI digest: TX landed 2026-02-11 \(m_6\)\n- dw-recon: SUCCESS in 435s\. Oracle: 15\/15\. \(m_6, conf 0\.9/);
+	// digests: newest per task first (explore r4, then recon r2), then the older explore r3
+	assert.match(full.text, /## repo:dw\n- \[\[runs\/r4\]\] Findings digest: O1 Only NM has production[^\n]*\n- \[\[runs\/r2\]\] KPI digest: TX landed 2026-02-11 \(m_6\)\n- \[\[runs\/r3\]\] Findings digest:/);
+	// explorations: every title once, newest first; the duplicate title appears one time
+	const repoPage = pages.get("scopes/repo-dw.md");
+	assert.match(repoPage, /## Explorations\n\n3 distinct observation title\(s\)[^\n]*\n\n- Only NM has production \(\[\[runs\/r4\]\]\)\n- Two wells hold 60% of oil \(\[\[runs\/r4\]\]\)\n- December 1992 holds 76% \(\[\[runs\/r3\]\]\)\n/);
+	// the History line for a digest-bearing record is stripped of the digest
+	assert.match(full.text, /- dw-recon via orchestrator: SUCCESS in 435s\. Oracle: 15\/15\. \(m_6, conf 0\.9/);
 	assert.equal((full.text.match(/KPI digest/g) ?? []).length, 1);
 	const tight = recall({ pages, scopes: ["task:orbit"], budgetChars: 160 });
 	assert.deepEqual(tight.ids, ["m_1"]);

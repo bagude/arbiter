@@ -23,6 +23,9 @@ const opt = (flag, dflt) => {
 };
 const ROUNDS = opt("--rounds", 3);
 const MIN_NOVELTY = opt("--min-novelty", 0.5);
+// Title similarity at or above this counts as "already found". 0.4 (not 0.5): at 0.5
+// paraphrases of earlier findings passed as novel in campaign explore-2.
+const SAME_TITLE = opt("--same-title", 0.4);
 if (!name || !config) {
 	console.error("usage: node tools/campaign.mjs <name> <config.json> [--rounds N] [--min-novelty 0..1]");
 	process.exit(1);
@@ -91,7 +94,7 @@ for (let round = 1; round <= ROUNDS; round++) {
 	const s = runId ? readJson(path.join(ROOT, "runs", runId, "summary.json")) : null;
 	const doc = runId ? readJson(path.join(ROOT, "runs", runId, "ws-builder", "src", "exploration.json")) : null;
 	const titles = Array.isArray(doc?.observations) ? doc.observations.map((o) => String(o?.title ?? "")) : [];
-	const fresh = titles.filter((t) => !seenTitles.some((prev) => jaccard(tokens(t), prev) >= 0.5));
+	const fresh = titles.filter((t) => !seenTitles.some((prev) => jaccard(tokens(t), prev) >= SAME_TITLE));
 	const novelty = titles.length ? fresh.length / titles.length : 0;
 	const injected = s?.memory?.injected?.length ?? 0;
 	const row = { round, runId, exit: code, reason: s?.reason ?? "(no summary)", wallSec: s?.wallSec ?? "", probes: s?.mailByKind?.probe ?? 0, injected, observations: titles.length, fresh: fresh.length, novelty, titles, next: doc?.next_questions ?? [] };

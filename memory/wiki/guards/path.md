@@ -1,6 +1,6 @@
 # guard path
 
-Totals across 15 run(s): denied 36.
+Totals across 16 run(s): denied 38.
 
 ## By run
 
@@ -19,3 +19,4 @@ Totals across 15 run(s): denied 36.
 - [[runs/2026-09-12T18-04-17]] — denied 1
 - [[runs/2026-09-12T19-01-04]] — denied 1
 - [[runs/2026-09-12T19-08-27]] — denied 1
+- [[runs/2026-09-12T19-41-35]] — denied 2
