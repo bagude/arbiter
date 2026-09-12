@@ -4,6 +4,8 @@
 
 - [episodic] dw-bronze via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 1728.8s; 4 workers, 3 probes, 1 done attempt. Oracle: 51/51. (m_8598f8d08a3b, conf 0.9, evidence: run:2026-09-12T15-18-58, oracle:2026-09-12T15-18-58#1)
 - [procedural] dw-bronze: delegation that passed the oracle — worker 1: You are implementing the deliverable `src/bronze.py` in this workspace (CWD: the workspace root, which contains README.m | worker 2: READ-ONLY reconnaissance task. | worker 3: READ-ONLY audit task (you may not modify anything; the earlier recon worker already mapped this repo — work from its fin | worker 4: Task: adjust the existing `src/bronze.py` in this workspace so its record-counting semantics exactly match the acceptanc (m_813d05dbdf4d, conf 0.7, evidence: run:2026-09-12T15-18-58, oracle:2026-09-12T15-18-58#1)
+- [episodic] dw-recon via orchestrator (orchestrator=llama.cpp/qwen3-27b, worker=llama.cpp/qwen3-27b): SUCCESS: oracle passed in 434.6s; 1 workers, 2 probes, 1 done attempt. Oracle: 15/15. KPI digest: TX: landed 2026-02-11 (4 files, 2919 records); silver wells 230, production 0 rows to None (freshness None mo); gold parity ok | NM: landed 2026-02-11 (9 files, 21721 records); silver wells 40, production 9334 rows to 2025-12-01 (freshness 2 mo); gold parity ok | OK: landed 2026-02-11 (4 files, 7480 records); silver wells 1980, completions 964; gold parity ok (m_0816f0e9fabb, conf 0.9, evidence: run:2026-09-12T15-59-13, oracle:2026-09-12T15-59-13#1)
+- [procedural] dw-recon: delegation that passed the oracle — worker 1: Task: build a health report for an oil & gas data warehouse. (m_5b2a31b64016, conf 0.7, evidence: run:2026-09-12T15-59-13, oracle:2026-09-12T15-59-13#1)
 
 ## Candidates
 
