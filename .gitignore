@@ -5,3 +5,4 @@ node_modules/
 /*.log
 tools/console.html
 tools/runs-data.json
+__pycache__/
