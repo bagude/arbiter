@@ -29,3 +29,16 @@ test("writeWorkerDefinition creates the agent file and the concurrency setting",
 	assert.ok(fs.existsSync(p));
 	assert.deepEqual(JSON.parse(fs.readFileSync(path.join(ws, ".pi", "subagents.json"), "utf8")), { maxConcurrent: 1 });
 });
+
+test("resolveWorkerPrompt prefers the task's own worker.md, falls back to prompts/worker.md, and appends the memory excerpt", async () => {
+	const { resolveWorkerPrompt } = await import("../lib/worker-def.mjs");
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-home-"));
+	fs.mkdirSync(path.join(home, "prompts"));
+	fs.writeFileSync(path.join(home, "prompts", "worker.md"), "GENERIC\n");
+	const task = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-task-"));
+	assert.deepEqual(resolveWorkerPrompt({ taskDir: task, home }), { prompt: "GENERIC", file: path.join(home, "prompts", "worker.md") });
+	fs.writeFileSync(path.join(task, "worker.md"), "OWN\n");
+	const r = resolveWorkerPrompt({ taskDir: task, home, memoryText: "# MEMORY\n- fact" });
+	assert.equal(r.file, path.join(task, "worker.md"));
+	assert.equal(r.prompt, "OWN\n\n# MEMORY\n- fact");
+});

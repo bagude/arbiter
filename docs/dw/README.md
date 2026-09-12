@@ -14,6 +14,7 @@ The user's oil & gas medallion pipeline (`C:\Users\user\Downloads\claude_playgro
 - Audit of the real bronze: `bronze-audit-real.md` (15/29 checks pass; TX has no production table, NM wells and production are partial, OK's manifest contradicts its directory).
 - Verify all three oracles: `node tools/verify-task.mjs dw-bronze dw-silver dw-gold` (reference passes, stub fails, probe answers).
 - Run: `node supervisor.mjs --config configs/orch-dw-<tier>-27b.json`; memory scope `repo:data-warehousers` (`"repo"` in the config).
+- Worker prompts: each dw task ships `worker.md` (Python via uv, the deliverable, the read-only inputs, how to self-verify); `resolveWorkerPrompt` uses it instead of the generic JavaScript-flavoured `prompts/worker.md`, and appends the run's memory excerpt so workers on recon/explore know what earlier runs found.
 - Python for agents and oracles: `uv run --no-project --python 3.13 --with-requirements requirements.txt python …` (pins in `tasks/dw-seed/requirements.txt`).
 
 Open decisions for the user (spec §10): re-fetch TX `OG_LEASE_CYCLE`; NM multi-pool ruling (sum, default); OK as wells + completions only (default); the new `wells`/`completions` columns.

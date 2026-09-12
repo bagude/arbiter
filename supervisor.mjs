@@ -19,7 +19,7 @@ import { createAgentState, lastEditAcross, liveWorkers, EDITING_TOOLS } from "./
 import { routeMail } from "./lib/routing.mjs";
 import { loadConfig, parseArgs } from "./lib/config.mjs";
 import { PATTERNS, WORKER_TOOLS } from "./lib/patterns.mjs";
-import { writeWorkerDefinition, installWorkspaceExtension } from "./lib/worker-def.mjs";
+import { writeWorkerDefinition, installWorkspaceExtension, resolveWorkerPrompt } from "./lib/worker-def.mjs";
 import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry } from "./lib/workers.mjs";
 import { messages } from "./lib/messages.mjs";
@@ -148,12 +148,14 @@ for (const role of PDEF.roles) {
 // always reads the current log.
 const MEMORY = memoryPaths(here);
 const MEMORY_INJECTED = [];
+let MEMORY_TEXT = "";
 if (CONFIG.memory) {
 	const scopes = ["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : [])];
 	const { text, ids } = recall({ pages: renderAll(here), scopes, budgetChars: CONFIG.memory.budgetChars });
 	if (text) {
 		for (const role of Object.keys(prompts)) prompts[role] = `${prompts[role]}\n\n${text}`;
 		MEMORY_INJECTED.push(...ids);
+		MEMORY_TEXT = text; // workers get the same excerpt (see writeWorkerDefinition below)
 	}
 }
 // Logged at launch (not only in summary.json at finish) so a live run shows what
@@ -1121,11 +1123,15 @@ if (PATTERN === "orchestrator") {
 	// <cwd>/.pi/extensions. The copies resolve ext/guard-kit.ts and lib/ through
 	// ARBITER_HOME.
 	for (const g of GUARDS) installWorkspaceExtension(WS.workspace, g);
+	// The worker's prompt is the task's own worker.md when it has one (tasks/<task>/
+	// worker.md), else the generic one; the memory excerpt rides along.
+	const workerPrompt = resolveWorkerPrompt({ taskDir: TASK, home: here, memoryText: MEMORY_TEXT });
+	log({ type: "worker_prompt", msg: `worker prompt: ${path.relative(here, workerPrompt.file)}${MEMORY_TEXT ? " + memory excerpt" : ""}` });
 	writeWorkerDefinition(WS.workspace, {
 		provider: ROLES.worker.provider,
 		model: ROLES.worker.model,
 		tools: WORKER_TOOLS,
-		prompt: fs.readFileSync(path.join(here, "prompts", "worker.md"), "utf8"),
+		prompt: workerPrompt.prompt,
 		maxTurns: 60,
 		background: ROLES.worker.background,
 		max: ROLES.worker.max,
