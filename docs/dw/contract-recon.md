@@ -51,6 +51,18 @@ contract/*.md, contract/silver_schema.py
 
 Integers are integers; dates are strings; nothing else appears in the block. The oracle compares the block to its own computation key by key.
 
+## 3b. Since the last report
+
+The KPI digest memory carries is a compact JSON object per state (`pull_date, landed_at, files, records, wells, production_rows | completions_rows, last_month, freshness_months, parity`). The report must say what changed against the newest earlier report:
+
+```json
+"since_last": null                                  // no earlier JSON KPI digest is known
+"since_last": { "run": "<run id of that report>", "previous": { …its digest verbatim… },
+                "changed": { "NM.production_rows": { "from": 9334, "to": 9340 } }, "unchanged": 26 }
+```
+
+The oracle finds the newest surviving `dw-recon` record with a JSON digest in `memory/records.jsonl` (the same line the agent sees in its MEMORY section: `[[runs/<id>]] KPI digest: {…}`), requires `run` and `previous` to match it exactly, and `changed`/`unchanged` to equal its own key-by-key diff of that digest against the current KPI block. With no such record, `since_last` must be `null`.
+
 ## 4. Findings
 
 - At least 3, unique `id`s, `severity ∈ {info, warn, error}`, `layer ∈ {bronze, silver, gold, cross}`, `state ∈ {TX, NM, OK, null}`, non-empty `title` and `description`.
@@ -63,6 +75,7 @@ Integers are integers; dates are strings; nothing else appears in the block. The
 
 1. `src/health.json` parses; `report_of` equals the pull date; `generated_at` is UTC `…Z`.
 2. The KPI block equals the oracle's recomputation for every state and key (missing, extra or differing keys are each a failure, reported by path).
+2b. `since_last` as in §3b.
 3. Findings: the rules in §4, each checked and reported by finding id.
 4. `src/health.md` exists and is non-empty.
 

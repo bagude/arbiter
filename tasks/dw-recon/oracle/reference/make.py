@@ -17,6 +17,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from kpi import compute  # noqa: E402
+from recon_check import compact, diff_digests, previous_report  # noqa: E402
+
+MEMORY = Path(__file__).resolve().parents[4] / "memory" / "records.jsonl"
 
 FINDINGS = [
     {"id": "F1", "severity": "error", "layer": "bronze", "state": "TX", "title": "TX pull carries no monthly production table",
@@ -50,6 +53,14 @@ def render_md(doc: dict) -> str:
         lines.append(f"- **{s}** [{status}]: landed {k['bronze']['landed_at']} ({k['bronze']['files']} files, {k['bronze']['records']} records); silver wells {k['silver']['wells']['rows']}"
                      + (f", production {prod['rows']} rows {prod['first_month']}→{prod['last_month']} (freshness {prod['freshness_months']} months, {prod['gap_months']} gap-months)" if prod else f", completions {k['silver']['completions']['rows']}")
                      + f"; gold parity {'ok' if k['gold']['parity'] else 'BROKEN'}")
+    sl = doc.get("since_last")
+    lines += ["", "## Since last report", ""]
+    if not sl:
+        lines.append("No earlier report is known; this is the baseline.")
+    else:
+        lines.append(f"Compared with run {sl['run']}: {len(sl['changed'])} KPI(s) changed, {sl['unchanged']} unchanged.")
+        for k, v in sl["changed"].items():
+            lines.append(f"- {k}: {v['from']} → {v['to']}")
     lines += ["", "## KPI", "", "| state | layer | metric | value |", "|---|---|---|---|"]
     for s, k in doc["kpi"].items():
         for layer, block in k.items():
@@ -77,7 +88,12 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path(__file__).resolve().parent)
     a = ap.parse_args()
     kpi = compute(a.workspace)
-    doc = {"report_of": kpi["TX"]["bronze"]["pull_date"], "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kpi": kpi, "findings": FINDINGS}
+    prev = previous_report(MEMORY)
+    since_last = None
+    if prev:
+        changed, unchanged = diff_digests(prev[1], compact(kpi))
+        since_last = {"run": prev[0], "previous": prev[1], "changed": changed, "unchanged": unchanged}
+    doc = {"report_of": kpi["TX"]["bronze"]["pull_date"], "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kpi": kpi, "since_last": since_last, "findings": FINDINGS}
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "health.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     (a.out / "health.md").write_text(render_md(doc), encoding="utf-8")

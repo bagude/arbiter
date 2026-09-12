@@ -9,9 +9,11 @@ import { spawnSync } from "node:child_process";
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const TASK_WS = path.join(here, "..", "ws-builder");
 export const CHECKER = path.join(here, "recon_check.py");
+// The evidence log: the newest earlier dw-recon digest in it is what since_last must compare against.
+export const MEMORY = path.join(here, "..", "..", "..", "memory", "records.jsonl");
 
 export function runChecker(ws, extra = []) {
-	const r = spawnSync("uv", ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(TASK_WS, "requirements.txt"), "python", CHECKER, path.resolve(ws), "--data", TASK_WS, ...extra], { cwd: TASK_WS, encoding: "utf8", timeout: 50_000 });
+	const r = spawnSync("uv", ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(TASK_WS, "requirements.txt"), "python", CHECKER, path.resolve(ws), "--data", TASK_WS, "--memory", MEMORY, ...extra], { cwd: TASK_WS, encoding: "utf8", timeout: 50_000 });
 	try {
 		return JSON.parse(r.stdout);
 	} catch {

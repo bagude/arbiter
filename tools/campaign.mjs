@@ -63,44 +63,83 @@ function readJson(p) {
 	}
 }
 
-// Seed the novelty tally with every observation title memory already holds for
-// this repo/task (the "Findings digest: O1 title | O2 title || next: …" records), so
-// round 1 is measured against earlier runs, not against nothing.
-function seedFromMemory() {
-	const seeds = [];
-	const log = path.join(ROOT, "memory", "records.jsonl");
-	if (!fs.existsSync(log)) return seeds;
-	for (const line of fs.readFileSync(log, "utf8").split("\n")) {
-		let r;
-		try {
-			r = JSON.parse(line);
-		} catch {
-			continue;
-		}
-		const m = /Findings digest: (.+)$/s.exec(r?.text ?? "");
-		if (!m) continue;
-		for (const part of m[1].split("||")[0].split(" | ")) seeds.push(tokens(part.replace(/^O\d+\s+/, "")));
+// Novelty is judged on three signals, any of which marks an observation as already
+// found: the same normalised query was run before; the result rows are identical to
+// an earlier observation's (the same fact in other words — titles paraphrase, rows
+// do not); or the title is similar. Seeds come from every earlier run's
+// exploration.json on disk, and from the titles memory carries for runs whose
+// directories are gone.
+const normSql = (q) => String(q ?? "").toLowerCase().replace(/\s+/g, " ").replace(/;\s*$/, "").trim();
+const fingerprint = (rows) => JSON.stringify(rows ?? []);
+const seen = { queries: new Set(), results: new Set(), titles: [] };
+function absorb(doc) {
+	let n = 0;
+	for (const o of Array.isArray(doc?.observations) ? doc.observations : []) {
+		if (!o || typeof o !== "object") continue;
+		seen.queries.add(normSql(o.query));
+		seen.results.add(fingerprint(o.result));
+		seen.titles.push(tokens(o.title));
+		n++;
 	}
-	return seeds;
+	return n;
+}
+function isKnown(o) {
+	if (seen.queries.has(normSql(o?.query))) return "same query";
+	if (Array.isArray(o?.result) && o.result.length && seen.results.has(fingerprint(o.result))) return "same result";
+	if (seen.titles.some((prev) => jaccard(tokens(o?.title), prev) >= SAME_TITLE)) return "similar title";
+	return null;
+}
+function seedFromRuns() {
+	let runs = 0;
+	let obs = 0;
+	const runsDir = path.join(ROOT, "runs");
+	for (const d of fs.existsSync(runsDir) ? fs.readdirSync(runsDir) : []) {
+		if (!/^\d{4}-/.test(d)) continue;
+		const doc = readJson(path.join(runsDir, d, "ws-builder", "src", "exploration.json"));
+		if (!doc) continue;
+		runs++;
+		obs += absorb(doc);
+	}
+	const log = path.join(ROOT, "memory", "records.jsonl");
+	let fromMemory = 0;
+	if (fs.existsSync(log)) {
+		for (const line of fs.readFileSync(log, "utf8").split("\n")) {
+			let r;
+			try {
+				r = JSON.parse(line);
+			} catch {
+				continue;
+			}
+			const m = /Findings digest: (.+)$/s.exec(r?.text ?? "");
+			if (!m) continue;
+			for (const part of m[1].split("||")[0].split(" | ")) {
+				seen.titles.push(tokens(part.replace(/^O\d+\s+/, "")));
+				fromMemory++;
+			}
+		}
+	}
+	return { runs, obs, fromMemory };
 }
 
 const rows = [];
-const seenTitles = seedFromMemory(); // token sets of every title found so far, across rounds
-console.log(`[campaign ${name}] novelty tally seeded with ${seenTitles.length} title(s) from memory`);
+const seeded = seedFromRuns();
+console.log(`[campaign ${name}] novelty tally seeded: ${seeded.obs} observation(s) from ${seeded.runs} earlier run(s) on disk, ${seeded.fromMemory} title(s) from memory`);
 const t0 = Date.now();
 for (let round = 1; round <= ROUNDS; round++) {
 	console.log(`[campaign ${name}] ${new Date().toISOString()} round ${round}/${ROUNDS} start`);
 	const { runId, code } = await runOne(round);
 	const s = runId ? readJson(path.join(ROOT, "runs", runId, "summary.json")) : null;
 	const doc = runId ? readJson(path.join(ROOT, "runs", runId, "ws-builder", "src", "exploration.json")) : null;
-	const titles = Array.isArray(doc?.observations) ? doc.observations.map((o) => String(o?.title ?? "")) : [];
-	const fresh = titles.filter((t) => !seenTitles.some((prev) => jaccard(tokens(t), prev) >= SAME_TITLE));
+	const observations = Array.isArray(doc?.observations) ? doc.observations.filter((o) => o && typeof o === "object") : [];
+	const titles = observations.map((o) => String(o.title ?? ""));
+	const verdicts = observations.map((o) => ({ title: String(o.title ?? ""), known: isKnown(o) }));
+	const fresh = verdicts.filter((v) => !v.known);
 	const novelty = titles.length ? fresh.length / titles.length : 0;
 	const injected = s?.memory?.injected?.length ?? 0;
-	const row = { round, runId, exit: code, reason: s?.reason ?? "(no summary)", wallSec: s?.wallSec ?? "", probes: s?.mailByKind?.probe ?? 0, injected, observations: titles.length, fresh: fresh.length, novelty, titles, next: doc?.next_questions ?? [] };
+	const row = { round, runId, exit: code, reason: s?.reason ?? "(no summary)", wallSec: s?.wallSec ?? "", probes: s?.mailByKind?.probe ?? 0, injected, observations: titles.length, fresh: fresh.length, novelty, verdicts, next: doc?.next_questions ?? [] };
 	rows.push(row);
 	console.log(`[campaign ${name}] round ${round}: ${row.reason} in ${row.wallSec}s; ${titles.length} observations, ${fresh.length} novel (novelty ${novelty.toFixed(2)}); ${injected} memory records injected`);
-	for (const t of titles) seenTitles.push(tokens(t));
+	absorb(doc);
 	if (!String(row.reason).startsWith("SUCCESS")) {
 		console.log(`[campaign ${name}] stop: round ${round} did not pass the oracle`);
 		break;
@@ -114,13 +153,13 @@ for (let round = 1; round <= ROUNDS; round++) {
 const md = [
 	`# Campaign ${name} — ${path.basename(config)}`,
 	"",
-	`${rows.length} round(s), ${((Date.now() - t0) / 3600_000).toFixed(2)} h. Brake: stop on oracle failure or novelty < ${MIN_NOVELTY} (share of a round's observation titles not similar to any earlier title).`,
+	`${rows.length} round(s), ${((Date.now() - t0) / 3600_000).toFixed(2)} h. Brake: stop on oracle failure or novelty < ${MIN_NOVELTY} — an observation counts as already found if its query was run before, its result rows are identical to an earlier observation's, or its title is similar (Jaccard ≥ ${SAME_TITLE}); seeded from ${seeded.obs} earlier observation(s) on disk and ${seeded.fromMemory} title(s) in memory.`,
 	"",
 	"| round | run | outcome | wall s | probes | memory injected | observations | novel | novelty |",
 	"|---|---|---|---|---|---|---|---|---|",
 	...rows.map((r) => `| ${r.round} | ${r.runId ?? "—"} | ${r.reason} | ${r.wallSec} | ${r.probes} | ${r.injected} | ${r.observations} | ${r.fresh} | ${r.novelty.toFixed(2)} |`),
 	"",
-	...rows.flatMap((r) => [`## Round ${r.round} — ${r.runId ?? "no run"}`, "", ...r.titles.map((t) => `- ${t}`), "", ...(r.next.length ? ["Open questions left:", "", ...r.next.map((q) => `- ${q}`), ""] : [])]),
+	...rows.flatMap((r) => [`## Round ${r.round} — ${r.runId ?? "no run"}`, "", ...r.verdicts.map((v) => `- ${v.known ? `(${v.known}) ` : ""}${v.title}`), "", ...(r.next.length ? ["Open questions left:", "", ...r.next.map((q) => `- ${q}`), ""] : [])]),
 ];
 fs.mkdirSync(path.join(ROOT, "docs", "batch"), { recursive: true });
 fs.writeFileSync(path.join(ROOT, "docs", "batch", `campaign-${name}.md`), md.join("\n"));

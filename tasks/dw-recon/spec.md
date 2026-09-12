@@ -30,6 +30,17 @@ Per state: `bronze.pull_date` = the pull directory name; `bronze.landed_at` = th
 
 Read parquet with `pyarrow.parquet.ParquetFile(path).read()` (not the dataset API: `state` is both a column and a partition name). Read DuckDB with `duckdb.connect(path, read_only=True)`.
 
+### Since the last report (the host checks this exactly)
+
+Add a top-level `since_last`. If your prompt's MEMORY section has no line of the form `[[runs/<id>]] KPI digest: {…}` for `dw-recon`, set `"since_last": null`. Otherwise take the **newest** such line and set
+
+```json
+"since_last": { "run": "<that run id>", "previous": { …that JSON object, copied verbatim… },
+                "changed": { "<STATE>.<key>": { "from": <previous value>, "to": <your value> } }, "unchanged": <count> }
+```
+
+where the keys compared are exactly those of the compact digest per state (`pull_date, landed_at, files, records, wells, production_rows` or `completions_rows`, `last_month, freshness_months, parity`), `changed` lists every key whose value differs between that digest and your KPI block, and `unchanged` counts the keys that are equal. Say in `health.md` what changed since that report, or that nothing did.
+
 ### Findings (the host checks grounding, not insight)
 
 At least 3, unique ids, `severity ∈ {info, warn, error}`, `layer ∈ {bronze, silver, gold, cross}`, `state ∈ {TX, NM, OK, null}`, non-empty title and description, ≥ 1 evidence each. Evidence is either `{ "file", "quote" }` — a text file under `data/` or `contract/` (`.json .md .py .dsv .csv .txt .xml`) and a substring of at least 12 characters that appears **verbatim** in it — or `{ "kpi": "<STATE>.<path>" }` naming a key of the KPI block (e.g. `NM.silver.production.freshness_months`). Parquet and DuckDB cannot be quoted; cite the manifest, a contract, a raw file, or a KPI instead. A finding about something missing still cites something that exists.

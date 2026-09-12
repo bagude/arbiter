@@ -96,6 +96,13 @@ function verifyValidateTask(name, taskDir) {
 	const need = ["spec.md", "ws-builder/README.md", "oracle/validate.mjs", "oracle/probe.mjs", "oracle/reference"];
 	for (const f of need) if (!fs.existsSync(path.join(taskDir, f))) problems.push(`missing ${f}`);
 	if (problems.length) return { task: name, ok: false, problems };
+	// A reference generated from data (oracle/reference/make.py) is regenerated first, so
+	// it can never be stale against the workspace or the memory it may compare against.
+	const make = path.join(taskDir, "oracle", "reference", "make.py");
+	if (fs.existsSync(make)) {
+		const r = spawnSync("uv", ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(taskDir, "ws-builder", "requirements.txt"), "python", make, path.join(taskDir, "ws-builder")], { cwd: taskDir, encoding: "utf8", timeout: 120_000 });
+		if (r.status !== 0) problems.push(`reference make.py failed: ${(r.stderr ?? "").slice(-300)}`);
+	}
 	const ref = runValidate(taskDir, true);
 	const stub = runValidate(taskDir, false);
 	const probe = runValidateProbe(taskDir);

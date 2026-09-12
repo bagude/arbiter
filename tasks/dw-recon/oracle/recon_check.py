@@ -106,14 +106,99 @@ def check_finding(f, data: Path, kpi_flat: dict):
     return bad
 
 
-def digest_of(kpi: dict) -> str:
-    parts = []
+def compact(kpi: dict) -> dict:
+    """The KPI digest as memory carries it: one small JSON object per state."""
+    out = {}
     for s, k in kpi.items():
         prod = k["silver"].get("production")
-        parts.append(f"{s}: landed {k['bronze']['pull_date']} ({k['bronze']['files']} files, {k['bronze']['records']} records); silver wells {k['silver']['wells']['rows']}"
-                     + (f", production {prod['rows']} rows to {prod['last_month']} (freshness {prod['freshness_months']} mo)" if prod else f", completions {k['silver']['completions']['rows']}")
-                     + f"; gold parity {'ok' if k['gold']['parity'] else 'BROKEN'}")
-    return " | ".join(parts)
+        c = {"pull_date": k["bronze"]["pull_date"], "landed_at": k["bronze"]["landed_at"], "files": k["bronze"]["files"], "records": k["bronze"]["records"], "wells": k["silver"]["wells"]["rows"]}
+        if prod:
+            c.update({"production_rows": prod["rows"], "last_month": prod["last_month"], "freshness_months": prod["freshness_months"]})
+        else:
+            c["completions_rows"] = k["silver"]["completions"]["rows"]
+        c["parity"] = bool(k["gold"]["parity"])
+        out[s] = c
+    return out
+
+
+def digest_of(kpi: dict) -> str:
+    return json.dumps(compact(kpi), separators=(",", ":"), sort_keys=True)
+
+
+def previous_report(memory: Path | None):
+    """The newest surviving dw-recon record in memory with a JSON KPI digest → (run id, digest dict), or None.
+
+    Mirrors what the wiki shows the agent: the record's first run: evidence and the
+    digest on it. Records tombstoned by consolidation are ignored, like the wiki does.
+    """
+    if not memory or not memory.exists():
+        return None
+    recs, status = {}, {}
+    for line in memory.read_text(encoding="utf-8").splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if e.get("op") == "tombstone":
+            status[e.get("id")] = "tombstoned"
+        elif e.get("op") == "promote":
+            status[e.get("id")] = "promoted"
+        elif e.get("id"):
+            recs[e["id"]] = e
+    best = None
+    for r in recs.values():
+        st = status.get(r["id"], r.get("status"))
+        if st != "promoted" or r.get("kind") != "episodic" or not str(r.get("text", "")).startswith("dw-recon via"):
+            continue
+        m = re.search(r"KPI digest: (\{.*\})\s*$", r.get("text", ""), re.S)
+        if not m:
+            continue
+        try:
+            digest = json.loads(m.group(1))
+        except ValueError:
+            continue
+        run = next((str(x)[4:] for x in r.get("evidence", []) if str(x).startswith("run:")), None)
+        if run and (best is None or r["ts"] > best[2]):
+            best = (run, digest, r["ts"])
+    return (best[0], best[1]) if best else None
+
+
+def diff_digests(prev: dict, cur: dict):
+    changed, unchanged = {}, 0
+    for s in sorted(set(prev) | set(cur)):
+        for key in sorted(set(prev.get(s, {})) | set(cur.get(s, {}))):
+            a, b = prev.get(s, {}).get(key), cur.get(s, {}).get(key)
+            if a != b:
+                changed[f"{s}.{key}"] = {"from": a, "to": b}
+            else:
+                unchanged += 1
+    return changed, unchanged
+
+
+def check_since_last(ck: Checks, doc: dict, kpi: dict, memory: Path | None):
+    prev = previous_report(memory)
+    got = doc.get("since_last", "MISSING")
+    if got == "MISSING":
+        ck.add("since_last", False, "since_last is missing (null when no earlier report is known)")
+        return
+    if prev is None:
+        ck.add("since_last", got is None, "no earlier JSON KPI digest in memory → since_last must be null" if got is not None else "null, as expected: no earlier report")
+        return
+    run, pdigest = prev
+    if not isinstance(got, dict):
+        ck.add("since_last", False, f"an earlier report exists (run {run}); since_last must be an object")
+        return
+    changed, unchanged = diff_digests(pdigest, compact(kpi))
+    bad = []
+    if got.get("run") != run:
+        bad.append(f"run {got.get('run')!r} ≠ the newest earlier report {run!r}")
+    if got.get("previous") != pdigest:
+        bad.append("previous does not equal that report's KPI digest verbatim")
+    if got.get("changed") != changed:
+        bad.append(f"changed differs: expected {json.dumps(changed)[:300]} got {json.dumps(got.get('changed'))[:300]}")
+    if got.get("unchanged") != unchanged:
+        bad.append(f"unchanged {got.get('unchanged')!r} ≠ {unchanged}")
+    ck.add("since_last", not bad, "; ".join(bad) or f"compared with {run}: {len(changed)} changed, {unchanged} unchanged")
 
 
 def main() -> int:
@@ -122,6 +207,7 @@ def main() -> int:
     ap.add_argument("--data", type=Path, help="directory holding data/ and contract/ (default: the workspace)")
     ap.add_argument("--finding")
     ap.add_argument("--kpi-only", action="store_true")
+    ap.add_argument("--memory", type=Path, help="memory/records.jsonl — enables the since_last check against the newest earlier report")
     a = ap.parse_args()
     data = a.data or a.workspace
     ck = Checks()
@@ -129,7 +215,8 @@ def main() -> int:
     kpi_flat = flatten(kpi)
     digest = digest_of(kpi)
     if a.kpi_only:
-        print(json.dumps({"kpi": kpi, "digest": digest}, indent=2))
+        prev = previous_report(a.memory)
+        print(json.dumps({"kpi": kpi, "digest": digest, "previous_report": {"run": prev[0], "digest": prev[1]} if prev else None}, indent=2))
         return 0
     hp = a.workspace / "src" / "health.json"
     try:
@@ -172,6 +259,7 @@ def main() -> int:
             fid = f.get("id") if isinstance(f, dict) else "?"
             bad = check_finding(f, data, kpi_flat)
             ck.add(f"finding {fid}", not bad, "; ".join(bad) or "grounded")
+    check_since_last(ck, doc, kpi, a.memory)
     md = a.workspace / "src" / "health.md"
     ck.add("health_md", md.is_file() and md.stat().st_size > 200, "src/health.md present and non-trivial" if md.is_file() else "src/health.md missing")
     print(json.dumps(ck.result(digest), indent=2))
