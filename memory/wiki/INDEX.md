@@ -1,11 +1,11 @@
 # Arbiter memory wiki
 
-Compiled 2026-09-12T22:46:28.911Z from 89 live record(s) across 17 scope(s), 57 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
+Compiled 2026-09-13T01:00:27.367Z from 218 live record(s) across 17 scope(s), 58 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
 
 ## Repos
 
-- [[scopes/repo-data-warehousers]] — 10 facts, 0 candidates, last run: 2026-09-12T20-08-54 SUCCESS
-- [[scopes/repo-data-warehousers-real]] — 1 fact, 4 candidates, last run: 2026-09-12T22-33-39 SUCCESS
+- [[scopes/repo-data-warehousers]] — 105 facts, 0 candidates, last run: 2026-09-12T20-08-54 SUCCESS
+- [[scopes/repo-data-warehousers-real]] — 33 facts, 4 candidates, last run: 2026-09-12T22-33-39 SUCCESS
 
 ## Tasks
 
@@ -17,7 +17,7 @@ Compiled 2026-09-12T22:46:28.911Z from 89 live record(s) across 17 scope(s), 57 
 - [[scopes/task-lru]] — 1 fact, 0 candidates, last run: 2026-09-12T06-13-34 SUCCESS
 - [[scopes/task-mdtable]] — 2 facts, 0 candidates, last run: 2026-09-12T07-14-49 SUCCESS
 - [[scopes/task-orbit]] — 1 fact, 0 candidates, last run: 2026-09-11T21-35-14 SUCCESS
-- [[scopes/task-pathnorm]] — 1 fact, 0 candidates, last run: 2026-09-12T07-25-47 SUCCESS
+- [[scopes/task-pathnorm]] — 2 facts, 1 candidate, last run: 2026-09-12T07-25-47 SUCCESS
 - [[scopes/task-review-guard]] — 11 facts, 0 candidates, last run: 2026-09-12T08-24-41 SUCCESS
 - [[scopes/task-run-analysis]] — 4 facts, 0 candidates, last run: 2026-09-12T05-30-35 SUCCESS
 - [[scopes/task-semver]] — 1 fact, 0 candidates, last run: 2026-09-12T06-51-06 SUCCESS
@@ -36,6 +36,7 @@ Compiled 2026-09-12T22:46:28.911Z from 89 live record(s) across 17 scope(s), 57 
 
 ## Runs
 
+- [[runs/2026-09-13T00-53-28]] — SUCCESS, pathnorm
 - [[runs/2026-09-12T22-33-39]] — SUCCESS, dw-explore-real
 - [[runs/2026-09-12T22-21-13]] — SUCCESS, dw-explore-real
 - [[runs/2026-09-12T22-08-57]] — SUCCESS, dw-explore-real

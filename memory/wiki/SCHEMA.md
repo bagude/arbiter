@@ -9,3 +9,5 @@ Nobody edits these pages; edit the log through `tools/memory.mjs` (promote, tomb
 - `LINT.md` — the last lint report: what a person should rule on.
 
 Trust: a record is **promoted** only with oracle evidence (`oracle:<run>#n`) or by a human; agents' records stay **candidates** until a verdict (`tools/verdict.mjs`) or a confirming run. Tombstoned records never appear here. Recall gives an agent the scope pages it is running under (repo, task, global), Facts first, within a character budget.
+
+Fields beyond status: `claim` — the author's classification: observed, interpreted, hypothesis, unreviewed (legacy narrative), procedure, episode. `settlement_criterion` — for interpreted and hypothesis: what evidence would settle it; never counts as evidence. `verification` — written only by deterministic code: { query_sha, snapshot, reproduced, by }. `snapshot` — the data the claim was made against. `summary` — one line for search results. `superseded_by` — id of the record that replaced this one; default search skips superseded records. status stays the human-acceptance state and is orthogonal to claim.

@@ -72,7 +72,7 @@ test("recall reads pages in scope order (repo, task, global), Facts before Histo
 	assert.match(full.text, /## repo:dw\n- \[\[runs\/r4\]\] Findings digest: O1 Only NM has production[^\n]*\n- \[\[runs\/r2\]\] KPI digest: TX landed 2026-02-11 \(m_6\)\n- \[\[runs\/r3\]\] Findings digest:/);
 	// explorations: every title once, newest first; the duplicate title appears one time
 	const repoPage = pages.get("scopes/repo-dw.md");
-	assert.match(repoPage, /## Explorations\n\n3 distinct observation title\(s\)[^\n]*\n\n- Only NM has production \(\[\[runs\/r4\]\]\)\n- Two wells hold 60% of oil \(\[\[runs\/r4\]\]\)\n- December 1992 holds 76% \(\[\[runs\/r3\]\]\)\n/);
+	assert.match(repoPage, /## Explorations\n\n3 distinct observation title\(s\)[^\n]*\n\n- \[unreviewed ·\] Only NM has production \(\[\[runs\/r4\]\]\)\n- \[unreviewed ·\] Two wells hold 60% of oil \(\[\[runs\/r4\]\]\)\n- \[unreviewed ·\] December 1992 holds 76% \(\[\[runs\/r3\]\]\)\n/);
 	// the History line for a digest-bearing record is stripped of the digest
 	assert.match(full.text, /- dw-recon via orchestrator: SUCCESS in 435s\. Oracle: 15\/15\. \(m_6, conf 0\.9/);
 	assert.equal((full.text.match(/KPI digest/g) ?? []).length, 1);
@@ -100,4 +100,29 @@ test("lint: unbacked promotions, missing runs, stale candidates, cross-scope dup
 	const md = renderLint(findings, 100 * DAY);
 	assert.match(md, /^# LINT/);
 	assert.match(md, /unbacked-promotion/);
+});
+
+test("Explorations lists per-observation records with claim and verified marks, and legacy digests only when not superseded", () => {
+	const records = foldLog([
+		rec({ id: "m_o1", status: "promoted", scope: "repo:dw", kind: "semantic", claim: "observed", summary: "TX water_bbl is 100% NULL", text: "TX water_bbl is 100% NULL — all rows.", snapshot: "dw@1", verification: { query_sha: "a", snapshot: "dw@1", reproduced: true, by: "oracle:r5#1" }, evidence: ["run:r5", "oracle:r5#1"], source: "supervisor", ts: 90 }),
+		rec({ id: "m_o2", status: "promoted", scope: "repo:dw", kind: "semantic", claim: "interpreted", settlement_criterion: "check the loader", summary: "TX water is missing by source design", text: "TX water is missing by source design — …", evidence: ["run:r5", "oracle:r5#1"], source: "supervisor", ts: 91 }),
+		rec({ id: "m_7", status: "promoted", scope: "repo:dw", kind: "episodic", text: "dw-explore via orchestrator: SUCCESS. Findings digest: O1 Two wells hold 60% of oil || next: x?", evidence: ["run:r3", "oracle:r3#1"], source: "supervisor", ts: 70 }),
+		rec({ id: "m_8", status: "promoted", scope: "repo:dw", kind: "episodic", text: "dw-explore via orchestrator: SUCCESS. Findings digest: O1 Only NM has production", evidence: ["run:r4", "oracle:r4#1"], source: "supervisor", ts: 80 }),
+		{ op: "update", id: "m_8", ts: 81, superseded_by: "m_x" },
+	]);
+	const pages = buildPages({ records, runSummaries: new Map(), now: 100 * DAY });
+	const page = pages.get("scopes/repo-dw.md");
+	assert.match(page, /- \[observed ✓\] TX water_bbl is 100% NULL \(\[\[runs\/r5\]\]\)/);
+	assert.match(page, /- \[interpreted ·\] TX water is missing by source design \(\[\[runs\/r5\]\]\) — settles by: check the loader/);
+	assert.match(page, /- \[unreviewed ·\] Two wells hold 60% of oil/);
+	assert.ok(!page.includes("Only NM has production"), "a superseded digest is not listed");
+});
+
+test("lint flags observed records without verification", () => {
+	const records = foldLog([
+		rec({ id: "m_v", status: "promoted", scope: "repo:dw", kind: "semantic", claim: "observed", text: "verified thing", verification: { query_sha: "a", snapshot: "dw@1", reproduced: true, by: "oracle:r5#1" }, evidence: ["run:r5", "oracle:r5#1"], source: "supervisor", ts: 1 }),
+		rec({ id: "m_u", status: "promoted", scope: "repo:dw", kind: "semantic", claim: "observed", text: "unverified thing", evidence: ["run:r5"], source: "agent", ts: 2 }),
+	]);
+	const findings = lint({ records, runSummaries: new Map(), now: 100 * DAY });
+	assert.deepEqual(findings.filter((x) => x.rule === "observed-unverified").map((x) => x.id), ["m_u"]);
 });

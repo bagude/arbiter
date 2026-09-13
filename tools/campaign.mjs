@@ -119,7 +119,14 @@ function seedFromRuns() {
 			} catch {
 				continue;
 			}
-			if (r?.scope !== scope) continue;
+			if (r?.scope !== scope || r?.op) continue;
+			// Per-observation finding records carry the title as `summary`; legacy runs
+			// left a "Findings digest" on the episodic record.
+			if (r.kind === "semantic" && r.summary) {
+				seen.titles.push(tokens(r.summary));
+				fromMemory++;
+				continue;
+			}
 			const m = /Findings digest: (.+)$/s.exec(r?.text ?? "");
 			if (!m) continue;
 			for (const part of m[1].split("||")[0].split(" | ")) {

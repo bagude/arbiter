@@ -10,12 +10,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { foldLog, readLog, appendLog, recall, retainFromRun, consolidate, memoryPaths, renderAll as renderAllIn, loadRunSummaries } from "../lib/memory.mjs";
+import { foldLog, readLog, appendLog, recall, retainFromRun, consolidate, memoryPaths, renderAll as renderAllIn, loadRunSummaries, migrateDigests } from "../lib/memory.mjs";
 import { lint, renderLint } from "../lib/wiki.mjs";
+import { resolveLedger, buildIndex, search, formatRows } from "../lib/memory-index.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HOME = path.join(here, "..");
-const LOG_FILE = memoryPaths(HOME).log;
+const PATHS = memoryPaths(HOME);
+const LOG_FILE = PATHS.log;
 const renderAll = () => renderAllIn(HOME);
 const readJsonl = readLog;
 
@@ -93,8 +95,33 @@ const [, , cmd, ...args] = process.argv;
 			console.error(`ids: ${ids.join(", ")}`);
 			break;
 		}
+		case "index": {
+			// Build (or reuse) the FTS5 index for the current ledger revision — the same
+			// call the supervisor makes before agents start.
+			const resolved = resolveLedger(LOG_FILE);
+			const file = buildIndex(PATHS.dir, resolved);
+			console.log(`index ${resolved.revision}: ${resolved.records.size} records → ${path.relative(HOME, file)}`);
+			break;
+		}
+		case "search": {
+			// node tools/memory.mjs search <query words> [--scope <scope>]...   (every snapshot shown)
+			const scopes = args.flatMap((a, i) => (a === "--scope" ? [args[i + 1]] : []));
+			const query = args.filter((a, i) => a !== "--scope" && args[i - 1] !== "--scope").join(" ");
+			const resolved = resolveLedger(LOG_FILE);
+			const file = buildIndex(PATHS.dir, resolved);
+			const rows = search(file, { query, scopes: scopes.length ? scopes : ["global"], allSnapshots: true });
+			console.log(rows.length ? formatRows(rows) : "(no matches)");
+			break;
+		}
+		case "migrate-digests": {
+			const { appends, ops } = migrateDigests(records);
+			if (appends.length || ops.length) appendLog(LOG_FILE, [...appends, ...ops]);
+			renderAll();
+			console.log(`${appends.length} finding record(s) written, ${ops.length} digest(s) superseded`);
+			break;
+		}
 		default:
-			console.error("usage: node tools/memory.mjs list|promote|tombstone|retain|render|recall|lint|consolidate …");
+			console.error("usage: node tools/memory.mjs list|promote|tombstone|retain|render|recall|lint|consolidate|index|search|migrate-digests …");
 			process.exit(cmd ? 1 : 0);
 	}
 }

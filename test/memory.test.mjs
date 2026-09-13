@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { makeRecord, foldLog, readLog, appendLog, retainFromRun, consolidate, CLAIMS, summarize } from "../lib/memory.mjs";
+import { makeRecord, foldLog, readLog, appendLog, retainFromRun, consolidate, CLAIMS, summarize, migrateDigests } from "../lib/memory.mjs";
 
 const rec = (over) =>
 	makeRecord({ scope: "task:orbit", kind: "episodic", text: "x", evidence: [], confidence: 0.5, source: "human", ts: 1000, ...over });
@@ -245,4 +245,17 @@ test("consolidate keeps the weaker claim when merged records disagree", () => {
 	const upd = ops.find((o) => o.op === "update" && o.id === "m_a");
 	assert.equal(upd.claim, "hypothesis");
 	assert.equal(upd.settlement_criterion, "check the loader");
+});
+
+test("migrateDigests splits legacy digests into unreviewed records once", () => {
+	const legacy = rec({ id: "m_d", kind: "episodic", scope: "repo:dw", source: "supervisor", status: "promoted", evidence: ["run:r3", "oracle:r3#1"], text: "dw-explore via orchestrator: SUCCESS in 800s. Oracle: 17/17. Findings digest: O1 Two wells hold 60% of oil | O2 December 1992 holds 76% || next: is 1992 a catch-up?" });
+	const first = migrateDigests(foldLog([legacy]), { ts: 9 });
+	assert.equal(first.appends.length, 2);
+	assert.equal(first.appends[0].claim, "unreviewed");
+	assert.equal(first.appends[0].summary, "Two wells hold 60% of oil");
+	assert.deepEqual(first.appends[0].evidence, ["run:r3", "oracle:r3#1"]);
+	assert.equal(first.appends[0].scope, "repo:dw");
+	assert.deepEqual(first.ops, [{ op: "update", id: "m_d", ts: 9, superseded_by: first.appends[0].id }]);
+	const again = migrateDigests(foldLog([legacy, ...first.appends, ...first.ops]), { ts: 10 });
+	assert.deepEqual(again, { appends: [], ops: [] });
 });
