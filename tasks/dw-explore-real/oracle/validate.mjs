@@ -24,4 +24,4 @@ if (!res || !Array.isArray(res.checks)) {
 const failed = res.checks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.detail}`);
 for (const l of failed) console.error(`FAIL: ${l}`);
 const summary = `${res.pass}/${res.total} reproduction checks${failed.length ? `; failing: ${failed.slice(0, 10).join(" | ")}` : ""}; this checks that observations reproduce, not that they matter. Findings digest: ${res.digest || "none"}`;
-out({ pass: res.pass, total: res.total, summary: summary.slice(0, 4000) });
+out({ pass: res.pass, total: res.total, summary: summary.slice(0, 4000), details: res.details ?? [] });

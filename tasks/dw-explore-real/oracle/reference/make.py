@@ -75,7 +75,7 @@ def main() -> int:
         if err:
             raise SystemExit(f"{o['id']}: {err}")
         rows = [[norm(v) for v in r] for r in rows]
-        obs.append({"id": o["id"], "title": o["title"], "observation": o["text"](rows), "why_it_matters": o["why"], "query": o["query"], "result": rows, "confidence": 0.85})
+        obs.append({"id": o["id"], "title": o["title"], "observation": o["text"](rows), "why_it_matters": o["why"], "query": o["query"], "result": rows, "confidence": 0.85, "claim": "observed"})
     doc = {
         "scope": "Shape and provenance of the full 93-million-row warehouse: grain per state, concentration, trend, source mix and NULL/zero semantics — the baseline before deeper exploration.",
         "observations": obs,

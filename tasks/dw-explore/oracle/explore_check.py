@@ -9,8 +9,10 @@ Prints one JSON document: {"checks": [...], "pass", "total", "digest"} — or, w
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import os
 import re
 import sys
 import threading
@@ -24,6 +26,32 @@ MIN_OBS = 5
 MAX_ROWS = 50
 FORBIDDEN = ["attach", "copy", "install", "load", "pragma", "create", "insert", "update", "delete", "drop", "alter", "export", "import", "read_csv", "read_parquet", "read_json", "glob("]
 NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+# The author's classification of an observation. The oracle checks the structure —
+# non-observed claims need a settlement criterion — not the honesty of the label;
+# what it did reproduce is reported separately in `details` for memory retention.
+CLAIMS = ("observed", "interpreted", "hypothesis")
+ID_RE = re.compile(r"^m_[0-9a-f]{12}$")
+
+
+def query_sha(q) -> str:
+    return hashlib.sha256(" ".join(str(q).lower().split()).encode("utf-8")).hexdigest()[:16]
+
+
+def memory_ids_exist(ids, index_path):
+    """Which of `ids` resolve in the pinned memory index (None when no index was given)."""
+    if not index_path:
+        return None
+    import sqlite3
+
+    con = sqlite3.connect(f"file:{Path(index_path).as_posix()}?mode=ro", uri=True)
+    try:
+        found = set()
+        for i in ids:
+            if con.execute("select 1 from records where id = ?", (i,)).fetchone():
+                found.add(i)
+        return found
+    finally:
+        con.close()
 
 
 class Checks:
@@ -33,9 +61,9 @@ class Checks:
     def add(self, name, ok, detail=""):
         self.items.append({"name": name, "ok": bool(ok), "detail": str(detail)[:1200]})
 
-    def result(self, digest=""):
+    def result(self, digest="", details=None):
         p = sum(1 for c in self.items if c["ok"])
-        return {"checks": self.items, "pass": p, "total": len(self.items), "digest": digest}
+        return {"checks": self.items, "pass": p, "total": len(self.items), "digest": digest, "details": details or []}
 
 
 def query_ok(sql) -> str | None:
@@ -122,7 +150,7 @@ def numbers_in(rows):
     return vals
 
 
-def check_observation(o, db: Path):
+def check_observation(o, db: Path, index_path=None):
     bad = []
     if not isinstance(o, dict):
         return ["observation is not an object"]
@@ -132,6 +160,23 @@ def check_observation(o, db: Path):
     c = o.get("confidence")
     if not (isinstance(c, (int, float)) and not isinstance(c, bool) and 0 <= c <= 1):
         bad.append("confidence must be a number in [0, 1]")
+    claim = o.get("claim")
+    if claim not in CLAIMS:
+        bad.append("claim must be one of observed, interpreted, hypothesis")
+    elif claim != "observed":
+        sc = o.get("settlement_criterion")
+        if not (isinstance(sc, str) and sc.strip()):
+            bad.append(f"a {claim} claim needs a non-empty settlement_criterion (what evidence would settle it)")
+    refs = o.get("evidence_refs", [])
+    if refs is not None:
+        if not (isinstance(refs, list) and all(isinstance(r, str) and ID_RE.match(r) for r in refs)):
+            bad.append("evidence_refs must be a list of memory ids like m_0123456789ab")
+        elif refs:
+            found = memory_ids_exist(refs, index_path)
+            if found is not None:
+                missing = [r for r in refs if r not in found]
+                if missing:
+                    bad.append(f"evidence_refs not in this run's memory index: {', '.join(missing)}")
     err = query_ok(o.get("query"))
     if err:
         bad.append(err)
@@ -169,6 +214,7 @@ def main() -> int:
     ap.add_argument("--query")
     ap.add_argument("--db", type=Path, help="the warehouse file (default: <data>/data/gold/warehouse.duckdb)")
     ap.add_argument("--max-obs", type=int, default=0, help="reject reports with more observations than this (0 = no cap)")
+    ap.add_argument("--memory-index", default=os.environ.get("ARBITER_MEMORY_INDEX", ""), help="the run's pinned memory index; evidence_refs must resolve in it")
     a = ap.parse_args()
     data = a.data or a.workspace
     db = a.db or data / "data" / "gold" / "warehouse.duckdb"
@@ -195,7 +241,7 @@ def main() -> int:
         if o is None:
             ck.add("observation", False, f"no observation {a.observation}")
         else:
-            bad = check_observation(o, db)
+            bad = check_observation(o, db, a.memory_index)
             ck.add(f"observation {a.observation}", not bad, "; ".join(bad) or "reproduces")
         print(json.dumps(ck.result(), indent=2))
         return 0
@@ -207,10 +253,12 @@ def main() -> int:
     ck.add("titles_distinct", len(set(titles)) == len(titles), "")
     nq = doc.get("next_questions")
     ck.add("next_questions", isinstance(nq, list) and len(nq) > 0 and all(isinstance(q, str) and q.strip() for q in nq), str(nq)[:200])
+    details = []
     for o in obs:
         oid = o.get("id") if isinstance(o, dict) else "?"
-        bad = check_observation(o, db)
+        bad = check_observation(o, db, a.memory_index)
         ck.add(f"observation {oid}", not bad, "; ".join(bad) or "reproduces")
+        details.append({"id": oid, "reproduced": not bad, "query_sha": query_sha(o.get("query", "")) if isinstance(o, dict) else "", "claim": o.get("claim") if isinstance(o, dict) else None})
     md = a.workspace / "src" / "exploration.md"
     ck.add("exploration_md", md.is_file() and md.stat().st_size > 200, "present" if md.is_file() else "src/exploration.md missing")
     # The digest is what later runs are told: the titles found, then the open questions
@@ -218,7 +266,7 @@ def main() -> int:
     digest = " | ".join(f"{o.get('id')} {str(o.get('title', ''))[:80]}" for o in obs if isinstance(o, dict))
     if isinstance(nq, list) and nq:
         digest += " || next: " + " | ".join(str(q)[:140] for q in nq[:5] if isinstance(q, str))
-    print(json.dumps(ck.result(digest), indent=2))
+    print(json.dumps(ck.result(digest, details), indent=2))
     return 0 if ck.result()["pass"] == ck.result()["total"] else 1
 
 

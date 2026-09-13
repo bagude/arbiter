@@ -198,3 +198,51 @@ test("foldLog applies update ops for claim, verification, superseded_by, snapsho
 	assert.equal(out.summary, "new summary");
 	assert.equal(out.superseded_by, "m_b");
 });
+
+test("retainFromRun writes one record per observation with the author's claim and the oracle's verification, plus question records", () => {
+	const summary = { runId: "r9", task: "dw-explore-real", reason: "SUCCESS: oracle passed", wallSec: 800, workers: 1, doneAttempts: 1, mailByKind: { probe: 3 }, snapshot: "data-warehousers@abc123abc123", config: { pattern: "orchestrator", repo: "data-warehousers-real", roles: { orchestrator: { provider: "llama.cpp", model: "qwen3-27b" } } } };
+	const timeline = [{ kind: "oracle", from: "supervisor", body: "Oracle run #1: 14/14 — 14/14 reproduction checks" }];
+	const deliverable = {
+		observations: [
+			{ id: "O1", title: "TX water_bbl is 100% NULL", observation: "All 73.3M TX rows have NULL water_bbl.", why_it_matters: "water cut is unavailable", claim: "observed", query: "select count(*) from production_monthly where state='TX' and water_bbl is null", result: [[73300000]] },
+			{ id: "O2", title: "TX water is missing by source design", observation: "The OG_LEASE_CYCLE file carries no water column.", why_it_matters: "not a loader bug", claim: "interpreted", settlement_criterion: "compare the OG_LEASE_CYCLE header with the loader mapping", evidence_refs: ["m_null"], query: "select 1", result: [[1]] },
+		],
+		next_questions: ["Does the TX loader map any fluid column to water_bbl?"],
+	};
+	const oracle = { pass: 14, total: 14, details: [{ id: "O1", reproduced: true, query_sha: "aaaa", claim: "observed" }, { id: "O2", reproduced: true, query_sha: "bbbb", claim: "interpreted" }] };
+	const out = retainFromRun({ summary, timeline, deliverable, oracle, ts: 5 });
+	const sem = out.filter((r) => r.kind === "semantic");
+	assert.equal(sem.length, 2);
+	assert.equal(sem[0].claim, "observed");
+	assert.equal(sem[0].summary, "TX water_bbl is 100% NULL");
+	assert.deepEqual(sem[0].verification, { query_sha: "aaaa", snapshot: "data-warehousers@abc123abc123", reproduced: true, by: "oracle:r9#1" });
+	assert.equal(sem[0].snapshot, "data-warehousers@abc123abc123");
+	assert.equal(sem[0].scope, "repo:data-warehousers-real");
+	assert.equal(sem[0].status, "promoted");
+	assert.equal(sem[1].claim, "interpreted");
+	assert.equal(sem[1].settlement_criterion, "compare the OG_LEASE_CYCLE header with the loader mapping");
+	assert.ok(sem[1].evidence.includes("memory:m_null"));
+	assert.match(sem[1].text, /^TX water is missing by source design — The OG_LEASE_CYCLE file carries no water column\. \(why: not a loader bug\)$/);
+	const q = out.filter((r) => r.kind === "question");
+	assert.equal(q.length, 1);
+	assert.equal(q[0].claim, "hypothesis");
+	assert.equal(q[0].settlement_criterion, "Does the TX loader map any fluid column to water_bbl?");
+	const ep = out.find((r) => r.kind === "episodic");
+	assert.ok(!/digest/i.test(ep.text), "the episodic record no longer carries a title digest");
+	assert.equal(ep.snapshot, "data-warehousers@abc123abc123");
+});
+
+test("retainFromRun without a deliverable behaves as before (episodic only, plus procedural on success with spawns)", () => {
+	const summary = { runId: "r1", task: "orbit", reason: "SUCCESS: oracle passed", wallSec: 10, workers: 1, doneAttempts: 1, config: { pattern: "orchestrator", roles: {} } };
+	const out = retainFromRun({ summary, timeline: [{ kind: "spawn", to: "worker:1", body: "Build stage 1. Then stop." }], ts: 1 });
+	assert.deepEqual(out.map((r) => r.kind), ["episodic", "procedural"]);
+});
+
+test("consolidate keeps the weaker claim when merged records disagree", () => {
+	const a = rec({ id: "m_a", kind: "semantic", claim: "observed", text: "TX water_bbl is null in every row of the snapshot", ts: 1, source: "supervisor" });
+	const b = rec({ id: "m_b", kind: "semantic", claim: "hypothesis", settlement_criterion: "check the loader", text: "TX water_bbl is null in every row of the snapshot!", ts: 2, source: "supervisor" });
+	const ops = consolidate([a, b], { ts: 3 });
+	const upd = ops.find((o) => o.op === "update" && o.id === "m_a");
+	assert.equal(upd.claim, "hypothesis");
+	assert.equal(upd.settlement_criterion, "check the loader");
+});

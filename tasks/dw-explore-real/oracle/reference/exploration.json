@@ -30,7 +30,8 @@
           "2026-02-01"
         ]
       ],
-      "confidence": 0.85
+      "confidence": 0.85,
+      "claim": "observed"
     },
     {
       "id": "O2",
@@ -65,7 +66,8 @@
           11078
         ]
       ],
-      "confidence": 0.85
+      "confidence": 0.85,
+      "claim": "observed"
     },
     {
       "id": "O3",
@@ -100,7 +102,8 @@
           57753
         ]
       ],
-      "confidence": 0.85
+      "confidence": 0.85,
+      "claim": "observed"
     },
     {
       "id": "O4",
@@ -122,7 +125,8 @@
           "2026-01-01"
         ]
       ],
-      "confidence": 0.85
+      "confidence": 0.85,
+      "claim": "observed"
     },
     {
       "id": "O5",
@@ -150,7 +154,8 @@
           73303107
         ]
       ],
-      "confidence": 0.85
+      "confidence": 0.85,
+      "claim": "observed"
     }
   ],
   "next_questions": [

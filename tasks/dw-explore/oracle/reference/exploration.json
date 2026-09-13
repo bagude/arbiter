@@ -8,6 +8,7 @@
       "why_it_matters": "Either these Union county wells are genuinely exceptional or their volumes are mis-keyed (the raw records carry a 'C' condensate kind with six-figure monthly amounts); an analyst should check the source before using basin totals.",
       "query": "select basin, count(distinct entity_key) as wells, round(sum(total_oil_bbl)) as oil, round(sum(total_gas_mcf)) as gas from production_monthly group by 1 order by 1",
       "confidence": 0.7,
+      "claim": "observed",
       "result": [
         [
           "PERMIAN",
@@ -36,6 +37,7 @@
       "why_it_matters": "Decline-curve work on this sample sees tails, not ramps; anyone fitting initial rates needs younger wells or the full population.",
       "query": "select production_year, round(sum(total_oil_bbl)) as oil from production_monthly where state = 'NM' group by 1 order by 1 desc limit 5",
       "confidence": 0.85,
+      "claim": "observed",
       "result": [
         [
           2025,
@@ -66,6 +68,7 @@
       "why_it_matters": "OTHER is where the OK codes (DRY, NT, TM, 2DNC\u2026) and NM CO2 wells land under the contract's exhaustive-for-the-seed tables; a consumer filtering to OIL/GAS silently drops a third of the master.",
       "query": "select well_type, count(*) as n from wells group by 1 order by 2 desc",
       "confidence": 0.9,
+      "claim": "observed",
       "result": [
         [
           "OTHER",
@@ -96,6 +99,7 @@
       "why_it_matters": "cumulative_* and months_on_production count reported rows only; time-based analysis must use calendar_months_on_production or expect discontinuities.",
       "query": "select entity_key, max(calendar_months_on_production) - max(reported_month_index) as gap_months from production_monthly where state = 'NM' group by 1 order by 2 desc limit 5",
       "confidence": 0.8,
+      "claim": "observed",
       "result": [
         [
           "30-031-20391",
@@ -126,6 +130,7 @@
       "why_it_matters": "IP tests are the only production-like signal OK contributes; with 87% zeros, any OK 'rate' statistic is dominated by gas or by nulls, not oil.",
       "query": "select case when oil_bbl_per_day > 0 then 'nonzero' else 'zero_or_null' end as oil_ip, count(*) as n from completions group by 1 order by 1",
       "confidence": 0.85,
+      "claim": "observed",
       "result": [
         [
           "nonzero",

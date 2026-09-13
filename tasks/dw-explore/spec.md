@@ -2,7 +2,7 @@ This is an exploration task, not a coding task. You are the data explorer for an
 
 ## The question
 
-**What is in this data that a maintainer or an analyst would want to know?** Explore freely — distributions, concentration, trends, outliers, data-quality oddities, cross-state contrasts, anything the contracts imply that the data contradicts. If your prompt carries a MEMORY section with earlier explorations, their titles are ground already covered — go elsewhere — and the `next:` questions after them are open threads earlier runs left: take those as your starting points, and leave new ones for the run after you.
+**What is in this data that a maintainer or an analyst would want to know?** Explore freely — distributions, concentration, trends, outliers, data-quality oddities, cross-state contrasts, anything the contracts imply that the data contradicts. Your prompt carries a MEMORY section listing a few earlier records; `memory_search` and `memory_get` reach the rest. Records marked verified had their query reproduced; interpreted and hypothesis records are not facts — their settlement_criterion says what would settle them. Go where earlier observed findings did not, and take open questions as starting points; leave new ones for the run after you.
 
 ## The deliverable
 
@@ -17,6 +17,9 @@ This is an exploration task, not a coding task. You are the data explorer for an
       "title": "short, specific",
       "observation": "what the data shows, with the numbers from the result in the text",
       "why_it_matters": "what a maintainer or analyst would do with this",
+      "claim": "observed | interpreted | hypothesis",
+      "settlement_criterion": "required unless observed: what evidence would settle it",
+      "evidence_refs": ["m_… memory ids you relied on (optional)"],
       "query": "select … from production_monthly where … group by … order by … limit …",
       "result": [["value", 123.0], ["value2", 45.0]],
       "confidence": 0.8
@@ -32,6 +35,8 @@ Rules the host checks mechanically (each observation is graded by **reproduction
 - `result` is the rows the query returns, as a list of lists, at most 50 rows (use `limit`), in the order returned (use `order by`); the host re-runs your query read-only with a 10 s limit and the rows must match exactly (numbers within 1e-6, dates as ISO strings, NULL as `null`);
 - the `observation` text mentions at least one number that appears in the result (as printed, or rounded);
 - `confidence` in [0, 1].
+- `claim` is one of `observed` (the result rows show it), `interpreted` (the rows plus an explanation the rows do not establish), `hypothesis` (a conjecture worth checking); `interpreted` and `hypothesis` need a non-empty `settlement_criterion` — what evidence would settle it. The host checks the structure, not the honesty of the label; what it reproduced is stamped separately on the retained record;
+- `evidence_refs` (optional) lists memory record ids (`m_…`) the observation relied on; each must resolve in this run's memory index.
 
 `src/exploration.md` is the same for a person: the scope, each observation with its query and a short table of the result, the next questions. Only `src/` is graded; scratch notes go under `src/notes/`.
 
