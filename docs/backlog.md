@@ -61,7 +61,8 @@ The findings are grounded (every quote verbatim) and of mixed quality — exactl
 
 - Done: records carry `claim` / `settlement_criterion` / `verification` / `snapshot` / `summary` / `superseded_by`; pinned FTS5 index per ledger revision (`lib/memory-index.mjs`, `memory/index/` gitignored); `memory_search` and `memory_get` (`ext/memory-ext.ts`, both roles) with scope on both operations and one per-run budget ledger shared by orchestrator, workers and resumed workers; search mode (`memory: { mode: "search", budgetChars, retrievalChars }`, `memoryDir`); explorer contract with claims; retention one record per observation with the oracle's verification stamped separately; legacy digests migrated as unreviewed (127 from 15); `dw-water-bench` with its own store.
 - Measured: explorer in search mode 14/14 in 786 s with 5 316 memory chars delivered (8 000 injected before); benchmark 3/3 passes, evidence found in all three, budget held in all three, but run 1 needed four done attempts because the orchestrator spent the shared budget before the worker fetched.
-- Next: reserve budget for workers; `worker_fetched` must require a delivered record; score citing the mislabelled R2 as support; slice 2 = working-context checkpoints and compaction at the spawn boundary (consider adapting SoL-Pi's Online Context Compact, `github.com/NVlabs/SoL-Pi`, MIT, pi ≥ 0.84.2 public APIs).
+- Fixed the same evening: worker reserve (`workerReserveChars`), `worker_fetched` needs a delivered record, R2 citations fail; bench 3/3 first-claim after (157/108/136 s). Explorer budgets raised to 16000/5000/2500.
+- Next: slice 2 = working-context checkpoints and compaction at the spawn boundary (consider adapting SoL-Pi's Online Context Compact, `github.com/NVlabs/SoL-Pi`, MIT, pi ≥ 0.84.2 public APIs).
 
 ## data-warehousers: tiered oracles (built 2026-09-12 — `docs/dw/README.md`)
 

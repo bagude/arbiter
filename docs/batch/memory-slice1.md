@@ -23,9 +23,19 @@ Each run rebuilt the fixture store first (552 records; the seed brief shows R1 a
 - **Unresolved interpretation preserved.** All three runs filed `claim: observed` for the cause, each with a header check that reproduces (nine columns, no water column). The oracle accepts that by design: with the header re-read, "the mapped field is absent at the source" is checked, not inferred. Every run also cited `m_bench_r2` ("by source design", labelled observed, backed only by the NULL query) as support. The oracle does not penalise that today; a stricter version would require R2 to be excluded or explicitly flagged as unverified reasoning.
 - **Budget held.** All three runs stayed within 6 000 characters, but run 1 shows the cost of a shared budget with no reservation: the orchestrator spent 4 047 characters (one search of 2 009, one get of 2 038) before spawning; the worker's three fetches were refused and its one accepted get delivered 14 characters ("not found"). The oracle's `worker_fetched` check failed three times and the run passed on the fourth done attempt, 556 s instead of about 130 s. Runs 2 and 3 saw the orchestrator spend 3 547 and the worker get through with 431–476 characters.
 
+## After the fixes (2026-09-12, worker reserve 2 000, `worker_fetched` needs a delivered record, R2 scored)
+
+| run | attempts | orchestrator chars | worker chars | refused (role) | delivered / budget | oracle | wall s |
+|---|---|---|---|---|---|---|---|
+| 2026-09-13T02-32-20 | 1 | 2 009 | 1 534 | 1 (orchestrator) | 5 437 / 6 000 | 12/12 | 157 |
+| 2026-09-13T02-34-58 | 1 | 2 009 | 1 534 | 2 (orchestrator) | 5 437 / 6 000 | 12/12 | 108 |
+| 2026-09-13T02-36-47 | 1 | 2 009 | 1 103 | 2 (orchestrator) | 5 006 / 6 000 | 12/12 | 136 |
+
+All three passed on the first claim: the refusals now land on the orchestrator when it reaches its 4 000-character cap, the worker fetches real records inside the 2 000 reserve, and every finding cites R1 and R4 only, with the mislabelled R2 no longer offered as support. The cause is still filed as `observed` with a reproducing header check, which the oracle accepts by design. Explorer configs were raised afterwards to 16 000 / 5 000 reserved / 2 500 seed; the benchmark stays at 6 000 / 2 000 on purpose.
+
 ## What to change next
 
-1. Reserve part of the budget for workers (or charge the seed against a separate allowance): a 6 000 budget with a 1 900 seed leaves 4 100 for everyone, and one orchestrator get of five records can take half of it.
-2. `worker_fetched` should require a get that delivered a record, not any get.
-3. The benchmark should score citing R2 as support, since that is the mislabelled record the fixture exists to catch.
+1. (done) Reserve part of the budget for workers.
+2. (done) `worker_fetched` requires a get that delivered a record.
+3. (done) Citing R2 as support fails the benchmark.
 4. Slice 2 (working-context checkpoints and compaction at the spawn boundary) stays next; NVIDIA's SoL-Pi Online Context Compact is a candidate implementation to adapt rather than write from scratch.
