@@ -23,6 +23,7 @@ Answer that question for the data-warehousers warehouse using memory and the two
 
 - `evidence_refs` resolve in this run's memory and were made on this data snapshot; a record from another snapshot must not be cited as support.
 - The record that inspects the loader mapping against the source header must be among the refs: the answer is not settled by NULL counts alone.
+- A record whose title states a cause but whose verification is the same NULL-count query as the plain NULL finding (compare `query_sha` in `memory_get`) is a label, not evidence; citing it as support fails. Two records verified by one query are one piece of evidence.
 - Each `checks` entry of kind `header` is re-read by the host: `columns` must equal the file's header row and `has_water_column` must be right.
 - `claim` may be `observed` for the cause only when a header check that reproduces is present; otherwise it is `interpreted` or `hypothesis` with a non-empty `settlement_criterion`.
 - A worker must fetch at least one memory record itself (delegate the file inspection and the write-up to a worker and name the ids it should fetch).

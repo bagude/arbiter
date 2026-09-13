@@ -70,8 +70,15 @@ test("repo: absent means null; a name is kept; junk is rejected", () => {
 test("memory search mode carries retrievalChars and memoryDir; other modes are rejected", () => {
 	const roles = { builder: { provider: "p", model: "m" }, critic: { provider: "p", model: "m" } };
 	const c = loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", budgetChars: 1500 }, memoryDir: "tasks/x/store" }), env: {} });
-	assert.deepEqual(c.memory, { budgetChars: 1500, mode: "search", retrievalChars: 6000 });
+	assert.deepEqual(c.memory, { budgetChars: 1500, mode: "search", retrievalChars: 6000, workerReserveChars: 2000 });
 	assert.equal(c.memoryDir, "tasks/x/store");
 	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles }), env: {} }).memoryDir, null);
 	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "graph" } }), env: {} }), /memory\.mode/);
+});
+
+test("memory search mode carries a worker reserve, default 2000, capped below retrievalChars", () => {
+	const roles = { builder: { provider: "p", model: "m" }, critic: { provider: "p", model: "m" } };
+	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search" } }), env: {} }).memory.workerReserveChars, 2000);
+	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", retrievalChars: 4000, workerReserveChars: 1000 } }), env: {} }).memory.workerReserveChars, 1000);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", retrievalChars: 4000, workerReserveChars: 4000 } }), env: {} }), /workerReserveChars/);
 });

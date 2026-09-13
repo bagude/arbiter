@@ -1,5 +1,5 @@
 { "task": "dw-water-bench", "pattern": "orchestrator", "repo": "data-warehousers-bench", "memoryDir": "tasks/dw-water-bench/store",
-  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 6000 },
+  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 6000, "workerReserveChars": 2000 },
   "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
   "caps": { "toolCalls": 200, "wallSec": 1500, "usd": 5, "doneAttempts": 5, "bashTimeoutSec": 120 },
   "_note": "Retrieval benchmark: memory pointed at the fixture store (tasks/dw-water-bench/store), never the real ledger. Rebuild the store with node tasks/dw-water-bench/fixture/make.mjs before each measurement batch; retention appends to the store at finish." }

@@ -180,6 +180,7 @@ let MEMORY_SEED_CHARS = 0;
 const MEMORY_LEDGER = path.join(RUN, "memory-calls.jsonl");
 const MEMORY_SCOPES = ["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : [])];
 const RETRIEVAL_BUDGET = CONFIG.memory?.retrievalChars ?? 6000;
+const WORKER_RESERVE = CONFIG.memory?.workerReserveChars ?? 0;
 if (MEMORY_MODE === "inject") {
 	const { text, ids } = recall({ pages: renderAll(MEMORY_HOME), scopes: MEMORY_SCOPES, budgetChars: CONFIG.memory.budgetChars });
 	if (text) {
@@ -207,10 +208,10 @@ if (MEMORY_MODE === "inject") {
 	MEMORY_SEED_CHARS = brief.chars;
 	fs.writeFileSync(MEMORY_LEDGER, "");
 	charge(MEMORY_LEDGER, { role: "supervisor", tool: "seed", chars: brief.chars, detail: `seeded brief, ${brief.ids.length} of ${brief.matched} matches` });
-	log({ type: "memory_index", msg: `index ${MEMORY_REVISION} (${resolved.records.size} records); seed ${brief.chars} chars, ${brief.ids.length} rows; retrieval budget ${RETRIEVAL_BUDGET}` });
+	log({ type: "memory_index", msg: `index ${MEMORY_REVISION} (${resolved.records.size} records); seed ${brief.chars} chars, ${brief.ids.length} rows; retrieval budget ${RETRIEVAL_BUDGET} (${WORKER_RESERVE} reserved for workers)` });
 	// Oracle children inherit these from the supervisor's environment; launch() sets
 	// them for every agent process explicitly.
-	Object.assign(process.env, { ARBITER_MEMORY_INDEX: MEMORY_INDEX, ARBITER_MEMORY_SCOPES: JSON.stringify(MEMORY_SCOPES), ARBITER_MEMORY_BUDGET: String(RETRIEVAL_BUDGET), ARBITER_MEMORY_LEDGER: MEMORY_LEDGER, ARBITER_SNAPSHOT: SNAPSHOT });
+	Object.assign(process.env, { ARBITER_MEMORY_INDEX: MEMORY_INDEX, ARBITER_MEMORY_SCOPES: JSON.stringify(MEMORY_SCOPES), ARBITER_MEMORY_BUDGET: String(RETRIEVAL_BUDGET), ARBITER_MEMORY_WORKER_RESERVE: String(WORKER_RESERVE), ARBITER_MEMORY_LEDGER: MEMORY_LEDGER, ARBITER_SNAPSHOT: SNAPSHOT });
 }
 // Logged at launch (not only in summary.json at finish) so a live run shows what
 // its agents were told; the system prompt itself is not in any stream we record.
@@ -331,6 +332,7 @@ function launch(name) {
 			ARBITER_MEMORY_INDEX: MEMORY_INDEX,
 			ARBITER_MEMORY_SCOPES: JSON.stringify(MEMORY_SCOPES),
 			ARBITER_MEMORY_BUDGET: String(RETRIEVAL_BUDGET),
+			ARBITER_MEMORY_WORKER_RESERVE: String(WORKER_RESERVE),
 			ARBITER_MEMORY_LEDGER: MEMORY_LEDGER,
 			ARBITER_SNAPSHOT: SNAPSHOT,
 		},
@@ -1119,6 +1121,7 @@ function finish(reason) {
 		revision: MEMORY_REVISION || null,
 		seedChars: MEMORY_SEED_CHARS,
 		budget: MEMORY_MODE === "search" ? RETRIEVAL_BUDGET : null,
+		workerReserve: MEMORY_MODE === "search" ? WORKER_RESERVE : null,
 		calls: MEMORY_MODE === "search" ? { ...tracker.memory, ledger: spent(MEMORY_LEDGER) } : null,
 	};
 	fs.writeFileSync(path.join(RUN, "summary.json"), JSON.stringify(summary, null, 2));

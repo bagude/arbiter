@@ -13,6 +13,10 @@ export const TASK_WS = path.join(here, "..", "ws-builder");
 export const HEADER_FILE = "data/tx/OG_LEASE_CYCLE.header.csv";
 export const REQUIRED_REF = "m_bench_r4";
 export const FOREIGN_REFS = ["m_bench_r3", "m_bench_r5"];
+// R2 is a causal title labelled observed but verified only by the same NULL-count
+// query as R1: a label, not evidence. Citing it as support is the failure the
+// fixture exists to catch.
+export const MISLABELLED_REFS = ["m_bench_r2"];
 
 export function readHeader(file = path.join(TASK_WS, HEADER_FILE)) {
 	const columns = fs.readFileSync(file, "utf8").trim().split("\n")[0].split(",").map((c) => c.trim());
@@ -58,6 +62,7 @@ export function checkFinding(finding, { snapshot = process.env.ARBITER_SNAPSHOT,
 	add("refs_resolve", refs.length > 0 && refs.every((id) => rows.has(id)), `refs ${refs.join(",") || "none"}; resolved ${[...rows.keys()].join(",") || "none"}`);
 	add("cites_loader_inspection", refs.includes(REQUIRED_REF), `the record inspecting the loader mapping against the header (${REQUIRED_REF}) must be cited`);
 	add("no_foreign_snapshot_support", !refs.some((id) => FOREIGN_REFS.includes(id)), "records from another snapshot must not support the conclusion");
+	add("no_mislabelled_support", !refs.some((id) => MISLABELLED_REFS.includes(id)), `${MISLABELLED_REFS.join(",")} is a causal title verified only by the NULL-count query (same query_sha as ${"m_bench_r1"}); it is a label, not support`);
 	add("refs_on_snapshot", refs.every((id) => !rows.get(id)?.snapshot || rows.get(id).snapshot === snapshot), `run snapshot ${snapshot}`);
 	const actual = readHeader();
 	const hc = (Array.isArray(f.checks) ? f.checks : []).find((c) => c && c.kind === "header" && String(c.file ?? "").replace(/\\/g, "/").endsWith(HEADER_FILE));
@@ -69,7 +74,7 @@ export function checkFinding(finding, { snapshot = process.env.ARBITER_SNAPSHOT,
 	add("criterion_present", claim === "observed" || (typeof f.settlement_criterion === "string" && f.settlement_criterion.trim().length > 0), claim === "observed" ? "not needed" : String(f.settlement_criterion ?? "").slice(0, 120) || "missing");
 	add("conclusion_present", typeof f.conclusion === "string" && f.conclusion.trim().length >= 40, `${String(f.conclusion ?? "").length} chars`);
 	const used = ledger.filter((l) => l.tool !== "refused").reduce((a, l) => a + (Number(l.chars) || 0), 0);
-	add("worker_fetched", ledger.some((l) => l.tool === "get" && String(l.role).startsWith("worker")), `roles seen: ${[...new Set(ledger.map((l) => l.role))].join(",") || "none"}`);
+	add("worker_fetched", ledger.some((l) => l.tool === "get" && String(l.role).startsWith("worker") && (Number(l.records) || 0) > 0), `a worker get that delivered a record; roles seen: ${[...new Set(ledger.map((l) => l.role))].join(",") || "none"}`);
 	add("within_budget", budget > 0 && used <= budget, `${used} of ${budget} characters delivered`);
 	return checks;
 }

@@ -70,3 +70,26 @@ test("the budget is shared and refusals deliver nothing", () => {
 	assert.equal(spent(ledger).chars, first.chars);
 	assert.equal(spent(ledger).refused, 1);
 });
+
+test("a worker reserve keeps part of the budget out of the orchestrator's reach; workers may use all of it", () => {
+	const { cfg, ledger } = env(3000);
+	cfg.workerReserve = 1200;
+	const first = searchTool(cfg, { query: "water" }, "orchestrator"); // ~ hundreds of chars
+	assert.equal(first.refused, false);
+	const big = getTool(cfg, { ids: ["m_loader"] }, "orchestrator"); // ~1900 chars would cross 3000-1200
+	assert.equal(big.refused, true, "the orchestrator cannot spend into the worker reserve");
+	assert.match(big.text, /reserved for workers/);
+	const worker = getTool(cfg, { ids: ["m_loader"] }, "worker:z");
+	assert.equal(worker.refused, false, "a worker may spend the reserve");
+	assert.ok(spent(ledger).chars <= 3000);
+	assert.equal(readToolEnv({ ARBITER_MEMORY_INDEX: cfg.indexFile, ARBITER_MEMORY_WORKER_RESERVE: "2000" }).workerReserve, 2000);
+	assert.equal(readToolEnv({ ARBITER_MEMORY_INDEX: cfg.indexFile }).workerReserve, 0);
+});
+
+test("a get charges the number of records it delivered", () => {
+	const { cfg, ledger } = env();
+	getTool(cfg, { ids: ["m_loader", "m_nope"] }, "worker:x");
+	getTool(cfg, { ids: ["m_nope"] }, "worker:x");
+	const lines = fs.readFileSync(ledger, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+	assert.deepEqual(lines.map((l) => l.records), [1, 0]);
+});
