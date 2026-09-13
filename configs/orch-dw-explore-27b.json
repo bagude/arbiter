@@ -1,4 +1,4 @@
-{ "task": "dw-explore", "pattern": "orchestrator", "repo": "data-warehousers", "memory": { "budgetChars": 8000 },
+{ "task": "dw-explore", "pattern": "orchestrator", "repo": "data-warehousers", "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 6000 },
   "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
   "caps": { "toolCalls": 300, "wallSec": 2400, "usd": 5, "doneAttempts": 5, "bashTimeoutSec": 120 },
   "_note": "data-warehousers data explorer: open exploration of the gold warehouse. Oracle = reproduction (each observation's read-only query re-run must match its reported result); interest judged by verdict. Findings digest lands in repo:data-warehousers memory." }
