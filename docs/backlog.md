@@ -61,7 +61,8 @@ The findings are grounded (every quote verbatim) and of mixed quality — exactl
 
 - Done: result handles (`lib/policies/result-handles.mjs`, `ext/guards/result-handles.ts`, `recall_result`), the orchestrator's `checkpoint` tool, supervisor-driven compaction at phase boundaries (`lib/compaction.mjs`; caps `compactAtTokens`, `maxCompactions`, `minGapTurns`, `checkpointWaitSec`; decided at the boundary event, never mid-generation or with a live worker; pi's `compact` aborts the turn itself), deliveries queued during a compaction, `tools/context-report.mjs`.
 - Measured on dw-explore-real: baseline orchestrator peak 80k / 607k prompt tokens; with handles + compaction 50k → 26k after `compact-1` (50 415 → 20 733), 317k prompt tokens, 14/14. Much of the drop is variance in brief length; the per-request trace shows the mechanism's own effect.
-- Next (slice 3): worker checkpoints and compaction at their own boundaries (the worker is now the larger sink: 906k prompt tokens in 14-05-03); test `fullTurns` 3; check that summaries keep ids verbatim.
+- Slice 3 (2026-09-13, `ext/guards/call-args.ts` + context_diet with ageTools off): worker context was 36–39% thinking and 24–39% write arguments; both are now dropped/elided in the projection for both roles. Run 14-28-13: orchestrator prompt total 167 819 (baseline 606 595), workers 185k across two (baseline 549k), 14/14, two `interpreted` claims. Quiescence oracle and idle nudge now suppressed during a compaction (the run graded itself mid-summary).
+- Next: in-process worker compaction only if numbers demand it; test `fullTurns` 3; check that summaries keep ids verbatim; a second run to exercise the queued-delivery and suppressed-quiescence paths.
 
 ## Memory slice 1: retrieval (built 2026-09-12 evening — `docs/superpowers/specs/2026-09-12-memory-retrieval-design.md`, report `docs/batch/memory-slice1.md`)
 

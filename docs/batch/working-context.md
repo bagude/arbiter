@@ -7,6 +7,7 @@ Handles: tool results and worker reports over 8 KB leave the projected context a
 | 2026-09-13T03-17-50 | none (baseline) | 79 963 | 606 595 | 65 874 | 548 800 | 0 | 14/14 | 942 |
 | 2026-09-13T13-55-16 | handles (poll-driven compaction never fired) | 45 764 | 349 880 | 49 270 | 366 140 | 0 | 13/13 | 481 |
 | 2026-09-13T14-05-03 | handles + event-driven compaction | 50 189 → 25 983 after compacting | 316 880 | 61 012 | 906 285 | 1 | 14/14 | 658 |
+| 2026-09-13T14-28-13 | + thinking drop + write elision (slice 3) | 40 062 → 25 285 by projection alone | 167 819 | 37 881 (two workers: 19 930, 37 881) | 185 016 (103 944 + 81 072) | 1 issued, run finished before it completed | 14/14 | 643 |
 
 ## What happened in 14-05-03
 
@@ -25,8 +26,17 @@ Handles: tool results and worker reports over 8 KB leave the projected context a
 - Poll-driven compaction never found a gap between generations (13-55-16 crossed its boundary at 449 s and finished 32 s later uncompacted). Deciding at the boundary event itself fixed that.
 - The worker in 14-05-03 did more work (28 requests, 906k prompt tokens) than in the other runs; nothing in this slice compacts workers.
 
+## Slice 3: thinking drop and write elision (2026-09-13T14-28-13)
+
+Where a worker's context came from in the two earlier runs: thinking blocks 36–39%, write arguments 24–39%, tool results 14–32%. Two projection edits address the first two, both roles, no compaction involved: the context-diet guard enabled with result-ageing off (drops prior turns' thinking) and a new call-args guard (the file contents inside write/edit calls older than two turns become a stub naming the path and size; the file is on disk).
+
+- Orchestrator: peak 40 062, prompt total 167 819 (baseline 606 595, −72%). The projection alone took request 7→8 from 40 062 to 25 285 tokens: thinking dropped on 8 requests, the worker's 8.4 KB report archived.
+- Workers: two this run, prompt totals 103 944 and 81 072 (the single baseline worker: 548 800; 14-05-03: 906 285); thinking dropped on 7 requests, write arguments elided on 3.
+- Oracle 14/14; for the first time the explorer labelled two observations `interpreted`.
+- Compaction was decided at 596 s and issued at 627 s, but the quiescence oracle trigger fired during pi's summary (the aborted turn looked idle), graded the workspace 14/14 and finished the run before the compaction completed. Fixed afterwards: neither the quiescence trigger nor the idle nudge fires while a compaction is in progress.
+
 ## Open
 
-- Workers are the larger token sink now; a worker checkpoint and compaction at its own boundaries (after each file write batch) would be slice 3.
+- In-process worker compaction stays deferred: after slice 3 the workers' remaining context is mostly current work, and the abort-and-continue inside pi-subagents is the risky part.
 - `fullTurns` of 2 may be too eager for results the orchestrator is about to verify; 3 or a per-tool setting is worth a test.
 - The summary is pi's native one with our instructions; nothing yet checks that it kept every id verbatim.

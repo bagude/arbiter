@@ -1126,6 +1126,10 @@ function maybeQuiescentOracle() {
 	// a worker's run — it is blocked on the subagent call. A running worker is work in
 	// progress, so quiescence has not been reached no matter how still the host looks.
 	if (liveWorkers(Object.values(state)).length > 0) return false;
+	// A compaction aborts the orchestrator's turn, so the host looks quiet while pi
+	// summarises; that stillness is not quiescence (run 2026-09-13T14-28-13 graded and
+	// finished mid-compaction — it passed, but the compaction never completed).
+	if (compaction.phase !== "idle") return false;
 	if (hashDir(srcDir) === lastOracleHash) return false;
 	log({ type: "oracle_trigger", msg: `quiescence: src/ unchanged for ${SOLO_QUIET_MS / 1000}s and not yet tested — running oracle` });
 	lastActivity = Date.now();
@@ -1146,6 +1150,7 @@ function checkIdle() {
 	// 706.3s). Nudging then tells it "you have been idle with no worker running"
 	// while a worker is running, and burns a nudge off maxNudges for it.
 	if (PATTERN === "orchestrator" && liveWorkers(Object.values(state)).length > 0) return;
+	if (compaction.phase !== "idle") return; // waiting on a checkpoint or on pi's summary is not idleness
 	if (Date.now() - lastActivity < CAPS.idleNudgeSec * 1000) return;
 	nudges++;
 	lastActivity = Date.now();
