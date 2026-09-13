@@ -1,0 +1,134 @@
+8 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910 
+ 
+Table 4 —  Time-rate analyses results for Field C (All models)  
+ 
+Field C 
+ 
+EURPLE 
+ 
+EURSE 
+ 
+EURDNG 
+ 
+EURLGM 
+ 
+EURMHYP 
+Well Name 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+           Well C.1 
+ 
+5.32 
+ 
+5.64 
+ 
+7.34 
+ 
+5.05 
+ 
+5.81 
+Well C.2 
+ 
+9.23 
+ 
+9.48 
+ 
+11.34 
+ 
+8.01 
+ 
+10.20 
+Well C.3 
+ 
+2.81 
+ 
+2.96 
+ 
+3.47 
+ 
+2.46 
+ 
+3.44 
+Well C.4 
+ 
+3.66 
+ 
+3.76 
+ 
+4.94 
+ 
+3.47 
+ 
+3.95 
+Well C.5 
+ 
+4.11 
+ 
+4.08 
+ 
+4.92 
+ 
+3.86 
+ 
+4.89 
+ 
+In this particular case, the  logistic growth model appears to provide the most conservative EUR values  (quite comparable to 
+both the power-law exponential and stretched -exponential time-rate models). 
+ 
+Interpretation of Results  
+ 
+We provide our interpretation of results by presenting comparison plots of the EUR values predicted by each model.  For our 
+purposes, we choose the power -law exponential model results as the reference results and we compare EUR values from 
+different models with respect to the power -law exponential model.  This approach should identify  any correlations a nd/or 
+inconsistencies that might exist between models.  
+ 
+For Field A, comparison plots are presented through Figs. 85 -88.  Fig. 85  presents the comparison between the power-law 
+exponential model and the Duong model —  and we observe from th is plot that the E UR values from the Duong model are 
+consistently higher than the results for the power-law exponential model .  In Fig. 86  we present a comparison between the 
+power-law exponential model and the logistic growth model, and with the exception of a single case (Well A.5), the EUR 
+predictions are very  similar.  Our next comparison considers the power-law exponential model and the modified hyperbolic 
+model and is presented in Fig. 87 —  we note some consistency in  predicted EUR values, but we also note a couple of outliers 
+that would suggest that the modified hyperbolic relation will always predict higher EUR values compared to the power -law 
+exponential model —  where we also note that the terminal decline (for the modified hyperbolic model) is probably the 
+controlling variable in this case.  Lastly , in Fig. 88  we present a comparison of the  power-law exponential model and the 
+stretched exponential model —  and essentially identical results are obtained, somewhat as expected as these relations have 
+essentially the same  mathematical formulation (the power -law exponential does have a constraint parameter ( i.e., the D!-
+term).  Almost identical results are seen, due to the fact that these two equations are essentially the same relations , and wells 
+in Field A are not (yet) in boundary- dominated flow regime after a few years of production (2 -4 years). 
+ 
+We perform the same exercise s for Field B (see Figs. 89-92) and for Field C (see Figs. 93-96) and observe similar trends as 
+we observe in the case of Field A  —  the results for the power -law exponential and stretched exponential models are almost 
+always the same.  The results for the power-law exponential and the logistic growth model s are also very similar, except for a 
+few cases.  In general, the Duong  model always predicts the highest  EUR values.  The degree of discrepancy in  the results 
+obtained using the Duong  model is higher in the case of Field B and Field C than Field A.  This is most likely due to the flow 
+regimes exhibited by the production data in Fie ld A where "power -law" flow regimes (linear/bi -linear flow, etc.) appear to 
+dominate the time-rate performance.  Based on these results, we can conclude that the Duong model could be more applicable 
+to plays such as Field A where long term power -law flow regimes exist —  however, additional constraints might be required 
+to prevent over-estimation of EUR values  when the Duong model is being applied. 
+ 
+Summary and Conclusions 
+ 
+Summary: This work presents a workflow that can be used to analyze and forecast time-rate data of wells in low /ultra-low 
+permeability reservoirs.  The key component of the workflow is the application of the "Db," " !-derivative," and " q/Gp" 
+diagnostic plots to guide the analysis and obtain model parameters for a given time-rate relation.  Once model parameters are 
+obtained, the production profile is extrapolated to yield the " estimated ultimate recovery " (EUR) at a specified time limit or 
+abandonment rate. 
+ 
+In this work we have  presented diagnostic and time -rate model -based analyses of long -term production data from 17 wells 
+taken from three different shale plays.  We have also provided a tight -gas example which has a somewhat long duration and 
+high-quality production histor y to further demonstrate the methodology.  Our overall asse ssment, based on the wells used in 
+this study , is that production data (i.e., time-rate data)  of reasonable quality can effectively drive the proposed diagnostic-
+based analysis.  We are confident that a practicing reservoir engineer can effectively and eff iciently utilize the diagnostic 
+workflow process to ensure the most comprehensive and representative analyses of a given set  of production data.  We also 
+provide the usual caveat that there must be sufficient production history available to perform a compe tent analysis ; analysis 
+of short -time data (no matter how pristine the quality of the data) will lead to overly optimistic estimates of reserves and 
+predictions of future performance.  
+  

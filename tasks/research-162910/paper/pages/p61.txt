@@ -1,0 +1,78 @@
+SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  61 
+ 
+Logistic Growth Model (LGM): (continued)  
+ 
+2
+222
+])1()1([
+)1()1(2)1()(
+LGMn
+LGMLGMLGM
+LGMn
+LGMLGMn
+LGMLGMLGMLGM
+tnna
+tntnanatb
+++!
+++!!!=
+ 
+ ................................ ..................... (A.28) 
+ 
+)(
+)1()1()(
+LGMn
+LGM
+LGMn
+LGMLGMLGM
+ta
+tnant
++
+++!="  ................................ ................................ ................................ ........ (A.29) 
+ 
+)()(
+)(
+LGMn
+LGM
+LGMLGM
+p tat
+na
+tG
+tq
++
+=  ................................ ................................ ................................ ........ (A.30) 
+ 
+Basic Definitions and Diagnostic Functions : 
+ 
+dt
+tdq
+tqtD )(
+)(
+1)( !"  (Definition of the decline parameter)  ................................ .......................... (A.31) 
+ 
+dttdq
+tq
+tD /)(
+)(
+)(
+1 !"  (Definition of the loss -ratio)  ................................ ................................ ........ (A.32) 
+ 
+!"
+#
+$%
+&'(!"
+#
+$%
+&( dttdq
+tq
+dt
+d
+tDdt
+dtb /)(
+)(
+)(
+1)(  (Derivative of the loss -ratio)  ................................ ................................ ....... (A.33) 
+ 
+)( )( )(
+1)(  tDtdt
+tdqttqt !!"  ("Beta" function —  relates rate and derivative function )  ............................ (A.34) 
+ 

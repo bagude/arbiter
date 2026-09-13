@@ -1,0 +1,84 @@
+SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  3 
+As an attempt to better represent the general character of time -rate production data for a multi- stages-fractured horizontal 
+well in an ultra -low permeability reservoir, numerous authors have developed time -rate relations using certain specific bases 
+in order to best represent a particular scenario.  These developments inc lude the following time -rate relations: 
+ 
+! Power-Law Exponential Model [Ilk et al. (2008 , 2009) —  a similar form was proposed independently by Jones (1942)] 
+! Stretched Exponential Model [Valkó (2009)  —  also Kisslinger (1993) and Kohlrausch (1854) ] 
+! Logistic Growth Model [Clark et al. ( 2011)] 
+! Duong Model [Duong (2011)] 
+ 
+Each relation has its own strengths, and in absolute fairness, at this time, each/all of these models can only be described a s 
+empirical, there is no direct link with reservoir engin eering theory, other than via analogy.  For example, the Stretched 
+Exponential model is essentially an infinite sum of exponentials, so in as an analog, the concept of adding the rigorous 
+exponential decline to some limit could be thought to "define" this model.  The Power -Law Exponential model is essentially 
+the same as the Stretched Exponential model (except for a constraining variable [ D!]), and this  relation was derived 
+exclusively from the observed behavior of D(t) and b(t) —  however; there may be a ba sis for this model from theory ( e.g., for 
+the variable -compressibility case), but this has not been proven, only inferred.  At this point, we must assume that the 
+proposed models are essentially empirical in nature, and generally center on a particular flo w regime and/or characteristic 
+behavior. 
+ 
+Our workflow for this paper is as follow:  
+ 
+! To apply the "Db," "!-derivative," and "q/Gp" diagnostic plots to eac h data.  
+! To apply each model to a given data set  and provide: 
+—  EUR predictions 
+—  Production projections 
+! To compare EUR predictions obtained from each model by investigating model behavior  
+ 
+Orientation to Field Case Data  
+ 
+In this work, we focus mainly on three different shale gas plays in North America.  The first play (Field A) is a formation 
+composed of siltstone and dark grey shale, with dolomitic siltstone in the base and fine grained sandstone towards the top.  
+Particularly the formation of interest is a highly unusual "  400-500ft thick package of continuous, gas charged siltstone with 
+a very small clay content.  The formation is slightly over pressured with pressure gradients "  0.50-0.65 psi/ft.  Field B is a 
+black, organic rich shale of Upper Jurassic age, which is deposited with mainly heavier clay minerals, silica, and calcite.  The 
+depth of the Field B ranges from approximately 10,000 ft in the northwest part to 14,000 ft in the southeast.  It is over -
+pressured with pressure gradients higher than 0.9 psi/ft.  Field C is a Middle Devonian age black, low density, organic rich 
+shale at an approximate average depth of 5,000 -6,000 ft. 
+ 
+We also evaluate performance from a tight-gas well in East Texas which has a very well -defined production character.  These 
+cases are provided largely as examples which have very long -term performance, and should  provide unique diagnostics, 
+analyses, interpretations, and predictions.  
+ 
+Time-Rate Analysis Relations 
+ 
+The basic definitions and diagnostic functions for time-rate analyses are given as: 
+ 
+dt
+tdq
+tqtD )(
+)(
+1)( !"  (Definition of the decline parameter)  ................................ ................................  (1) 
+ 
+dttdq
+tq
+tD /)(
+)(
+)(
+1 !"  (Definition of the loss -ratio)  ................................ ................................ .............. (2) 
+ 
+!"
+#
+$%
+&'(!"
+#
+$%
+&( dttdq
+tq
+dt
+d
+tDdt
+dtb /)(
+)(
+)(
+1)(  (Derivative of the loss -ratio)  ................................ ................................ ............. (3) 
+ 
+)( )( )(
+1)(  tDtdt
+tdqttqt !!"  ("Beta" function —  relates rate and derivative function)  ................................ .. (4) 
+ 
+A complete summary of the time -rate analysis relations is provided in Appendix A, the fundamental "rate" relations for each 
+case considered in this work are provided below  for reference and orientation.  
+ 
+  

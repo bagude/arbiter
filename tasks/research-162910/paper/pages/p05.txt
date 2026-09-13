@@ -1,0 +1,65 @@
+SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  5 
+ 
+Our general procedure for time-rate analysis is to simultaneously use  the diagnostic plots and calibrate the parameters of each 
+model until an optimum (visual) match is achieved.  This procedure ensures consistency in the analysis and prevents the non -
+uniqueness associated with simply matching a single variable (e.g., only matching the model with the production rate) .  We 
+observe in industry the increasing  use of  regression as a primary tool for matching dat a —  we believe that sole use of 
+regression (without any diagnostic guidance) for time-rate analysis will eventually result in non -uniqueness and any forecast/ 
+results will be prone to errors.   We only suggest the use of regression as a final step to further refine model parameters once 
+a diagnostic interpretation is complete and model parameters are calibrated using the diagnostic plots.  
+ 
+As mentioned earlier, we utilize time-rate data from three different play s for our purposes.  We demonstrate the characteristic 
+time-rate behavior associated with each play using multi -well cross-plots.  W e begin with Field A.  In Fig. 1 we present the 
+time-rate behavior of six wells producing in Field A.  Shallower decline behavior and dominantly "power -law" type flow 
+regimes ( e.g., 1/2 slope, 1/3 slope) are observed throughout production history.  When data are plotted on the log[q/Gp] 
+versus log[t] plot (see Fig. 2), almost all wells exhibit almost identical behavior ( i.e., we observe an apparent linear trend on 
+log-log scale). 
+ 
+The log[D(t)] versus log[t] data are presented in Fig. 3  (left axis), and we observe  that certain (but not major) differences 
+exist in the slope values of these wells  —  which could be related with production characteristics ( e.g., permeability, fracture 
+half-length, etc.).  The log[b(t)] versus log[ t] data are presented in Fig. 3  (right a xis) and these data suggest that the 
+hyperbolic relation could be applicable to model time-rate data as the b(t) trend exhibits a very gradual decrease with time 
+and we could reasonably assume a constant b-value, in the 2 -3 range.  In Fig. 4 we present the  log[!(t)] versus log[ t] trend 
+and we note a  stabilization of data with time , which suggests that "power -law" type flow regimes are being established.  In 
+conclusion, we complete our diagnostic interpretation of time-rate behavior of wells in Field A with the remark that time -rate 
+behavior is being dominated by "power -law" type flow regimes.  
+ 
+Our next example presents six wells from Field B.  Contrary to Field A ; the time-rate data for the  wells in Field B exhibit 
+steep decreases —  that is, the log[ q(t)] versus log[ t] trends (Fig. 5 ) are close to unit slope after 100 days, indicating "deple-
+tion"-type behavior .  The log[ q/Gp] versus log[ t] trends are shown in Fig. 6; and it is not clear that a linear trend ever fully 
+exists for these cases (as is required by the Duong method [Doung (2011)]).  This behavior is discussed  in more detail in the 
+next section where the performance for  each well is analyzed using each of the time- rate models. 
+ 
+Due to somewhat random oscillations in the rate data , the resolution of  the log[ D(t)] and log[ b(t)] versus log[ t] data trends 
+(Fig. 7) yields only qualitative character  —  the data trends are quite erratic, but the D(t) trend does suggest linearity, hence 
+the power-law exponential time- rate model may be the most appropriate model for these cases .  The b(t) data trends are more 
+difficult to interpret ; but at least we do observe that on average, the b(t) trends are not as high as those observed in Field A —
+we note that most of the b(t) trends are in vicinity of unity (or less).   In Fig. 8 we present the log[ !(t)] versus log[ t] trends, 
+and although the trends shown on Fig. 7  were quite erratic, the trends in Fig. 8  appear well -behaved, and this observation 
+suggests that transient "power-law" type flow regimes likely do not exist for the wells in Field B , except to note that most (or 
+all) trends shown on Fig. 8 appear to be converging to unity at long times, which validates the "depletion" (i.e., unit slope) 
+observation. 
+ 
+Our last example includes 5 wells from Field C , and from the time-rate behavior shown in Fig. 9, we can consider Field C to 
+be a possible analog of Field A  —  however; the time -rate trends for Field C do not achieve a "half -slope" character as 
+expected for high con ductivity vertical fractures.  It is possible that the "power-law"-type flow regimes exist but are not 
+dominant.  I n Fig 10 we present the log[ q/Gp] versus log[ t] data, and we observe almost identical character to Field A ( i.e., 
+strongly linear trends) . 
+ 
+As shown in Fig. 11  (left axi s), the log[ D(t)] versus log[ t] trends are strongly linear and quite consistent, verifying the 
+likelihood of the viability of the power -law exponential time -rate model.  Also on Fig. 11 (right axis) we present the log[ b(t)] 
+versus log[ t] data trends, and i n these cases we note consistently declining (apparently linear) trends of b(t) —  which also 
+validates the power -law exponential concept.  On the other hand, we could suggest the possibility of using an average b-value 
+if hyperbolic relation where to be forced on these data (it is improbable that a constant b -value would represent the observed 
+behavior, but we are simply suggesting that this could be done given the uncertainty in some of the b (t) data).  In Fig. 12 we 
+present the log[!(t)] versus log[ t] data —  and we observe generally increasing data trends , although there does appear to be 
+convergence of several trends to !(t) = 0.5, suggesting at least some portion of the data are governed by linear flow.  It is also 
+worth noting that one particular case  exhibits !(t) # 1, suggesting progression towards the "depletion" flow regime.  
+ 
+It is vitally important that the analyst realize that the diagnostic analysis of production data is a necessary step .  Although 
+some of our conclusions are qualitative, the diagnostic analysis of multiple data functions ensures a degree of impartiality in 
+the data analysis, and helps us to at least qualify the uncertainty in the data, which will likely ensure that we is olate the 
+relevant time- rate models and that we do not attempt analyses/interpretations which are not justified by the quality and/or 
+nature of the given production data.  It is critical that data diagnostics always be performed as part of the data analysis.  
+ 
+  

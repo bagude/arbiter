@@ -1,0 +1,59 @@
+ 
+SPE 162910 
+Practical Considerations for Decline Curve Analysis in Unconventional 
+Reservoirs —  Application of Recently Developed Time-Rate Relations 
+V. Okouma, Shell Canada Energy, D. Symmons, Consultant,  
+N. Hosseinpour-Zonoozi, D. Ilk, DeGolyer and MacNaughton , 
+and T.A. Blasingame, Texas A&M University  
+ 
+ 
+ 
+ 
+Copyright 2012, Society of Petroleum Engineers 
+ 
+This paper was prepared for presentation at the SPE Hydrocarbon, Economics, and Evaluation Symposium held in Calgary, Alberta, Canada, 24–25 September 2012. 
+ 
+This paper was selected for presentation by an S PE program committee following review of information contained in an abstract submitted by the author(s). Contents of th e paper have not been 
+reviewed by the Society of Petroleum Engineers and are subject to correction by the author(s). The material does not necessarily reflect any posit ion of the Society of Petroleum Engineers, its 
+officers, or members. Electronic reproduction, distribution, or storage of any part of this paper without the written consent of the Society of Petroleum Engineers is prohibited. Permission to 
+reproduce in print is restricted to an abstract of not more than 300 words; illustrations may not be copied. The abstract must contain conspicuous acknowledgment of SPE copyright. 
+ 
+ 
+Abstract 
+ 
+The application of "D ecline Curve Analysis " (DCA) in unconventional reservoirs is almost always problematic.  The Arps 
+relations (hyperbolic and exponential relations) have been the standard for evaluating estimated ultimate recovery (EUR)  in 
+petroleum eng ineering applications for more than 80 years.  H owever; with the pursuit of low and ultra- low permeability 
+plays, these relations often yield ambiguous results due to invalid assumptions ( e.g., existence of the boundary-dominated 
+flow regime, presumption of a constant bottomhole pressure, etc.). 
+ 
+Misapplications of the Arps' relations to production data exhibiting long-term, transient flow generally result s in significant 
+overestimates of reserves —  specifically when the hyperbolic relation is extrapolated unconstrained, using an Arps b -value 
+greater than 1.  We note that the "modified hyperbolic" relation —  one with an initial (unconstrained) hyperbolic trend used 
+during early times, coupled with an exponential decline trend using a standard terminal declin e can be used effectively (with 
+proper care) for predicting EUR and production extrapolations .  However; we note that this approach is "non -unique" in the 
+hands of most users, and often yields widely varying estimates of reserves with time , and/or "consist ent" estimates of 
+reserves, which are highly biased.  
+ 
+In short, the modified hyperbolic relation can be effectively applied to production data from low/ultra -low permeability 
+reservoirs systems, these analyses must be based on diagnostic interpretations of  the data (as we have proposed earlier [Ilk et 
+al. (2008)]), where multiple data functions are used to define the analyses.  The use of diagnostics is a necessary, not a 
+sufficient condition —  the underlying models must be able to characterize the selected  flow regimes, and there must also be 
+constraints applied to production extrapolations and EUR predictions.  
+ 
+The issues related to the use of Arps' rate decline relations have led various authors [Ilk et al. (Power Law Exponential , 
+2008), Valkó (Stretched Exponential, 2009), Clark et al. (Logistic Growth Model, 2011), and Duong  (2011)] to propose 
+various rate decline relations which attempt to properly model the time-rate behavior —  specifically early transient and 
+transitional flow behavior .  However, none of these equations can be considered sufficient to forecast production for all 
+unconventional plays , due to the characteristics and operational conditions of each play and the behavior of the time-rate 
+equation.  In other words, one equation could work very well in a specific play, but could possibly perform poorly in another 
+play.  Under these circumstances, it is critical to understand the behavior of each equation , and t o apply the se relations 
+appropriately for production forecasts .  
+ 
+This work presents guidelines for the application of the various time-rate relations currently being deployed in the petroleum 
+industry.  The results of time -rate analyses of wells from three different plays are presented, and the advantages/ 
+disadvantages of e ach time-rate relation  are discussed.  Ultimately, our goal in this work is to define and demonstrate a 
+process for the proper application of the time -rate analyses typically performed for production forecasting and EUR 
+prediction. 
+ 
+  

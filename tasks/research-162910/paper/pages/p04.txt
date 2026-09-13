@@ -1,0 +1,89 @@
+4 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910 
+ 
+bi
+i
+tbD
+qtq /1)1(
+)(
++
+=  [Modified-Hyperbolic Relation —  valid for t<texp]  ............................. (5) 
+]exp[)( tDqtq ii !=  [Exponential Relation —  valid for t> texp; Di = Dlim] ........................... (6) 
+ 
+]ˆexp[ˆ)( tDtDqtq n
+ii !""=  [Power-Law Exponential Model (PLE)] ................................ .............. (7) 
+ 
+])/(exp[ˆ)( n
+i tqtq !"=  [Stretched Exponential Model  (SE)] ................................ .................... (8) 
+ 
+!
+!
+"
+#
+$
+$
+%
+&
+''= '' ]1[ )1(exp )( )1(
+1 Dngm
+Dng
+DngDngm tm
+a
+tqtq  [Duong Model (DNG)] ................................ ................................ ... (9) 
+ 
+2
+)1(
+][
+)(
+)(
+LGMn
+LGM
+LGMn
+LGMLGMp
+ta
+tanK
+dt
+tdG
+tq
++
+==
+!
+ [Logistical Growth Model  (LGM)] ................................ .................... (10) 
+ 
+These relations are formulated as diagnostic relation s (primarily using qDb-plots) and are used to make long -term rate 
+projections as well as predictions of estimated-ultimate-recovery (EUR).  As a matter of process, any given relation is 
+calibrated against the historical rate and cumulative data using a diagnostic approach  —  and the model extrapolations are 
+made only from the end of the data (not the body of the data).  This approach ensures that all extrapolations/projections are 
+based on the actual (not model -based) cumulative production.  
+ 
+Diagnostics and Characteristic Time-Rate Behavior 
+ 
+In this section we present the characteristic time-rate performance from each play.  We present six wells from Field A and 
+Field B, and five wells from Field C.  The primary objective of this effort is to demonstrate time-rate behavior of the wells 
+using diagnostic plots without performing analysis correspondi ng to each play.  As shown earlier utilized diagnostic plots are 
+D and t, b and t, ! and t, q/Gp and t.  Diagnostic plots have significant importance in our applications as the se plots provide 
+direct insight into our understanding of decline behavior.  
+ 
+For example, a straight line trend of the continuously evaluated D-parameter [i.e., D (t)] versus t on log- log scale could 
+indicate power -law behavior which would yield the "power -law exponential" (or "stretched exponential")  function when the 
+ordinary differential equation (Eq. 1) is solved for the rate  function.  Furthermore, from the continuous evaluation of the b-
+parameter, it is possible to verify the hyperbolic behavior.  A c onstant b-parameter trend [ i.e., b(t) = consta nt] suggests 
+hyperbolic rate decline behavior ; and as such , it is possible to establish the value of b-parameter in the hyperbolic equation.  
+In addition, a constant !-derivative trend verifies "power -law" flow regimes such as linear and/or bi -linear flow.   These 
+diagnostic functions involve differentiation of time-rate data, and therefore errors and inconsistencies associated with the data 
+are amplified in the derivative functions , which may prevent the analyst from establishing a unique interpretation . 
+ 
+The diagnostic plot of q /Gp and t [as suggested by Duong (2011) ] provides significant diagnostic value as it does not include 
+any numerical differentiation and it serves as a complementary diagnostic tool to the previously mentioned diagnostic plots.  
+As a matter of process,  we prefer to use all of the diagnostic plots in an effort to understand data characteristics prior to 
+performing time -rate analysis.  We believe this procedure decreases the uncertainty associated with forecasts and offers 
+confidence in time-rate analysis results. 
+ 
+From another point of view, diagnostic plots are particularly useful while performing time-rate analysis.  Each time-rate 
+relation has more than two model parameters and it is generally difficult to establish the values directl y from production rate  
+data.  In particula r, the log[D(t)] versus log[ t] plot is used to establish the  power-law exponential and stretched exponential 
+model parameters ( i.e., iDˆ , n) as these parameters are related with the slope and intercept values on this  log-log plot.  Also, 
+the model parameters  for Duong's equation  (i.e., aDng and mDng) can be  estimated using the log[q/Gp] versus log[ t].  The 
+carrying capacity parameter (K) of the logistic growth model is eliminated from the model  if the derivative functions (and 
+plots) are used (as indicated in  Appendix A). 
+ 
+  

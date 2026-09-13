@@ -1,0 +1,90 @@
+6 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910 
+ 
+Application of the Time-rate Models to Long Term Production Data  
+ 
+We present a (relatively) long term production data example in order to investigate  the model behavior of the rate decline 
+equations considered in this work.  As mentioned earlier, th is field example consists of a tight gas well from East Texas 
+(permeability values  are estimated to be around 7.0 $D) and we have  more than 7 years of production.  For this case, w e 
+demonstrate our diagnostic interpretation procedure for matching data and performing forecasts.  
+ 
+In Figs. 13 -16 we present the matches of given production data with each of the time-rate models.  We note that all of the 
+matches are performed simultaneously by calibrating model parameters as we are guided by the diagnostic plots.  As 
+observed in Figs. 13 and 14, each of the models match es the data throughout entire production history .  In particular, when  
+the log[q/Gp] versus log[ t] plot is used, we note that the models can approximate the data trend to a considerable extent  (as 
+mentioned, this rendering tends to force the impression of a linear relationship, which may not be the case) .  Therefore, the 
+differences in EUR will be dictated by the long term model behavior  —  and this is  where the differences between the time-
+rate models begins to emerge. 
+ 
+Duong's model is based on the linear behavior of q /Gp-t data trend (on a log-log scale); whereas the power-law exponential, 
+the stretched exponential , and the logistic growth models exhibit non -linear behavior (although this is somewhat difficult to 
+distinguish on Fig. 14 —  essentially one should note that the other models fall below the Duong model).   This difference in 
+behavior dictates that the EUR estimate s from Duong's model should  (almost always)  be higher than  that for the other 
+models.  On the other hand, when a terminal decline is imposed on the modified -hyperbolic relation, deviations from the 
+linear trend are readily evident (as seen in  Fig. 14).  We  note that the modified -hyperbolic and power -law exponential have 
+specific terms which limit the  over-estimation of EUR , the Duong model does not.  We would note as a suggestion that the 
+Duong model could be similarly constrained by adding a terminal expon ential decline, but this is not the intent of the Duong 
+model and we do not make a specific recommendation that this be done.  It is worth noting that for methods which utilize a 
+terminal decline, the prescribed value of the terminal decline is generally a n arbitrary number and is often based on a 
+company's policies and/or the analyst's experience.  
+ 
+In Fig. 15  we present the log[D(t)] and log[ b(t)] versus log[ t] data trends  for this case .  Very strong linear behavior of the 
+computed log[D(t)] versus log[ t] trend is observed —  confirming the applicability of the power -law exponential time -rate 
+model.  It can be argued that the late st-time data are affected by the numerical differentiation algorithm and therefore can be 
+considered as artifacts  (note the late -time behavior in the D(t) and b(t) functions).  Nevertheless, each of the  models matches 
+the data trends  in their own fashions.   The b(t) trend does appears to be decreasing with time  (with the noted artifact near the 
+endpoint); and an average b -value can be inferred from the data behavior.  Lastly, we review the log[!(t)] versus log[ t] data  
+in Fig. 16  and we note that each of the models match es the !(t) data trends to some degree —  and we note that there are 
+differences are observed at early and  late times.  In particular, the  late-time behavior of a given model  plays a dominant role 
+in the prediction of EUR . 
+ 
+In Table 1 we summarize the EUR values computed at 30 years as obtained from the models.   For this case, Duong's model 
+yields the highest EUR and the logistic growth model yields the lowest EUR values.  We use five percent (5%) terminal 
+decline value for the modified hyperbolic equation, we note that increasing this value will yield a decreas e in the predicted 
+EUR. 
+ 
+Table 1 —  Time-rate analyses results for the East TX gas well (long term production data) (All models)  
+ 
+  
+EURPLE 
+ 
+EURSE 
+ 
+EURDNG 
+ 
+EURLGM 
+ 
+EURMHYP 
+Well Name 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+           East TX gas well 
+ 
+2.93 
+ 
+2.93 
+ 
+3.17 
+ 
+2.84 
+ 
+3.14 
+ 
+Time-Rate Analyses 
+ 
+In this section we present the "Time-Rate" analyses for each well from a given shale play using each of the  models specified 
+in this study.  Before starting, we believe it is worthwhile to note that each of the matches  produced in this study are based 
+uniquely on our own interpretation  of the model behavior  —  and we realize that different matches with different EUR values 
+can be obtained  with similar probability.  As we have mentioned many times earlier in this work, our matches are the direct 
+result of a systematic interpretation proce ss which is focused primarily on the use of specialized  diagnostic plots.  We again 
+note that we do not simply perform regression analysis, each analysis is based on diagnostic behavior coupled with an 
+intrinsic understanding of each time -rate model and the diagnostic character of the given time -rate model. 
+ 
+  

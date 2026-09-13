@@ -1,0 +1,95 @@
+SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  59 
+ 
+Appendix A —  Formulations for Diagnostic Functions  
+ 
+In this appendix we provide an inventory of the time -rate relations used in this work, as well as formulations for the various 
+diagnostic functions (i.e., D(t), b(t), "(t) and q/Gp(t)) which are used in this paper: 
+ 
+Modified Hyperbolic Model: 
+ 
+This relation has two (2) trends —  an "initial" trend that is hyperbolic ( i.e., for t<texp), and a "final" trend that is exponential 
+(i.e., for t> texp) —  where "texp" is the time of change from hyperbolic to exponential.  
+ 
+For the hyperbolic function , we have: 
+ 
+bi
+i
+tbD
+qtq /1)1(
+)(
++
+=  (t<texp) ................................ ................................ ................................ ................. (A.1) 
+ 
+)1()( tbD
+DtD
+i
+i
++=  (t<texp) ................................ ................................ ................................ ................. (A.2) 
+ 
+btb =)(  (t<texp) ................................ ................................ ................................ ................. (A.3) 
+ 
+)1()( tbD
+tDt
+i
+i
++=!  (t<texp) ................................ ................................ ................................ ................. (A.4) 
+ 
+)1()1(
+)1(
+)(
+)(
+)/1( tbDtbD
+Db
+tG
+tq
+ibi
+i
+p +!+
+!=  (t<texp) ................................ ................................ ................................ ................. (A.5) 
+ 
+For the exponential function , we have: 
+ 
+]exp[)( tDqtq ii !=  (t> texp; Di = Dlim [constant terminal decline])  ................................ .................... (A.6) 
+ 
+iDtD =)(  (t> texp) ................................ ................................ ................................ ................ (A.7) 
+ 
+0)( =tb  (t<texp) ................................ ................................ ................................ ................. (A.8) 
+ 
+tDt i=)(!  (t> texp) ................................ ................................ ................................ ................ (A.9) 
+ 
+])exp[1(
+]exp[
+)(
+)(
+tD
+tDDtG
+tq
+i
+ii
+p !!
+!=  (t> texp) ................................ ................................ ................................ .............. (A.10) 
+ 
+Power-law Exponential Model (PLE): 
+ 
+]ˆexp[ˆ)( tDtDqtq n
+ii !""=  ................................ ................................ ................................ .......................... (A.11) 
+ 
+1ˆ)( !" += ni tnDDtD  ................................ ................................ ................................ .......................... (A.12) 
+ 
+2)ˆ(
+)1(ˆ
+)( ni
+ni
+tnDtD
+tnnDtb
++
+!=
+"
+ ................................ ................................ ................................ .......................... (A.13) 
+ 
+ni tnDtDt ˆ)( += !"  ................................ ................................ ................................ .......................... (A.14) 
+ 
+No q/Gp(t) formulation is available for the "power -law exponential" relation as no closed form relation exists for the 
+cumulative production function [Gp(t)].  We note that this is due to the complexity introduced by the !D  term. 
+ 
+  

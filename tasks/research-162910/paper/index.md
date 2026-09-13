@@ -1,0 +1,65 @@
+# SPE 162910 — page index
+
+61 pages; one file per page under pages/. First non-empty line of each page:
+
+- p01 (4678 chars): SPE 162910
+- p02 (4973 chars): 2 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p03 (4314 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  3
+- p04 (4464 chars): 4 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p05 (6615 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  5
+- p06 (5358 chars): 6 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p07 (4190 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  7
+- p08 (5497 chars): 8 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p09 (2961 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  9
+- p10 (1666 chars): 10 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p11 (284 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  11
+- p12 (313 chars): 12 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p13 (286 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  13
+- p14 (313 chars): 14 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p15 (285 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  15
+- p16 (315 chars): 16 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p17 (355 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  17
+- p18 (350 chars): 18 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p19 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  19
+- p20 (322 chars): 20 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p21 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  21
+- p22 (329 chars): 22 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p23 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  23
+- p24 (329 chars): 24 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p25 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  25
+- p26 (329 chars): 26 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p27 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  27
+- p28 (333 chars): 28 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p29 (323 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  29
+- p30 (322 chars): 30 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p31 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  31
+- p32 (322 chars): 32 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p33 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  33
+- p34 (329 chars): 34 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p35 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  35
+- p36 (329 chars): 36 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p37 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  37
+- p38 (329 chars): 38 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p39 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  39
+- p40 (329 chars): 40 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p41 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  41
+- p42 (322 chars): 42 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p43 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  43
+- p44 (322 chars): 44 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p45 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  45
+- p46 (329 chars): 46 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p47 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  47
+- p48 (329 chars): 48 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p49 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  49
+- p50 (329 chars): 50 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p51 (327 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  51
+- p52 (329 chars): 52 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p53 (306 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  53
+- p54 (310 chars): 54 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p55 (297 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  55
+- p56 (310 chars): 56 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p57 (296 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  57
+- p58 (309 chars): 58 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p59 (3213 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  59
+- p60 (2287 chars): 60 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910
+- p61 (1279 chars): SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  61

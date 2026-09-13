@@ -1,0 +1,39 @@
+SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  9 
+ 
+Conclusions: 
+ 
+The following conclusions are established from observat ions made in this work:  
+ 
+! The "Db" diagnostic plot should be the primary diagnostic used to establish the well -reservoir character. 
+! The "q/Gp" diagnostic plot is an excellent data check, and should be incorporated into diagnostic analyses —  however; 
+the expectation of a completely linear trend [ i.e., Duong (2011)] is optimistic. 
+! The "!-derivative" diagnostic plot is useful for establishing the  existence of "power-law" flow regimes. 
+ 
+References 
+ 
+Arps, J.J. 1945. Analysis of Decline Curves. Trans. AIME 160: 228-247. 
+Clark, A.J., Lake, L.W., and Patzek, T.W. 20 11. Production Forecasting with Logistic Growth Models. Paper SPE 
+144790 presented at the SPE Annual Technical Conference and Exhibition, Denver, CO, 30 October-02 November. 
+Duong, A.N. 20 11. Rate-Decline Analysis for Fracture -Dominated Shale Reservoirs  SPE Reservoir Evaluation and 
+Engineering 14 (3): 377-387. 
+Ilk, D., Perego, A.D., Rushing, J.A., and Blasingame, T.A. 2008. Exponential vs. Hyperbolic Decline in Tight Gas Sands 
+—  Understanding the Origin and Implications for Reserve Estimates Using Arps' Decline Curves. Paper SPE 116731 
+presented at the SPE Annual Technical Conf erence and Exhibition, Denver, CO, 21 -24 September. 
+Ilk, D., Rushing, J.A., and Blasingame, T.A. 2009. Decline Curve Analysis for HP/HT Gas Wells: Theory and 
+Applications. Paper SPE 125031 presented at the SPE Annual Technical Conference and Exhibition, Ne w Orleans, LA, 
+04-07 October. 
+Johnson, R.H. and Bollens, A.L. 1927. The Loss Ratio Method of Extrapolating Oil Well Decline Curves. Trans. AIME 
+77: 771. 
+Jones, P.J. 1942. Estimating Oil Reserves from Production -Decline Rates. Oil and Gas Journal  40 (35): 43-44. 
+Kisslinger, C. 1993. The Stretched Exponential Function as an Alternative Model for Aftershock Decay Rate. Journal of 
+Geophysical Research  98 (2): 1913-1921. 
+Kohlrausch, R. 1854. Theorie des elektrischen Rückstandes in der Leidner Flasche. Poggendorff 91: 56-82. 
+Lee, W.J. and Sidle, R.E. 2010. Gas Reserves Estimation in Resource Plays. Paper SPE 130102 presented at the 2010 
+SPE Unconventional Reservoirs Conference, Pittsburgh, PA, USA, 23 -25 February.doi:10.2118/119897 -MS. 
+Rushing, J.A., Perego, A.D. , Sullivan, R.B., and Blasingame, T.A. 200 7. Estimating Reserves in Tight Gas Sands at 
+HP/HT Reservoir Conditions: Use and Misuse of an Arps Decline Curve Methodology . Paper SPE 1 09625 presented at 
+the SPE Annual Technical Conference and Exhibition, Anaheim, CA, 11-14 November. 
+Valkó, P.P. 2009. Assigning Value to Stimulation in the Barnett Shale: A Simultaneous Analysis of 7000 Plus 
+Production Histories and Well Completion Records. Paper SPE 119369 presented at the SPE Hydraulic Fracturing 
+Technology Conference, College Station, TX, 19 -21 January. 
+  

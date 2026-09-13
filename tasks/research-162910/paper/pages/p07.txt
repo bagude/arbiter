@@ -1,0 +1,217 @@
+SPE 162910 Practical Considerations for Decline Curve Analys is in Unconventional Reservoirs  7 
+ 
+Field A: Time-rate analyses for six wells are presented for Field A in Figs. 17-40.  The summary table for the predicted EUR 
+values is given below ( Table 2): 
+ 
+Table 2 —  Time-rate analyses results for Field A (All models)  
+ 
+Field A 
+ 
+EURPLE 
+ 
+EURSE 
+ 
+EURDNG 
+ 
+EURLGM 
+ 
+EURMHYP 
+Well Name 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+           Well A.1 
+ 
+6.29 
+ 
+6.34 
+ 
+6.72 
+ 
+6.65 
+ 
+6.77 
+Well A.2 
+ 
+5.40 
+ 
+5.78 
+ 
+6.41 
+ 
+5.55 
+ 
+6.52 
+Well A.3 
+ 
+3.26 
+ 
+3.25 
+ 
+3.83 
+ 
+3.10 
+ 
+3.67 
+Well A.4 
+ 
+7.46 
+ 
+7.41 
+ 
+7.72 
+ 
+7.19 
+ 
+7.72 
+Well A.5 
+ 
+6.18 
+ 
+6.30 
+ 
+7.07 
+ 
+4.39 
+ 
+6.18 
+Well A.6 
+ 
+6.18 
+ 
+6.21 
+ 
+6.74 
+ 
+6.31 
+ 
+6.85 
+ 
+It can be suggested that wells in Field A exhibit "power -law" type flow regimes.  The basis for this observation is mainly the 
+signature on time -rate plot and the near-constant character (at intermediate and late times) exhibited by data on the log[!(t)] 
+versus log[t] plot.  And almost all of the models match the entire production history.  Differences in model behavior are 
+observed at late times in  the forecasts.  Generally, EUR values from the power-law exponential and stretched exponential 
+relations are very similar (as should be expected)  —  and these models, along with the results from the logistic growth model , 
+tend to provide conservative estimates across all wells.  The Duong model and the modified -hyperbolic model always yield 
+the highest EUR predictions.  We note that a five percent terminal decline rate is used for the modified hyperbolic relation.  
+ 
+Field B: Wells in Field B exhibit higher initial rates and steeper decline trends due to the unique characteristics of Field B.  
+This behavior is completely different than the behavior observed in Field s A and C .  In g eneral, we had  difficulties in 
+matching the entire production history for a given well in Field B; primarily due to early -time behavior.  In p articular, we 
+suggest that the  Duong model  may be the least appropriate model for this specific play due to observation that the Duong 
+model and the observed data do not seem to agree  in general (we note that disagreement is most evident in the log[D(t)] and 
+log[!(t)] versus log[t] plots).  The model matches are shown in Figs. 41-64 and the EUR results are presented in Table 3. 
+ 
+Table 3 —  Time-rate analyses results for Field B (All models)  
+ 
+Field B 
+ 
+EURPLE 
+ 
+EURSE 
+ 
+EURDNG 
+ 
+EURLGM 
+ 
+EURMHYP 
+Well Name 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+ 
+(BSCF) 
+           Well B.1 
+ 
+3.13 
+ 
+3.11 
+ 
+6.19 
+ 
+3.84 
+ 
+3.53 
+Well B.2 
+ 
+3.04 
+ 
+2.97 
+ 
+4.41 
+ 
+3.33 
+ 
+4.32 
+Well B.3 
+ 
+4.52 
+ 
+4.30 
+ 
+5.32 
+ 
+4.51 
+ 
+5.54 
+Well B.4 
+ 
+4.13 
+ 
+4.17 
+ 
+5.48 
+ 
+4.41 
+ 
+5.16 
+Well B.5 
+ 
+2.74 
+ 
+2.71 
+ 
+4.53 
+ 
+3.04 
+ 
+3.86 
+Well B.6 
+ 
+6.99 
+ 
+7.33 
+ 
+8.95 
+ 
+7.15 
+ 
+8.44 
+ 
+As with Field A, the highest EUR values are obtained with the Duong and modified hyperbolic models.  The log[D(t)] versus 
+log[t] trends exhibit more or less linear behavior and we note that it is difficult to interpret the log[b(t)] versus log[ t] trends 
+due to the quality of the production  data for these wells .  We note that the  stretched exponential, power-law exponential and 
+the logistic growth models again provide (in general) the most conservative estimates of predicted EUR. 
+ 
+Field C: We apply the same procedure s to analyze and forecast the 5 wells provided for  Field C.  In terms of performance 
+behavior, Field C is different than Field s A and B, but there is some commonality of character with Field A ( i.e., the trends 
+have similarity of character, particularly for the log[!(t)] versus log[t] plots).  The analysis and forecast plots for Field C are 
+presented in Figs. 65-84, and the EUR prediction results are summarized in Table 4. 
+ 
+As was the case for Fields A and B,  we note that the Duong model yields the highest EUR estimates due to the nature of this  
+model.  We again note that most cases are matched reasonably well by each time -rate model, but we also note that the Duong 
+model is always the most aggressive extrapolation model . 
+ 
+  

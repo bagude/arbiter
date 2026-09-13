@@ -1,0 +1,29 @@
+10 V. Okouma, D. Symmons, N. Hosseinpour -Zonoozi, D. Ilk, and T.A. Blasingame  SPE 162910 
+ 
+Nomenclature 
+ 
+aDng = Model coefficient for the Duong time-rate model, D-1 
+aLGM = Model coefficient for the Logistic Growth time -rate model, D-1 
+b = Arps' decline exponent (hyperbolic time-rate relation), dimensionless  
+! = "Beta" function (relates rate and derivative functions ), dimensionless 
+D = Reciprocal of the loss ratio, D-1 
+Dlim = Terminal decline constant for the exponential time-rate relation, D-1 
+Di = Initial decline constant for the exponential and hyperbolic time-rate relations, D-1 
+iDˆ  = Decline coefficient for the Power-Law Exponential time-rate model, D-1 
+D! = Terminal decline coefficient for the Power- Law Exponential time-rate model, D-1 
+EUR = Estimated ultimate recovery, BSCF 
+Gp = Cumulative gas production, MSCF or BSCF  
+Gp,max = Maximum gas production (at a specified time limit), MSCF or BSCF  
+K = Carrying Capacity for the Logistic Growth time-rate model, MSCF or BSCF  
+mDng = Time exponent for the Duong time-rate model, dimensionless  
+n = Time exponent for the Power-Law and Stretched Exponential time-rate models, dimensionless  
+nLGM = Time exponent for the Logistic Growth time -rate model, dimensionless 
+q = Production rate, MSCF/D  
+qi = Initial rate for the exponential and hyperbolic time-rate models, MSCF/D 
+iqˆ  = Initial rate coefficient for the Power-Law and Stretched Exponential time-rate models, MSCF/D 
+q1 = Initial rate coefficient for the Duong time-rate model, MSCF/D 
+t = Production time, days 
+" = Time coefficient for the Stretched Exponential time-rate model, D-1 
+! = Micro (i.e. 10-6 unit) 
+ 
+  
