@@ -80,6 +80,8 @@ const GUARDS = [
 	path.join(here, "ext", "memory-ext.ts"),
 	// Result handles (registers nothing unless CONFIG.guards.result_handles is set).
 	path.join(here, "ext", "guards", "result-handles.ts"),
+	// Write/edit argument elision (registers nothing unless CONFIG.guards.call_args is set).
+	path.join(here, "ext", "guards", "call-args.ts"),
 ];
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
@@ -331,6 +333,7 @@ function launch(name) {
 			// Opt-in context diet: "" leaves the guard unregistered; a JSON object of
 			// options (possibly {}) turns it on for every role in the run.
 			ARBITER_CONTEXT_DIET: CONFIG.guards.context_diet ? JSON.stringify(CONFIG.guards.context_diet) : "",
+			ARBITER_CALL_ARGS: CONFIG.guards.call_args ? JSON.stringify(CONFIG.guards.call_args) : "",
 			ARBITER_MOUNTS: MOUNTS.length ? JSON.stringify(MOUNTS) : "",
 			// Memory tools (ext/memory-ext.ts): empty index = the extension registers
 			// nothing. Scopes and budget are enforced inside the tools on every call.

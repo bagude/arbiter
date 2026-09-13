@@ -1,5 +1,5 @@
 { "task": "dw-explore-real", "pattern": "orchestrator", "repo": "data-warehousers-real", "memory": { "mode": "search", "budgetChars": 2500, "retrievalChars": 16000, "workerReserveChars": 5000 },
   "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
-  "guards": { "result_handles": true },
+  "guards": { "result_handles": true, "call_args": true, "context_diet": { "ageTools": [] } },
   "caps": { "toolCalls": 300, "wallSec": 2700, "usd": 5, "doneAttempts": 5, "bashTimeoutSec": 240, "compactAtTokens": 30000, "maxCompactions": 3 },
   "_note": "data-warehousers data explorer on the REAL warehouse (93 M rows) via the read-only mount data/real (tasks/dw-explore-real/mounts.json -> runs/.mounts/data-warehousers). Oracle = reproduction with a 10 s per-query limit and at most 8 observations. Separate memory scope so seed-data findings are not treated as covered ground." }
