@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { makeRecord, foldLog, readLog, appendLog, retainFromRun, consolidate, CLAIMS, summarize, migrateDigests } from "../lib/memory.mjs";
+import { makeRecord, foldLog, readLog, appendLog, retainFromRun, findingsOf, consolidate, CLAIMS, summarize, migrateDigests } from "../lib/memory.mjs";
 
 const rec = (over) =>
 	makeRecord({ scope: "task:orbit", kind: "episodic", text: "x", evidence: [], confidence: 0.5, source: "human", ts: 1000, ...over });
@@ -285,4 +285,27 @@ test("foldLog applies a demote op: promoted becomes candidate with the reason ke
 	const out = foldLog([r, { op: "demote", id: "m_p", ts: 2, reason: "policy" }]).get("m_p");
 	assert.equal(out.status, "candidate");
 	assert.equal(out.demoteReason, "policy");
+});
+
+test("retainFromRun turns a study's claims into finding records, verified ones promoted", () => {
+	const summary = { runId: "r-study", task: "dw-paper-study", pattern: "orchestrator", reason: "SUCCESS", wallSec: 10, mailByKind: { probe: 1 }, doneAttempts: 1, snapshot: "seed:x@1", roles: { orchestrator: "m", worker: "m" } };
+	const timeline = [{ kind: "oracle", from: "supervisor", body: "2/2 study checks", score: "2/2" }];
+	const deliverable = {
+		claims: [
+			{ id: "C1", claim: "observed", text: "Arps has been the standard for 80 years.", quotes: [{ page: 1, text: "x" }] },
+			{ id: "C2", claim: "interpreted", text: "PLE fits early time better.", settlement_criterion: "compare residuals", cites: ["m_000000000001"] },
+		],
+		unresolved: ["Does the terminal decline hold on TX leases?"],
+	};
+	const oracle = { details: [{ id: "C1", reproduced: true }, { id: "C2", reproduced: true }] };
+	assert.equal(findingsOf(deliverable).length, 2);
+	const out = retainFromRun({ summary, timeline, deliverable, oracle, ts: 5 });
+	const c1 = out.find((r) => r.summary === "Arps has been the standard for 80 years.");
+	const c2 = out.find((r) => r.summary === "PLE fits early time better.");
+	assert.equal(c1.status, "promoted");
+	assert.equal(c1.claim, "observed");
+	assert.equal(c2.status, "candidate");
+	assert.equal(c2.settlement_criterion, "compare residuals");
+	assert.ok(c2.evidence.includes("memory:m_000000000001"));
+	assert.ok(out.some((r) => r.kind === "question" && r.text.startsWith("Does the terminal")));
 });

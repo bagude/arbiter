@@ -1,0 +1,6 @@
+{ "task": "dw-paper-synthesis", "pattern": "orchestrator", "repo": "research-162910",
+  "memory": { "mode": "search", "budgetChars": 3000, "retrievalChars": 24000, "workerReserveChars": 8000, "extraScopes": ["repo:data-warehousers-real"] },
+  "guards": { "result_handles": true, "call_args": true, "context_diet": { "ageTools": [] } },
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
+  "caps": { "toolCalls": 300, "wallSec": 2400, "usd": 5, "doneAttempts": 5, "bashTimeoutSec": 120, "compactAtTokens": 30000, "maxCompactions": 3 },
+  "_note": "Research campaign phase C: the report. Every claim cites memory records (research scope plus the warehouse's findings) or page quotes; the oracle resolves citations, applies the claim rules, verifies quotes." }

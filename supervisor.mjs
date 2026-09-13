@@ -1271,10 +1271,17 @@ function finish(reason) {
 	try {
 		// The explorer's deliverable, when there is one, becomes one record per
 		// observation with the oracle's per-observation verification stamped on it.
+		// Three deliverable shapes carry findings: the explorer's exploration.json
+		// (observations), a study's study.json and a report's report.json (claims).
 		let deliverable = null;
 		try {
-			const f = path.join(WS.workspace, "src", "exploration.json");
-			if (fs.existsSync(f)) deliverable = JSON.parse(fs.readFileSync(f, "utf8"));
+			for (const name of ["exploration.json", "study.json", "report.json"]) {
+				const f = path.join(WS.workspace, "src", name);
+				if (fs.existsSync(f)) {
+					deliverable = JSON.parse(fs.readFileSync(f, "utf8"));
+					break;
+				}
+			}
 		} catch {
 			deliverable = null;
 		}

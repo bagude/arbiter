@@ -1,0 +1,15 @@
+{
+  "question": "What does SPE 162910 claim about time-rate models for unconventional wells, which of its methods held on the warehouse's wells, and what remains unresolved?",
+  "claims": [
+    { "id": "R1", "claim": "observed", "text": "The paper treats the Arps hyperbolic and exponential relations as the industry's standard EUR method for more than 80 years.", "cites": ["m_f1f0000000aa"], "quotes": [ { "page": 1, "text": "The Arps relations (hyperbolic and exponential relations) have been the standard for evaluating estimated ultimate recovery (EUR) in petroleum engineering applications for more than 80 years." } ] },
+    { "id": "R2", "claim": "observed", "text": "An exponential least-squares fit over the first 48 months of a NM well gives a monthly decline of 0.03.", "cites": ["m_f1f0000000bb"], "quotes": [] },
+    { "id": "R3", "claim": "observed", "text": "The paper describes the newer time-rate relations as empirical, without a direct link to reservoir engineering theory.", "cites": [], "quotes": [ { "page": 3, "text": "each/all of these models can only be described as empirical, there is no direct link with reservoir engineering theory, other than via analogy" } ] },
+    { "id": "R4", "claim": "interpreted", "text": "The modified hyperbolic model is a hyperbolic branch followed by an exponential branch with a constant terminal decline.", "cites": ["m_f1f0000000cc"], "quotes": [ { "page": 59, "text": "This relation has two (2) trends — an \"initial\" trend that is hyperbolic (i.e., for t<texp), and a \"final\" trend that is exponential (i.e., for t> texp)" } ], "settlement_criterion": "fit both branches on one warehouse well and confirm the switch improves the fit" },
+    { "id": "R5", "claim": "hypothesis", "text": "The power-law exponential model will describe the first year of NM wells better than the exponential branch does.", "cites": ["m_f1f0000000dd"], "quotes": [], "settlement_criterion": "compare PLE and exponential residuals over months 1-12 on the same wells" },
+    { "id": "R6", "claim": "interpreted", "text": "Monthly rates without pressures limit the warehouse to the paper's rate-time relations; the pseudo-pressure diagnostics cannot be reproduced here.", "cites": ["m_f1f0000000cc", "m_f1f0000000bb"], "quotes": [], "settlement_criterion": "a pressure column in a future snapshot would let the diagnostic functions be computed" }
+  ],
+  "unresolved": [
+    "Whether TX lease-level rows and well-level rows give different fitted declines for the same lease.",
+    "Which diagnostic functions can be computed from monthly rates alone."
+  ]
+}
