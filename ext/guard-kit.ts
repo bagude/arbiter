@@ -44,6 +44,12 @@ export function report(name: string, kind: string, ctx: Parameters<typeof roleFo
 	fs.appendFileSync(OUT, `${JSON.stringify({ ts: Date.now(), ev: `guard:${name}_${kind}`, data: { role: roleFor(ctx), ...data } })}\n`);
 }
 
+/** Append an arbitrary lifecycle event `{ role, ...data }` (no-op when unset). Used by the memory tools. */
+export function emit(ev: string, ctx: Parameters<typeof roleFor>[0], data: Record<string, unknown>): void {
+	if (!OUT) return;
+	fs.appendFileSync(OUT, `${JSON.stringify({ ts: Date.now(), ev, data: { role: roleFor(ctx), ...data } })}\n`);
+}
+
 /** The tool_call result that blocks execution; `reason` is what the model reads. */
 export function deny(reason: string): { block: true; reason: string } {
 	return { block: true, reason };
