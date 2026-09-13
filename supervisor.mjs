@@ -433,6 +433,14 @@ function deliver(to, text, why) {
 	// by design the orchestrator is the only thing that steers it. Anything the
 	// supervisor needs a worker to know goes to the orchestrator instead.
 	if (s.role === "worker") return;
+	// pi refuses prompts while it is compacting ("Cannot submit a prompt while
+	// compaction is in progress"); a probe result delivered in that window was lost in
+	// run 2026-09-13T14-05-03. Queue it and flush right after the compaction reply.
+	if (to === "orchestrator" && compaction.phase === "compacting") {
+		compaction.queued = [...(compaction.queued ?? []), { text, why }];
+		log({ agent: to, type: "deliver_queued", msg: `queued during compaction: ${why}` });
+		return;
+	}
 	s.busy = true; // agent_start will confirm; this just prevents double-nudging
 	// "steer" delivers after the current turn's tool calls, before the next LLM call —
 	// not "followUp", which only delivers once the whole agent run fully settles.
@@ -730,9 +738,11 @@ function pumpCompaction() {
 function onCompactResponse(name, ev) {
 	if (name !== "orchestrator" || compaction.phase !== "compacting" || ev.id !== compaction.id) return;
 	const o = state.orchestrator;
+	const queued = compaction.queued ?? [];
 	if (ev.success === false) {
 		log({ type: "compaction_failed", msg: `${compaction.id}: ${ev.error ?? "unknown error"}` });
 		compaction = { phase: "idle" };
+		for (const q of queued) deliver("orchestrator", q.text, `${q.why} (after failed compaction)`);
 		return;
 	}
 	const data = ev.data ?? {};
@@ -746,6 +756,7 @@ function onCompactResponse(name, ev) {
 	}
 	compaction = { phase: "idle" };
 	deliver("orchestrator", M.compaction.done(rec.tokensBefore, rec.tokensAfter, rec.checkpoint), "compaction done");
+	for (const q of queued) deliver("orchestrator", q.text, `${q.why} (queued during compaction)`);
 }
 function pumpLifecycle() {
 	if (finished || !fs.existsSync(LIFECYCLE)) return;
