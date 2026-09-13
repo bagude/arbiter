@@ -698,7 +698,9 @@ function memoryIdsFetched() {
 }
 
 function compactionLedger() {
-	const probes = timeline.filter((m) => m.kind === "probe" && m.from === "supervisor").map((m, i) => ({ n: i + 1, head: String(m.body).replace(/\s+/g, " ").slice(0, 100) }));
+	// Probes are numbered in the order the orchestrator sent them (#1, #2, … as the
+	// transcript numbers them); the head is the request, which names the cases.
+	const probes = timeline.filter((m) => m.kind === "probe" && m.from === "orchestrator").map((m, i) => ({ n: i + 1, head: String(m.body).replace(/\s+/g, " ").slice(0, 100) }));
 	const workers = Object.values(state).filter((s) => s.role === "worker").map((s) => ({ id: s.name, status: s.done ? "completed" : s.busy ? "running" : "idle", description: s.description ?? "" }));
 	const oracle = lastOracleResult ? `${lastOracleResult.pass}/${lastOracleResult.total} (attempt ${lastOracleResult.attempt})` : null;
 	return ledgerLines({ probes, memoryIds: memoryIdsFetched(), workers, handles: tracker.handles.ids, oracle, time: timeStatus("orchestrator") });
@@ -734,6 +736,10 @@ function pumpCompaction() {
 		const instructions = composeInstructions({ ledger: compactionLedger(), checkpoint });
 		compaction = { ...compaction, phase: "compacting", id: `compact-${compactions.length + 1}`, startedAt: Date.now(), hadCheckpoint: got, instructionsChars: instructions.length };
 		log({ type: "compaction_start", msg: `${compaction.id}: ${compaction.boundary}; checkpoint ${got ? "#" + (checkpoint?.n ?? "?") : "none (waited " + Math.round((Date.now() - compaction.since) / 1000) + "s)"}; ${instructions.length} chars of instructions` });
+		// The exact message goes on disk so a reader can see what the summary was asked to keep.
+		try {
+			fs.appendFileSync(path.join(RUN, "compactions.jsonl"), JSON.stringify({ ts: Date.now(), id: compaction.id, type: "compact", boundary: compaction.boundary, checkpoint: got ? checkpoint?.n : null, customInstructions: instructions }) + "\n");
+		} catch {}
 		send("orchestrator", { id: compaction.id, type: "compact", customInstructions: instructions });
 	}
 }
