@@ -145,3 +145,15 @@ test("v3 bash: a variable the command line binds itself is not env indirection (
 	assert.equal(decide("bash", { command: "cat $HOMEDRIVE$HOMEPATH/x" }).ok, false);
 	assert.equal(decide("bash", { command: "ls $UNBOUND/x" }).ok, false);
 });
+
+test("memory store paths are refused through every route (retrieval goes through the tools)", () => {
+	const root = "C:/Users/x/arbiter/runs/.ws-1/ws-builder";
+	const cases = [
+		["read", { path: "C:/Users/x/arbiter/memory/records.jsonl" }],
+		["bash", { command: "cat C:/Users/x/arbiter/memory/records.jsonl" }],
+		["bash", { command: "cat ../../memory/records.jsonl" }],
+		["bash", { command: "cat $ARBITER_HOME/memory/records.jsonl" }],
+		["read", { path: "../../memory/index/abc.sqlite" }],
+	];
+	for (const [tool, input] of cases) assert.equal(decidePath({ root, tool, input }).ok, false, `${tool} ${JSON.stringify(input)}`);
+});
