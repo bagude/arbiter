@@ -33,9 +33,23 @@ Each run rebuilt the fixture store first (552 records; the seed brief shows R1 a
 
 All three passed on the first claim: the refusals now land on the orchestrator when it reaches its 4 000-character cap, the worker fetches real records inside the 2 000 reserve, and every finding cites R1 and R4 only, with the mislabelled R2 no longer offered as support. The cause is still filed as `observed` with a reproducing header check, which the oracle accepts by design. Explorer configs were raised afterwards to 16 000 / 5 000 reserved / 2 500 seed; the benchmark stays at 6 000 / 2 000 on purpose.
 
+## Explorer at the raised budget (2026-09-13T03-17-50: 16 000, 5 000 reserved, 2 500 seed)
+
+| | 6 000 budget (01-04-16) | 16 000 budget (03-17-50) |
+|---|---|---|
+| seed | 1 864 chars, 6 rows | 2 497 chars, 9 rows |
+| searches / gets | 2 / 1 | 0 / 2 |
+| delivered | 5 316 | 9 459 |
+| observations citing memory | 4 of 8 | 5 of 8 |
+| oracle | 14/14 | 14/14 |
+| wall s | 786 | 942 |
+
+With room to spare the orchestrator never searched: it fetched ten records straight from the seed (two gets, 6 962 characters) and delegated. The extra budget bought more reading, not more finding; all eight observations were again labelled `observed`. The judgement lint added afterwards flags one earlier title ("Feeds are stale …") for a verdict. The run was launched before the retention-policy commit, so its six open questions were retained as promoted and were re-filed as candidates by hand.
+
 ## What to change next
 
 1. (done) Reserve part of the budget for workers.
 2. (done) `worker_fetched` requires a get that delivered a record.
 3. (done) Citing R2 as support fails the benchmark.
-4. Slice 2 (working-context checkpoints and compaction at the spawn boundary) stays next; NVIDIA's SoL-Pi Online Context Compact is a candidate implementation to adapt rather than write from scratch.
+4. (done) Search returns 5 rows by default; lint `observed-reads-as-judgement`; retention promotes only observed findings the oracle reproduced, everything else waits as a candidate (`demote` op re-filed the earlier records).
+5. Slice 2 (working-context checkpoints and compaction at the spawn boundary) stays next; NVIDIA's SoL-Pi Online Context Compact is a candidate implementation to adapt rather than write from scratch.
