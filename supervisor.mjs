@@ -445,7 +445,16 @@ function deliver(to, text, why) {
 	log({ agent: to, type: "deliver", msg: `<- ${why}` });
 }
 
+// The compaction machinery runs event-driven: right after an assistant message ends
+// or a tool call starts, the orchestrator is between generations, which is the only
+// moment a compaction should be decided (a 500 ms poll caught that gap by luck only —
+// run 2026-09-13T13-55-16 crossed its boundary and finished 32 s later uncompacted).
 function handle(name, ev) {
+	handleEvent(name, ev);
+	if (name === "orchestrator" && (ev.type === "message_end" || ev.type === "tool_execution_start" || ev.type === "agent_settled")) tickCompaction();
+}
+
+function handleEvent(name, ev) {
 	const s = state[name];
 	switch (ev.type) {
 		case "response":
@@ -1366,7 +1375,7 @@ setInterval(pumpLifecycle, 200);
 // A bug in the compaction machinery must never take a run down: the run's other
 // pumps keep going and the failure is an audit line (found live: 2026-09-13T04-44-18
 // died at its first boundary on a TypeError inside this tick).
-setInterval(() => {
+function tickCompaction() {
 	try {
 		pumpCompaction();
 	} catch (err) {
@@ -1374,7 +1383,8 @@ setInterval(() => {
 		compaction = { phase: "idle" };
 		boundaryPending = null;
 	}
-}, 500);
+}
+setInterval(tickCompaction, 500); // fallback: the checkpoint deadline needs a clock
 setInterval(pumpChildTranscripts, 500);
 setInterval(checkIdle, 5000);
 setInterval(checkCaps, 5000);

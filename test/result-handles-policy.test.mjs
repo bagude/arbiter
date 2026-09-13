@@ -89,3 +89,8 @@ test("readSlice pages a file in bounded steps", () => {
 	assert.equal(total, fs.statSync(f).size);
 	assert.equal(readSlice(f, 10 ** 9).eof, true);
 });
+
+test("a recall_result page is never archived again", () => {
+	const msgs = [user("go"), assistant([call("r1", "recall_result", { id: "h_0123456789ab" })]), result("r1", "recall_result", lines(300)), assistant([]), assistant([])];
+	assert.equal(handleMessages(msgs, { archive: () => {} }).archived.length, 0);
+});
