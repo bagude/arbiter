@@ -11,8 +11,30 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { resolveLedger, buildIndex } from "../lib/memory-index.mjs";
+import { snapshotId } from "../lib/snapshot.mjs";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const TASKS = path.join(here, "..", "tasks");
+
+// A task with its own memory store (tasks/<task>/store/memory/records.jsonl, e.g.
+// the retrieval benchmark) has an oracle that reads the run's pinned index, snapshot
+// and budget ledger from the environment; give the verifier the same environment,
+// with a fixture ledger (oracle/verify-ledger.jsonl) standing in for a run's.
+function memoryEnvFor(name, taskDir) {
+	const log = path.join(taskDir, "store", "memory", "records.jsonl");
+	if (!fs.existsSync(log)) return {};
+	const index = buildIndex(path.join(taskDir, "store", "memory"), resolveLedger(log));
+	const data = path.join(taskDir, "ws-builder", "data");
+	const ledger = path.join(taskDir, "oracle", "verify-ledger.jsonl");
+	return {
+		ARBITER_MEMORY_INDEX: index,
+		ARBITER_SNAPSHOT: snapshotId({ name: `seed:${name}`, dir: fs.existsSync(data) ? data : path.join(taskDir, "ws-builder") }),
+		ARBITER_MEMORY_LEDGER: fs.existsSync(ledger) ? ledger : "",
+		ARBITER_MEMORY_BUDGET: "6000",
+		ARBITER_MEMORY_SCOPES: JSON.stringify(["global", `task:${name}`]),
+	};
+}
 
 function runHidden(taskDir, srcFile) {
 	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-verify-"));
@@ -55,12 +77,12 @@ function runProbe(taskDir) {
 // validate.mjs-shaped tasks (a Python or grounding oracle): the workspace is copied
 // whole, oracle/reference/* becomes src/, and validate.mjs must report pass === total;
 // the shipped workspace as-is must not.
-function runValidate(taskDir, withReference) {
+function runValidate(taskDir, withReference, env = {}) {
 	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-verify-"));
 	try {
 		fs.cpSync(path.join(taskDir, "ws-builder"), scratch, { recursive: true });
 		if (withReference) fs.cpSync(path.join(taskDir, "oracle", "reference"), path.join(scratch, "src"), { recursive: true });
-		const r = spawnSync(process.execPath, [path.join(taskDir, "oracle", "validate.mjs"), scratch], { encoding: "utf8", timeout: 120_000 });
+		const r = spawnSync(process.execPath, [path.join(taskDir, "oracle", "validate.mjs"), scratch], { encoding: "utf8", timeout: 120_000, env: { ...process.env, ...env } });
 		const last = (r.stdout ?? "").trim().split("\n").filter(Boolean).pop() ?? "";
 		try {
 			const v = JSON.parse(last);
@@ -73,12 +95,12 @@ function runValidate(taskDir, withReference) {
 	}
 }
 
-function runValidateProbe(taskDir) {
+function runValidateProbe(taskDir, env = {}) {
 	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-verify-"));
 	try {
 		fs.cpSync(path.join(taskDir, "ws-builder"), scratch, { recursive: true });
 		fs.cpSync(path.join(taskDir, "oracle", "reference"), path.join(scratch, "src"), { recursive: true });
-		const r = spawnSync(process.execPath, [path.join(taskDir, "oracle", "probe.mjs"), scratch], { encoding: "utf8", input: "[]", timeout: 120_000 });
+		const r = spawnSync(process.execPath, [path.join(taskDir, "oracle", "probe.mjs"), scratch], { encoding: "utf8", input: "[]", timeout: 120_000, env: { ...process.env, ...env } });
 		const last = (r.stdout ?? "").trim().split("\n").filter(Boolean).pop() ?? "";
 		try {
 			const parsed = JSON.parse(last);
@@ -103,9 +125,10 @@ function verifyValidateTask(name, taskDir) {
 		const r = spawnSync("uv", ["run", "--no-project", "--python", "3.13", "--with-requirements", path.join(taskDir, "ws-builder", "requirements.txt"), "python", make, path.join(taskDir, "ws-builder")], { cwd: taskDir, encoding: "utf8", timeout: 120_000 });
 		if (r.status !== 0) problems.push(`reference make.py failed: ${(r.stderr ?? "").slice(-300)}`);
 	}
-	const ref = runValidate(taskDir, true);
-	const stub = runValidate(taskDir, false);
-	const probe = runValidateProbe(taskDir);
+	const env = memoryEnvFor(name, taskDir);
+	const ref = runValidate(taskDir, true, env);
+	const stub = runValidate(taskDir, false, env);
+	const probe = runValidateProbe(taskDir, env);
 	if (ref.total === 0) problems.push("validator ran no checks");
 	if (ref.pass !== ref.total) problems.push(`reference fails ${ref.total - ref.pass}/${ref.total} checks: ${ref.summary.slice(0, 300)}`);
 	if (stub.total > 0 && stub.pass === stub.total) problems.push("stub workspace passes the validator");

@@ -1,0 +1,3 @@
+{"ts":0,"role":"supervisor","tool":"seed","chars":1800,"detail":"seeded brief"}
+{"ts":1,"role":"orchestrator","tool":"search","chars":900,"detail":"loader mapping header"}
+{"ts":2,"role":"worker:ref","tool":"get","chars":1400,"detail":"m_bench_r4,m_bench_r1"}

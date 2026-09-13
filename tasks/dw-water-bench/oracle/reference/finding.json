@@ -1,0 +1,10 @@
+{
+  "question": "Is TX water_bbl NULL because the source carries no water column, or because the loader drops it?",
+  "claim": "interpreted",
+  "conclusion": "The OG_LEASE_CYCLE header carries oil, gas, condensate and casinghead volume columns and no water column, while the loader mapping names LEASE_WATER_PROD_VOL as the source of water_bbl; the mapped field never exists in the file, so water_bbl is NULL at the source rather than dropped by the loader. The header check reproduces; whether a header that included LEASE_WATER_PROD_VOL would populate water_bbl has not been run.",
+  "settlement_criterion": "a loader run against an OG_LEASE_CYCLE file whose header includes LEASE_WATER_PROD_VOL populates water_bbl",
+  "evidence_refs": ["m_bench_r1", "m_bench_r4"],
+  "checks": [
+    { "kind": "header", "file": "data/tx/OG_LEASE_CYCLE.header.csv", "columns": ["LEASE_NO", "DISTRICT_NO", "CYCLE_YEAR_MONTH", "LEASE_OIL_PROD_VOL", "LEASE_GAS_PROD_VOL", "LEASE_COND_PROD_VOL", "LEASE_CSGD_PROD_VOL", "OPERATOR_NO", "OPERATOR_NAME"], "has_water_column": false }
+  ]
+}

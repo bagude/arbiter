@@ -1,0 +1,1 @@
+{ "state": "TX", "source": "OG_LEASE_CYCLE", "columns": { "oil_bbl": "LEASE_OIL_PROD_VOL", "gas_mcf": "LEASE_GAS_PROD_VOL", "water_bbl": "LEASE_WATER_PROD_VOL" } }
