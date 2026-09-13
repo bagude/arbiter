@@ -6,4 +6,4 @@ node_modules/
 tools/console.html
 tools/runs-data.json
 __pycache__/
-memory/index/
+**/memory/index/
