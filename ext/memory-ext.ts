@@ -26,7 +26,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "memory_search",
 		label: "Search memory",
-		description: `Search the run's memory (scopes ${cfg.scopes.join(", ")}). Returns up to 10 rows: id · scope · kind · claim · verified/unverified · snapshot · compatibility · summary · evidence count · date. Rows are references, not evidence; fetch ids with memory_get. Records from other data snapshots are hidden unless all_snapshots is true. Every call draws on the run's shared character budget of ${cfg.budget}.`,
+		description: `Search the run's memory (scopes ${cfg.scopes.join(", ")}). Returns 5 rows by default (limit up to 10): id · scope · kind · claim · verified/unverified · snapshot · compatibility · summary · evidence count · date. Each row costs about 200 characters of the budget. Rows are references, not evidence; fetch ids with memory_get. Records from other data snapshots are hidden unless all_snapshots is true. Every call draws on the run's shared character budget of ${cfg.budget}.`,
 		parameters: Type.Object({
 			query: Type.String({ description: "Free-text query; terms are matched against summaries and full text and ranked." }),
 			kinds: Type.Optional(Type.Array(Type.Union([Type.Literal("semantic"), Type.Literal("question"), Type.Literal("procedural"), Type.Literal("episodic")]))),

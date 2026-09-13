@@ -259,3 +259,30 @@ test("migrateDigests splits legacy digests into unreviewed records once", () => 
 	const again = migrateDigests(foldLog([legacy, ...first.appends, ...first.ops]), { ts: 10 });
 	assert.deepEqual(again, { appends: [], ops: [] });
 });
+
+test("retention promotes only observed findings the oracle reproduced; interpretations, hypotheses and questions wait as candidates", () => {
+	const summary = { runId: "r10", task: "dw-explore-real", reason: "SUCCESS: oracle passed", wallSec: 1, workers: 1, doneAttempts: 1, snapshot: "dw@1", config: { pattern: "orchestrator", repo: "dw", roles: {} } };
+	const timeline = [{ kind: "oracle", from: "supervisor", body: "Oracle run #1: 3/3" }];
+	const deliverable = {
+		observations: [
+			{ id: "O1", title: "NULL everywhere", observation: "all rows NULL", why_it_matters: "x", claim: "observed", query: "select 1", result: [[1]] },
+			{ id: "O2", title: "by source design", observation: "header lacks water", why_it_matters: "x", claim: "interpreted", settlement_criterion: "check the loader", query: "select 1", result: [[1]] },
+			{ id: "O3", title: "maybe stale feed", observation: "few rows", why_it_matters: "x", claim: "hypothesis", settlement_criterion: "compare pull dates", query: "select 1", result: [[1]] },
+			{ id: "O4", title: "unreproduced observed", observation: "n", why_it_matters: "x", claim: "observed", query: "select 2", result: [[2]] },
+		],
+		next_questions: ["is the feed stale?"],
+	};
+	const oracle = { details: [{ id: "O1", reproduced: true, query_sha: "a" }, { id: "O2", reproduced: true, query_sha: "b" }, { id: "O3", reproduced: true, query_sha: "c" }, { id: "O4", reproduced: false, query_sha: "d" }] };
+	const out = retainFromRun({ summary, timeline, deliverable, oracle, ts: 1 });
+	const byTitle = Object.fromEntries(out.filter((r) => r.kind === "semantic").map((r) => [r.summary, r.status]));
+	assert.deepEqual(byTitle, { "NULL everywhere": "promoted", "by source design": "candidate", "maybe stale feed": "candidate", "unreproduced observed": "candidate" });
+	assert.equal(out.find((r) => r.kind === "question").status, "candidate");
+	assert.equal(out.find((r) => r.kind === "episodic").status, "promoted");
+});
+
+test("foldLog applies a demote op: promoted becomes candidate with the reason kept", () => {
+	const r = rec({ id: "m_p", kind: "semantic", claim: "interpreted", settlement_criterion: "x", status: "promoted", source: "supervisor" });
+	const out = foldLog([r, { op: "demote", id: "m_p", ts: 2, reason: "policy" }]).get("m_p");
+	assert.equal(out.status, "candidate");
+	assert.equal(out.demoteReason, "policy");
+});

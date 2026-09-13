@@ -1,6 +1,10 @@
-# LINT — 2026-09-13T01:17:21.814Z
+# LINT — 2026-09-13T03:21:00.475Z
 
-3 finding(s): 0 to rule on, 3 informational.
+4 finding(s): 1 to rule on, 3 informational.
+
+## Rule on these
+
+- **observed-reads-as-judgement** m_0d7945720518 ([[scopes/repo-data-warehousers-real]]) — labelled observed but the title states a cause or a judgement; relabel as interpreted with a settlement criterion, or keep if the rows really show it: Feeds are stale: NM has only 9 rows in 2026-01 and TX's latest two months carry zero volume
 
 ## For information
 

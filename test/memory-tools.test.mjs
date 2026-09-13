@@ -93,3 +93,14 @@ test("a get charges the number of records it delivered", () => {
 	const lines = fs.readFileSync(ledger, "utf8").trim().split("\n").map((l) => JSON.parse(l));
 	assert.deepEqual(lines.map((l) => l.records), [1, 0]);
 });
+
+test("search returns five rows by default and up to ten on request", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-tools-"));
+	const log = path.join(dir, "records.jsonl");
+	const S = "dw@aaaaaaaaaaaa";
+	appendLog(log, Array.from({ length: 12 }, (_, i) => makeRecord({ id: `m_${String(i).padStart(12, "0")}`, scope: "repo:dw", kind: "semantic", source: "supervisor", claim: "observed", snapshot: S, ts: i, text: `TX water finding ${i} about the loader.` })));
+	const indexFile = buildIndex(dir, resolveLedger(log));
+	const cfg = readToolEnv({ ARBITER_MEMORY_INDEX: indexFile, ARBITER_MEMORY_SCOPES: JSON.stringify(["repo:dw"]), ARBITER_MEMORY_BUDGET: "20000", ARBITER_MEMORY_LEDGER: path.join(dir, "calls.jsonl"), ARBITER_SNAPSHOT: S });
+	assert.equal(searchTool(cfg, { query: "water loader" }, "orchestrator").rows, 5);
+	assert.equal(searchTool(cfg, { query: "water loader", limit: 10 }, "orchestrator").rows, 10);
+});

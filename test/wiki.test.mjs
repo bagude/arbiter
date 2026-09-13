@@ -126,3 +126,16 @@ test("lint flags observed records without verification", () => {
 	const findings = lint({ records, runSummaries: new Map(), now: 100 * DAY });
 	assert.deepEqual(findings.filter((x) => x.rule === "observed-unverified").map((x) => x.id), ["m_u"]);
 });
+
+test("lint flags observed findings whose title reads as a cause or a judgement, and Explorations shows candidate findings", () => {
+	const records = foldLog([
+		rec({ id: "m_c1", status: "promoted", scope: "repo:dw", kind: "semantic", claim: "observed", summary: "TX water is NULL by source design", text: "…", verification: { query_sha: "a", snapshot: "dw@1", reproduced: true, by: "oracle:r5#1" }, evidence: ["run:r5", "oracle:r5#1"], source: "supervisor", ts: 1 }),
+		rec({ id: "m_c2", status: "promoted", scope: "repo:dw", kind: "semantic", claim: "observed", summary: "Feeds are stale: NM has 9 rows in 2026-01", text: "…", verification: { query_sha: "b", snapshot: "dw@1", reproduced: true, by: "oracle:r5#1" }, evidence: ["run:r5", "oracle:r5#1"], source: "supervisor", ts: 2 }),
+		rec({ id: "m_ok", status: "promoted", scope: "repo:dw", kind: "semantic", claim: "observed", summary: "TX water_bbl is 100% NULL", text: "…", verification: { query_sha: "c", snapshot: "dw@1", reproduced: true, by: "oracle:r5#1" }, evidence: ["run:r5", "oracle:r5#1"], source: "supervisor", ts: 3 }),
+		rec({ id: "m_cand", status: "candidate", scope: "repo:dw", kind: "semantic", claim: "interpreted", settlement_criterion: "check the loader", summary: "Water missing because the loader maps a missing column", text: "…", evidence: ["run:r5", "oracle:r5#1"], source: "supervisor", ts: 4 }),
+	]);
+	const findings = lint({ records, runSummaries: new Map(), now: 100 * DAY });
+	assert.deepEqual(findings.filter((f) => f.rule === "observed-reads-as-judgement").map((f) => f.id).sort(), ["m_c1", "m_c2"]);
+	const page = buildPages({ records, runSummaries: new Map(), now: 100 * DAY }).get("scopes/repo-dw.md");
+	assert.match(page, /- \[interpreted · candidate\] Water missing because the loader maps a missing column \(\[\[runs\/r5\]\]\) — settles by: check the loader/);
+});
