@@ -113,3 +113,11 @@ test("the orchestrator's texts never name roles the run does not have", () => {
 	];
 	for (const text of all) assert.doesNotMatch(text, /BUILDER|CRITIC|your counterpart/, text);
 });
+
+test("compaction messages name the checkpoint tool and keep ids valid after a compaction", () => {
+	const orch = messages("orchestrator");
+	assert.match(orch.compaction.checkpointRequest(41000), /^\[SUPERVISOR\] Context checkpoint: your context is 41000 tokens/);
+	assert.match(orch.compaction.checkpointRequest(41000), /Call checkpoint now/);
+	assert.match(orch.compaction.done(41000, 9000, true), /^\[SUPERVISOR\] Context compacted: 41000 → 9000 tokens\. The summary above holds your checkpoint and the run ledger/);
+	assert.match(orch.compaction.done(41000, null, false), /→ fewer tokens\. The summary above holds no checkpoint \(none was written\) but the run ledger/);
+});

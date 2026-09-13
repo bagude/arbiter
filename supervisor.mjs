@@ -30,6 +30,7 @@ import { resolveLedger, buildIndex } from "./lib/memory-index.mjs";
 import { charge, spent } from "./lib/memory-budget.mjs";
 import { seededBrief } from "./lib/memory-brief.mjs";
 import { snapshotId } from "./lib/snapshot.mjs";
+import { contextTokensOf, decideCompaction, composeInstructions, ledgerLines } from "./lib/compaction.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -77,6 +78,8 @@ const GUARDS = [
 	path.join(here, "ext", "guards", "context-diet.ts"),
 	// Memory tools for workers (registers nothing unless the run is in search mode).
 	path.join(here, "ext", "memory-ext.ts"),
+	// Result handles (registers nothing unless CONFIG.guards.result_handles is set).
+	path.join(here, "ext", "guards", "result-handles.ts"),
 ];
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
@@ -283,6 +286,8 @@ function launch(name) {
 		path.join(here, "ext", "mail-ext.ts"),
 		"-e",
 		path.join(here, "ext", "memory-ext.ts"),
+		"-e",
+		path.join(here, "ext", "checkpoint-ext.ts"),
 		// In-band guards: sit on pi's tool_call edge, before the tool runs — the
 		// supervisor only sees calls afterwards, too late for a read of the oracle or a
 		// bash call with no timeout. Every role gets them; workers get copies under
@@ -335,6 +340,11 @@ function launch(name) {
 			ARBITER_MEMORY_WORKER_RESERVE: String(WORKER_RESERVE),
 			ARBITER_MEMORY_LEDGER: MEMORY_LEDGER,
 			ARBITER_SNAPSHOT: SNAPSHOT,
+			// Working context (slice 2): large tool results become handles archived under
+			// the run; the orchestrator can checkpoint before a supervisor-driven compaction.
+			ARBITER_RESULT_HANDLES: CONFIG.guards.result_handles ? JSON.stringify(CONFIG.guards.result_handles) : "",
+			ARBITER_RESULTS_DIR: path.join(RUN, "results"),
+			ARBITER_CHECKPOINT_FILE: PATTERN === "orchestrator" && name === "orchestrator" ? CHECKPOINT_FILE : "",
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -440,6 +450,7 @@ function handle(name, ev) {
 	switch (ev.type) {
 		case "response":
 			if (ev.id === "hello") s.ready = true;
+			if (typeof ev.id === "string" && ev.id.startsWith("compact-")) onCompactResponse(name, ev);
 			if (ev.success === false) log({ agent: name, type: "rpc_error", msg: `rpc error: ${ev.error ?? JSON.stringify(ev).slice(0, 200)}` });
 			break;
 		case "agent_start":
@@ -456,6 +467,7 @@ function handle(name, ev) {
 			// is readable without reconstructing it from interleaved tool lines.
 			if (name === "orchestrator" && pendingDecisionFor) {
 				log({ agent: "orchestrator", type: "decide", msg: `after ${pendingDecisionFor}: ${ev.toolName}${ev.toolName === "send_mail" ? `(${(ev.args ?? {}).kind})` : ""}` });
+				boundaryPending = `worker ${pendingDecisionFor} reported`;
 				pendingDecisionFor = null;
 			}
 			// The worker's actual brief exists nowhere in the lifecycle stream — those
@@ -513,6 +525,9 @@ function handle(name, ev) {
 			const m = ev.message;
 			if (m?.role === "assistant") {
 				s.cost += m.usage?.cost?.total ?? 0;
+				// Context as the model saw it on this request; feeds the compaction decision.
+				s.contextTokens = contextTokensOf(m.usage) || s.contextTokens || 0;
+				s.turnsSinceCompaction = (s.turnsSinceCompaction ?? 0) + 1;
 				lastActivity = Date.now();
 				if (m.stopReason === "error") log({ agent: name, type: "model_error", msg: `model error: ${m.errorMessage}` });
 				// send_mail is the ONLY way either agent reaches the other. A turn that
@@ -631,6 +646,91 @@ function pumpBus() {
 const lifecycleTail = new JsonlTailer(LIFECYCLE);
 const tracker = createTracker();
 let pendingDecisionFor = null; // worker id whose report the orchestrator has just received
+// Working context (slice 2): a phase boundary the orchestrator has just crossed, and
+// the compaction in progress, if any. See lib/compaction.mjs and pumpCompaction().
+let boundaryPending = null;
+let compaction = { phase: "idle" };
+const compactions = [];
+const CHECKPOINT_FILE = path.join(RUN, "checkpoint.jsonl");
+
+function lastCheckpoint() {
+	try {
+		const lines = fs.readFileSync(CHECKPOINT_FILE, "utf8").split("\n").filter(Boolean);
+		return lines.length ? JSON.parse(lines[lines.length - 1]) : null;
+	} catch {
+		return null;
+	}
+}
+
+function memoryIdsFetched() {
+	const ids = new Set();
+	for (const line of fs.existsSync(MEMORY_LEDGER) ? fs.readFileSync(MEMORY_LEDGER, "utf8").split("\n") : []) {
+		try {
+			const e = JSON.parse(line);
+			if (e.tool === "get") for (const id of String(e.detail).split(",")) if (id.startsWith("m_")) ids.add(id);
+		} catch {}
+	}
+	return [...ids];
+}
+
+function compactionLedger() {
+	const probes = timeline.filter((m) => m.kind === "probe" && m.from === "supervisor").map((m, i) => ({ n: i + 1, head: String(m.body).replace(/\s+/g, " ").slice(0, 100) }));
+	const workers = Object.values(state).filter((s) => s.role === "worker").map((s) => ({ id: s.name, status: s.done ? "completed" : s.busy ? "running" : "idle", description: s.description ?? "" }));
+	const oracle = lastOracleResult ? `${lastOracleResult.pass}/${lastOracleResult.total} (attempt ${lastOracleResult.attempt})` : null;
+	return ledgerLines({ probes, memoryIds: memoryIdsFetched(), workers, handles: tracker.handles.ids, oracle, time: timeStatus("orchestrator") });
+}
+
+// The compaction state machine, one step per tick. idle → (boundary + decision)
+// awaiting checkpoint → (checkpoint written or deadline, orchestrator idle) compacting
+// → (RPC response) idle. Only the orchestrator pattern; only above the cap.
+function pumpCompaction() {
+	if (finished || PATTERN !== "orchestrator" || !CAPS.compactAtTokens) return;
+	const o = state.orchestrator;
+	if (!o || !o.ready) return;
+	if (compaction.phase === "idle") {
+		if (!boundaryPending) return;
+		const d = decideCompaction({ contextTokens: o.contextTokens ?? 0, threshold: CAPS.compactAtTokens, compactions: compactions.length, maxCompactions: CAPS.maxCompactions, turnsSinceLast: o.turnsSinceCompaction ?? 0, minGapTurns: CAPS.minGapTurns, busy: Boolean(o.busy), workersLive: liveWorkers(state).length > 0 });
+		if (d.reason === "busy" || d.reason === "worker_live") return; // the boundary waits
+		const boundary = boundaryPending;
+		boundaryPending = null;
+		log({ type: "compaction_decision", msg: `${boundary}: context ${o.contextTokens ?? 0} tokens → ${d.compact ? "compact" : `skip (${d.reason})`}` });
+		if (!d.compact) return;
+		compaction = { phase: "awaiting", since: Date.now(), checkpointsBefore: tracker.checkpoints.length, boundary, tokensBefore: o.contextTokens ?? 0 };
+		deliver("orchestrator", M.compaction.checkpointRequest(o.contextTokens ?? 0), "checkpoint request");
+		return;
+	}
+	if (compaction.phase === "awaiting") {
+		const got = tracker.checkpoints.length > compaction.checkpointsBefore;
+		const timedOut = Date.now() - compaction.since > CAPS.checkpointWaitSec * 1000;
+		if (!(got || timedOut) || o.busy) return;
+		const checkpoint = got ? lastCheckpoint() : null;
+		const instructions = composeInstructions({ ledger: compactionLedger(), checkpoint });
+		compaction = { ...compaction, phase: "compacting", id: `compact-${compactions.length + 1}`, startedAt: Date.now(), hadCheckpoint: got, instructionsChars: instructions.length };
+		log({ type: "compaction_start", msg: `${compaction.id}: ${compaction.boundary}; checkpoint ${got ? "#" + (checkpoint?.n ?? "?") : "none (waited " + Math.round((Date.now() - compaction.since) / 1000) + "s)"}; ${instructions.length} chars of instructions` });
+		send("orchestrator", { id: compaction.id, type: "compact", customInstructions: instructions });
+	}
+}
+
+function onCompactResponse(name, ev) {
+	if (name !== "orchestrator" || compaction.phase !== "compacting" || ev.id !== compaction.id) return;
+	const o = state.orchestrator;
+	if (ev.success === false) {
+		log({ type: "compaction_failed", msg: `${compaction.id}: ${ev.error ?? "unknown error"}` });
+		compaction = { phase: "idle" };
+		return;
+	}
+	const data = ev.data ?? {};
+	const rec = { id: compaction.id, at: Number(((Date.now() - startedAt) / 1000).toFixed(1)), boundary: compaction.boundary, tokensBefore: data.tokensBefore ?? compaction.tokensBefore, tokensAfter: data.estimatedTokensAfter ?? null, summaryChars: String(data.summary ?? "").length, checkpoint: compaction.hadCheckpoint, waitedSec: Number(((compaction.startedAt - compaction.since) / 1000).toFixed(1)), instructionsChars: compaction.instructionsChars };
+	compactions.push(rec);
+	timeline.push({ ts: Date.now(), from: "supervisor", to: "orchestrator", kind: "compaction", body: `${rec.id}: ${rec.tokensBefore} → ${rec.tokensAfter ?? "?"} tokens (${rec.boundary}; checkpoint ${rec.checkpoint ? "yes" : "no"})` });
+	log({ type: "compaction", msg: `${rec.id}: ${rec.tokensBefore} → ${rec.tokensAfter ?? "?"} tokens; summary ${rec.summaryChars} chars` });
+	if (o) {
+		o.turnsSinceCompaction = 0;
+		if (typeof rec.tokensAfter === "number") o.contextTokens = rec.tokensAfter;
+	}
+	compaction = { phase: "idle" };
+	deliver("orchestrator", M.compaction.done(rec.tokensBefore, rec.tokensAfter, rec.checkpoint), "compaction done");
+}
 function pumpLifecycle() {
 	if (finished || !fs.existsSync(LIFECYCLE)) return;
 	for (const { ev, data } of lifecycleTail.readNew()) {
@@ -848,6 +948,7 @@ function handleApproval() {
 	const why = M.gate[verdict.reason](verdict.sinceEditMs);
 	const label = { no_probe: "approval without probe", no_src: "approval error", stale: "approval stale (src changed since probe)", too_soon: "approval too soon after edit" }[verdict.reason];
 	deliver(VERIFIER, why, label);
+	boundaryPending = `approval rejected (${verdict.reason})`;
 }
 
 // ---------- oracle (host-side; agents cannot touch it) ----------
@@ -953,6 +1054,7 @@ function runOracle() {
 				// workspace was done and was wrong. Its remedy is its own two instruments,
 				// probes and a worker, not interrogating a counterpart that does not exist.
 				deliver(VERIFIER, M.oracle.failedVerifier(verdict, CAPS.doneAttempts - doneAttempts), "oracle verdict");
+				boundaryPending = `oracle failed (${pass}/${total})`;
 			}
 		}
 	} catch (err) {
@@ -1111,6 +1213,9 @@ function finish(reason) {
 		guards: tracker.guards,
 		caps: CAPS,
 		task: TASK_NAME,
+		compactions,
+		handles: tracker.handles,
+		checkpoints: tracker.checkpoints,
 		verifier: PDEF.verifier,
 	});
 	summary.snapshot = SNAPSHOT;
@@ -1251,6 +1356,7 @@ setInterval(pumpBus, 200);
 // Faster than the bus poll for the lifecycle (a spawn/report is the run's structure)
 // and slower for transcripts (whole turns, and a readdir per tick).
 setInterval(pumpLifecycle, 200);
+setInterval(pumpCompaction, 500);
 setInterval(pumpChildTranscripts, 500);
 setInterval(checkIdle, 5000);
 setInterval(checkCaps, 5000);
