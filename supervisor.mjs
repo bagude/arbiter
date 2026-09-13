@@ -183,7 +183,7 @@ let MEMORY_INDEX = "";
 let MEMORY_REVISION = "";
 let MEMORY_SEED_CHARS = 0;
 const MEMORY_LEDGER = path.join(RUN, "memory-calls.jsonl");
-const MEMORY_SCOPES = ["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : [])];
+const MEMORY_SCOPES = [...new Set(["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : []), ...(CONFIG.memory?.extraScopes ?? [])])];
 const RETRIEVAL_BUDGET = CONFIG.memory?.retrievalChars ?? 6000;
 const WORKER_RESERVE = CONFIG.memory?.workerReserveChars ?? 0;
 if (MEMORY_MODE === "inject") {

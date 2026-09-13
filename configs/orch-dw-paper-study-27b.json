@@ -1,0 +1,6 @@
+{ "task": "dw-paper-study", "pattern": "orchestrator", "repo": "research-162910",
+  "memory": { "mode": "search", "budgetChars": 2500, "retrievalChars": 16000, "workerReserveChars": 5000 },
+  "guards": { "result_handles": true, "call_args": true, "context_diet": { "ageTools": [] } },
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
+  "caps": { "toolCalls": 300, "wallSec": 2400, "usd": 5, "doneAttempts": 5, "bashTimeoutSec": 120, "compactAtTokens": 30000, "maxCompactions": 3 },
+  "_note": "Research campaign phase A: a cited reading of SPE 162910 (paper text mounted read-only from tasks/research-162910/paper). Oracle = quotes verify on the page, checks re-run, claim structure." }

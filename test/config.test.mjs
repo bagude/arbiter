@@ -82,3 +82,11 @@ test("memory search mode carries a worker reserve, default 2000, capped below re
 	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", retrievalChars: 4000, workerReserveChars: 1000 } }), env: {} }).memory.workerReserveChars, 1000);
 	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", retrievalChars: 4000, workerReserveChars: 4000 } }), env: {} }), /workerReserveChars/);
 });
+
+test("memory.extraScopes are read scopes, validated", () => {
+	const roles = { builder: { provider: "p", model: "m" }, critic: { provider: "p", model: "m" } };
+	const c = loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", extraScopes: ["repo:data-warehousers-real"] } }), env: {} });
+	assert.deepEqual(c.memory.extraScopes, ["repo:data-warehousers-real"]);
+	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search" } }), env: {} }).memory.extraScopes, undefined);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", extraScopes: ["nope"] } }), env: {} }), /extraScopes/);
+});

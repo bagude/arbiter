@@ -1,0 +1,48 @@
+{
+  "paper": "SPE 162910",
+  "claims": [
+    {
+      "id": "C1",
+      "claim": "observed",
+      "text": "The paper positions the Arps hyperbolic and exponential relations as the industry standard for EUR estimation for more than 80 years.",
+      "quotes": [
+        { "page": 1, "text": "The Arps relations (hyperbolic and exponential relations) have been the standard for evaluating estimated ultimate recovery (EUR) in petroleum engineering applications for more than 80 years." }
+      ],
+      "checks": []
+    },
+    {
+      "id": "C2",
+      "claim": "observed",
+      "text": "The paper states that the newer time-rate relations (PLE, SE, LGM, Duong) are empirical, with no direct link to reservoir engineering theory other than by analogy.",
+      "quotes": [
+        { "page": 3, "text": "each/all of these models can only be described as empirical, there is no direct link with reservoir engineering theory, other than via analogy" }
+      ],
+      "checks": []
+    },
+    {
+      "id": "C3",
+      "claim": "observed",
+      "text": "The paper attributes reserve overestimates in transient-flow data to misapplied Arps relations, specifically unconstrained hyperbolic extrapolation with b greater than 1.",
+      "quotes": [
+        { "page": 1, "text": "Misapplications of the Arps' relations to production data exhibiting long-term, transient flow generally results in significant overestimates of reserves" }
+      ],
+      "checks": []
+    },
+    {
+      "id": "C4",
+      "claim": "interpreted",
+      "text": "Appendix A's modified hyperbolic model is Arps hyperbolic q(t) = qi / (1 + b Di t)^(1/b) before t_exp and an exponential with a constant terminal decline after it; evaluated at qi = 1000, Di = 0.5, b = 1.2, t = 2 the hyperbolic branch gives q = 518.38.",
+      "quotes": [
+        { "page": 59, "text": "This relation has two (2) trends — an \"initial\" trend that is hyperbolic (i.e., for t<texp), and a \"final\" trend that is exponential (i.e., for t> texp)" }
+      ],
+      "checks": [
+        { "id": "K1", "code": "import json\nqi, Di, b, t = 1000.0, 0.5, 1.2, 2.0\nq = qi / (1 + b*Di*t) ** (1.0/b)\nprint(json.dumps({\"q\": round(q, 4)}))", "expect": { "q": 518.3794 } }
+      ],
+      "settlement_criterion": "fit the modified hyperbolic form to a warehouse well's monthly rates and confirm a hyperbolic-then-exponential switch improves the fit over a single hyperbolic"
+    }
+  ],
+  "next_questions": [
+    "Reconstruct the power-law exponential and stretched exponential forms from pages 59-60 and the nomenclature on page 10, and evaluate each at chosen values so later rounds can fit them.",
+    "Which diagnostic functions (D(t), b(t), beta-derivative, q/Gp) does the paper use to choose between models, and can they be computed from monthly rates alone?"
+  ]
+}
