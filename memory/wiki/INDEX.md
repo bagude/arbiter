@@ -1,6 +1,6 @@
 # Arbiter memory wiki
 
-Compiled 2026-09-13T03:34:18.375Z from 253 live record(s) across 17 scope(s), 66 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
+Compiled 2026-09-13T05:43:43.073Z from 254 live record(s) across 17 scope(s), 68 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
 
 ## Repos
 
@@ -17,7 +17,7 @@ Compiled 2026-09-13T03:34:18.375Z from 253 live record(s) across 17 scope(s), 66
 - [[scopes/task-lru]] — 1 fact, 0 candidates, last run: 2026-09-12T06-13-34 SUCCESS
 - [[scopes/task-mdtable]] — 2 facts, 0 candidates, last run: 2026-09-12T07-14-49 SUCCESS
 - [[scopes/task-orbit]] — 1 fact, 0 candidates, last run: 2026-09-11T21-35-14 SUCCESS
-- [[scopes/task-pathnorm]] — 2 facts, 1 candidate, last run: 2026-09-12T07-25-47 SUCCESS
+- [[scopes/task-pathnorm]] — 3 facts, 1 candidate, last run: 2026-09-12T07-25-47 SUCCESS
 - [[scopes/task-review-guard]] — 11 facts, 0 candidates, last run: 2026-09-12T08-24-41 SUCCESS
 - [[scopes/task-run-analysis]] — 4 facts, 0 candidates, last run: 2026-09-12T05-30-35 SUCCESS
 - [[scopes/task-semver]] — 1 fact, 0 candidates, last run: 2026-09-12T06-51-06 SUCCESS
@@ -36,6 +36,8 @@ Compiled 2026-09-13T03:34:18.375Z from 253 live record(s) across 17 scope(s), 66
 
 ## Runs
 
+- [[runs/2026-09-13T05-39-16]] — SUCCESS, pathnorm
+- [[runs/2026-09-13T05-35-01]] — SUCCESS, pathnorm
 - [[runs/2026-09-13T03-17-50]] — SUCCESS, dw-explore-real
 - [[runs/2026-09-13T02-36-47]] — SUCCESS, dw-water-bench
 - [[runs/2026-09-13T02-34-58]] — SUCCESS, dw-water-bench
