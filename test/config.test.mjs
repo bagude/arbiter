@@ -48,8 +48,8 @@ test("guards: context_diet is off by default, `true` means defaults, an object p
 test("memory: off by default, `true` means the default budget, an object passes through, junk is rejected", () => {
 	const roles = { builder: { provider: "llama.cpp", model: "qwen3-27b" } };
 	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles }), env: {} }).memory, null);
-	assert.deepEqual(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: true }), env: {} }).memory, { budgetChars: 2000 });
-	assert.deepEqual(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { budgetChars: 500 } }), env: {} }).memory, { budgetChars: 500 });
+	assert.deepEqual(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: true }), env: {} }).memory, { budgetChars: 2000, mode: "inject" });
+	assert.deepEqual(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { budgetChars: 500 } }), env: {} }).memory, { budgetChars: 500, mode: "inject" });
 	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: false }), env: {} }).memory, null);
 	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: "on" }), env: {} }), /memory/);
 });
@@ -65,4 +65,13 @@ test("repo: absent means null; a name is kept; junk is rejected", () => {
 	assert.equal(loadConfig({ configPath: tmpConfig(base), env: {} }).repo, null);
 	assert.equal(loadConfig({ configPath: tmpConfig({ ...base, repo: "data-warehousers" }), env: {} }).repo, "data-warehousers");
 	assert.throws(() => loadConfig({ configPath: tmpConfig({ ...base, repo: "../x" }), env: {} }), /repo/);
+});
+
+test("memory search mode carries retrievalChars and memoryDir; other modes are rejected", () => {
+	const roles = { builder: { provider: "p", model: "m" }, critic: { provider: "p", model: "m" } };
+	const c = loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", budgetChars: 1500 }, memoryDir: "tasks/x/store" }), env: {} });
+	assert.deepEqual(c.memory, { budgetChars: 1500, mode: "search", retrievalChars: 6000 });
+	assert.equal(c.memoryDir, "tasks/x/store");
+	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles }), env: {} }).memoryDir, null);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "graph" } }), env: {} }), /memory\.mode/);
 });

@@ -26,6 +26,10 @@ import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubage
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
+import { resolveLedger, buildIndex } from "./lib/memory-index.mjs";
+import { charge, spent } from "./lib/memory-budget.mjs";
+import { seededBrief } from "./lib/memory-brief.mjs";
+import { snapshotId } from "./lib/snapshot.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -71,6 +75,8 @@ const GUARDS = [
 	path.join(here, "ext", "guards", "bash-timeout.ts"),
 	// Opt-in (registers nothing unless the run config enables it — see CONFIG.guards).
 	path.join(here, "ext", "guards", "context-diet.ts"),
+	// Memory tools for workers (registers nothing unless the run is in search mode).
+	path.join(here, "ext", "memory-ext.ts"),
 ];
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
@@ -121,6 +127,14 @@ fs.cpSync(path.join(TASK, "ws-builder"), WS.workspace, { recursive: true });
 // reads through and refuses writes there.
 const MOUNTS = installMounts(WS.workspace, readMounts(TASK, here));
 if (MOUNTS.length) log({ type: "mounts", msg: `mounted: ${MOUNTS.map((m) => `${path.relative(WS.workspace, m.path)} -> ${m.target}`).join(", ")}` });
+// The data this run's claims are made against, as one id (lib/snapshot.mjs): the
+// first mount's target for a mounted task, else the seed workspace's data. Stamped
+// on every record retention writes and handed to the memory tools so search can
+// tell a finding on this data from one on another pull.
+const SNAPSHOT = MOUNTS.length
+	? snapshotId({ name: path.basename(MOUNTS[0].target), dir: MOUNTS[0].target })
+	: snapshotId({ name: `seed:${TASK_NAME}`, dir: fs.existsSync(path.join(TASK, "ws-builder", "data")) ? path.join(TASK, "ws-builder", "data") : path.join(TASK, "ws-builder") });
+log({ type: "snapshot", msg: SNAPSHOT });
 if (SOLO) {
 	// Task READMEs describe a counterpart that does not exist in a solo run; a small
 	// model reading both the README and the prompt should not have to reconcile them.
@@ -153,21 +167,54 @@ for (const role of PDEF.roles) {
 // prompt. What was injected is recorded in summary.json so the run is reproducible;
 // a run with memory off is told nothing. The wiki is recompiled first so a run
 // always reads the current log.
-const MEMORY = memoryPaths(here);
+// A config may point memory at another directory (the benchmark's fixture store), so
+// a run never pollutes the real ledger. Relative to the arbiter checkout.
+const MEMORY_HOME = CONFIG.memoryDir ? path.resolve(here, CONFIG.memoryDir) : here;
+const MEMORY = memoryPaths(MEMORY_HOME);
+const MEMORY_MODE = CONFIG.memory ? (CONFIG.memory.mode ?? "inject") : "off";
 const MEMORY_INJECTED = [];
 let MEMORY_TEXT = "";
-if (CONFIG.memory) {
-	const scopes = ["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : [])];
-	const { text, ids } = recall({ pages: renderAll(here), scopes, budgetChars: CONFIG.memory.budgetChars });
+let MEMORY_INDEX = "";
+let MEMORY_REVISION = "";
+let MEMORY_SEED_CHARS = 0;
+const MEMORY_LEDGER = path.join(RUN, "memory-calls.jsonl");
+const MEMORY_SCOPES = ["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : [])];
+const RETRIEVAL_BUDGET = CONFIG.memory?.retrievalChars ?? 6000;
+if (MEMORY_MODE === "inject") {
+	const { text, ids } = recall({ pages: renderAll(MEMORY_HOME), scopes: MEMORY_SCOPES, budgetChars: CONFIG.memory.budgetChars });
 	if (text) {
 		for (const role of Object.keys(prompts)) prompts[role] = `${prompts[role]}\n\n${text}`;
 		MEMORY_INJECTED.push(...ids);
 		MEMORY_TEXT = text; // workers get the same excerpt (see writeWorkerDefinition below)
 	}
+} else if (MEMORY_MODE === "search") {
+	// Build (or reuse) the index for the current ledger revision before any agent
+	// exists, and pin it for the run. renderAll keeps the wiki current for humans.
+	renderAll(MEMORY_HOME);
+	const resolved = resolveLedger(MEMORY.log);
+	MEMORY_REVISION = resolved.revision;
+	MEMORY_INDEX = buildIndex(MEMORY.dir, resolved);
+	const questions = [...resolved.records.values()]
+		.filter((r) => r.kind === "question" && r.status !== "tombstoned" && MEMORY_SCOPES.includes(r.scope))
+		.sort((a, b) => b.ts - a.ts)
+		.slice(0, 5)
+		.map((r) => r.text);
+	const specTitle = (/^#\s*(.+)$/m.exec(taskContext) ?? [])[1] ?? TASK_NAME;
+	const brief = seededBrief({ indexFile: MEMORY_INDEX, scopes: MEMORY_SCOPES, snapshot: SNAPSHOT, query: `${specTitle} ${questions.join(" ")}`, budgetChars: CONFIG.memory.budgetChars ?? 2000, revision: MEMORY_REVISION });
+	for (const role of Object.keys(prompts)) prompts[role] = `${prompts[role]}\n\n${brief.text}`;
+	MEMORY_INJECTED.push(...brief.ids);
+	MEMORY_TEXT = brief.text;
+	MEMORY_SEED_CHARS = brief.chars;
+	fs.writeFileSync(MEMORY_LEDGER, "");
+	charge(MEMORY_LEDGER, { role: "supervisor", tool: "seed", chars: brief.chars, detail: `seeded brief, ${brief.ids.length} of ${brief.matched} matches` });
+	log({ type: "memory_index", msg: `index ${MEMORY_REVISION} (${resolved.records.size} records); seed ${brief.chars} chars, ${brief.ids.length} rows; retrieval budget ${RETRIEVAL_BUDGET}` });
+	// Oracle children inherit these from the supervisor's environment; launch() sets
+	// them for every agent process explicitly.
+	Object.assign(process.env, { ARBITER_MEMORY_INDEX: MEMORY_INDEX, ARBITER_MEMORY_SCOPES: JSON.stringify(MEMORY_SCOPES), ARBITER_MEMORY_BUDGET: String(RETRIEVAL_BUDGET), ARBITER_MEMORY_LEDGER: MEMORY_LEDGER, ARBITER_SNAPSHOT: SNAPSHOT });
 }
 // Logged at launch (not only in summary.json at finish) so a live run shows what
 // its agents were told; the system prompt itself is not in any stream we record.
-log({ type: "memory", msg: CONFIG.memory ? `memory recall: ${MEMORY_INJECTED.length} record(s) injected${MEMORY_INJECTED.length ? `: ${MEMORY_INJECTED.join(", ")}` : ""}` : "memory recall: off" });
+log({ type: "memory", msg: CONFIG.memory ? `memory ${MEMORY_MODE}: ${MEMORY_INJECTED.length} record(s) ${MEMORY_MODE === "search" ? "seeded" : "injected"}${MEMORY_INJECTED.length ? `: ${MEMORY_INJECTED.join(", ")}` : ""}` : "memory recall: off" });
 
 // Role asymmetry is enforced by capability, not by prompt. A task may narrow
 // BUILDER's tools further (e.g. no bash for a read-only review task) via
@@ -191,6 +238,7 @@ let lastActivity = Date.now();
 let finished = false;
 
 let lastProbeHash = null; // hash of ws-builder/src as of CRITIC's most recent probe
+let lastOracleResult = null; // the validator's parsed JSON from the latest oracle run (details feed retention)
 // Walks subdirectories. The flat version read every entry of src/ with readFileSync and
 // threw EISDIR the moment anything created a src/lib/ — survivable in runProbe's try, but
 // the gate and the quiescence interval call this with no catch, so one worker deciding to
@@ -232,6 +280,8 @@ function launch(name) {
 		"-ne",
 		"-e",
 		path.join(here, "ext", "mail-ext.ts"),
+		"-e",
+		path.join(here, "ext", "memory-ext.ts"),
 		// In-band guards: sit on pi's tool_call edge, before the tool runs — the
 		// supervisor only sees calls afterwards, too late for a read of the oracle or a
 		// bash call with no timeout. Every role gets them; workers get copies under
@@ -276,6 +326,13 @@ function launch(name) {
 			// options (possibly {}) turns it on for every role in the run.
 			ARBITER_CONTEXT_DIET: CONFIG.guards.context_diet ? JSON.stringify(CONFIG.guards.context_diet) : "",
 			ARBITER_MOUNTS: MOUNTS.length ? JSON.stringify(MOUNTS) : "",
+			// Memory tools (ext/memory-ext.ts): empty index = the extension registers
+			// nothing. Scopes and budget are enforced inside the tools on every call.
+			ARBITER_MEMORY_INDEX: MEMORY_INDEX,
+			ARBITER_MEMORY_SCOPES: JSON.stringify(MEMORY_SCOPES),
+			ARBITER_MEMORY_BUDGET: String(RETRIEVAL_BUDGET),
+			ARBITER_MEMORY_LEDGER: MEMORY_LEDGER,
+			ARBITER_SNAPSHOT: SNAPSHOT,
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -832,6 +889,8 @@ function runOracle() {
 			if (result && typeof result.pass === "number" && typeof result.total === "number") {
 				({ pass, total } = result);
 				note = result.summary ? ` ${result.summary}` : "";
+				lastOracleResult = { ...result, attempt: doneAttempts };
+				fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify(result, null, 2));
 			} else {
 				note = " validator produced no parseable result — treating as 0/0 (fail-closed).";
 			}
@@ -1052,17 +1111,35 @@ function finish(reason) {
 		task: TASK_NAME,
 		verifier: PDEF.verifier,
 	});
-	summary.memory = { recall: CONFIG.memory ? CONFIG.memory : null, injected: MEMORY_INJECTED };
+	summary.snapshot = SNAPSHOT;
+	summary.memory = {
+		mode: MEMORY_MODE,
+		recall: CONFIG.memory ? CONFIG.memory : null,
+		injected: MEMORY_INJECTED,
+		revision: MEMORY_REVISION || null,
+		seedChars: MEMORY_SEED_CHARS,
+		budget: MEMORY_MODE === "search" ? RETRIEVAL_BUDGET : null,
+		calls: MEMORY_MODE === "search" ? { ...tracker.memory, ledger: spent(MEMORY_LEDGER) } : null,
+	};
 	fs.writeFileSync(path.join(RUN, "summary.json"), JSON.stringify(summary, null, 2));
 	fs.writeFileSync(path.join(RUN, "transcript.md"), renderTranscript({ runId, reason, startedAt, timeline, pattern: PATTERN }));
 	// Retention happens for every run, recall or not: the harness learns from each
 	// outcome; only what an agent was told is the experimental variable.
 	try {
-		appendLog(MEMORY.log, retainFromRun({ summary, timeline }));
+		// The explorer's deliverable, when there is one, becomes one record per
+		// observation with the oracle's per-observation verification stamped on it.
+		let deliverable = null;
+		try {
+			const f = path.join(WS.workspace, "src", "exploration.json");
+			if (fs.existsSync(f)) deliverable = JSON.parse(fs.readFileSync(f, "utf8"));
+		} catch {
+			deliverable = null;
+		}
+		appendLog(MEMORY.log, retainFromRun({ summary, timeline, deliverable, oracle: lastOracleResult }));
 		// Fold what this run restated into what earlier runs already established.
 		const ops = consolidate(foldLog(readLog(MEMORY.log)));
 		if (ops.length) appendLog(MEMORY.log, ops);
-		renderAll(here);
+		renderAll(MEMORY_HOME);
 	} catch (err) {
 		log({ type: "warn", msg: `memory retention failed: ${err?.message ?? err}` });
 	}
