@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { makeRecord, foldLog, readLog, appendLog, retainFromRun, consolidate } from "../lib/memory.mjs";
+import { makeRecord, foldLog, readLog, appendLog, retainFromRun, consolidate, CLAIMS, summarize } from "../lib/memory.mjs";
 
 const rec = (over) =>
 	makeRecord({ scope: "task:orbit", kind: "episodic", text: "x", evidence: [], confidence: 0.5, source: "human", ts: 1000, ...over });
@@ -156,4 +156,45 @@ test("retainFromRun keeps a validator's KPI digest on the episodic record", () =
 	assert.equal(ep.scope, "repo:data-warehousers");
 	const plain = retainFromRun({ summary, timeline: [{ kind: "oracle", from: "supervisor", to: "both", body: "Oracle run #1: 48/48 passed." }], ts: 5 })[0];
 	assert.ok(!/KPI digest/.test(plain.text));
+});
+
+test("makeRecord defaults claim by kind and validates claims and criteria", () => {
+	assert.deepEqual(CLAIMS, ["observed", "interpreted", "hypothesis", "unreviewed", "procedure", "episode"]);
+	assert.equal(rec({ kind: "episodic" }).claim, "episode");
+	assert.equal(rec({ kind: "procedural" }).claim, "procedure");
+	assert.equal(rec({ kind: "semantic" }).claim, "unreviewed");
+	assert.equal(rec({ kind: "question", claim: "hypothesis", settlement_criterion: "a loader inspection" }).claim, "hypothesis");
+	assert.throws(() => rec({ kind: "semantic", claim: "certain" }), /claim/);
+	assert.throws(() => rec({ kind: "semantic", claim: "interpreted" }), /settlement_criterion/);
+	assert.throws(() => rec({ kind: "semantic", claim: "hypothesis", settlement_criterion: "  " }), /settlement_criterion/);
+	const ok = rec({ kind: "semantic", claim: "observed", text: "TX water_bbl is NULL in every row. The loader never sees it.", snapshot: "data-warehousers@abc123def456" });
+	assert.equal(ok.settlement_criterion, undefined);
+	assert.equal(ok.snapshot, "data-warehousers@abc123def456");
+	assert.equal(ok.summary, "TX water_bbl is NULL in every row.");
+	assert.equal(ok.verification, undefined);
+	assert.equal(ok.superseded_by, undefined);
+});
+
+test("summarize keeps the first sentence within 160 chars", () => {
+	assert.equal(summarize("Short one. Second sentence."), "Short one.");
+	const long = "x".repeat(400);
+	assert.equal(summarize(long).length, 160);
+	assert.equal(summarize("  padded  "), "padded");
+});
+
+test("foldLog applies update ops for claim, verification, superseded_by, snapshot and summary", () => {
+	const r = rec({ id: "m_a", kind: "semantic", claim: "observed", text: "t" });
+	const folded = foldLog([
+		r,
+		{ op: "update", id: "m_a", ts: 2, claim: "interpreted", settlement_criterion: "check the loader", verification: { query_sha: "abcd", snapshot: "s@1", reproduced: true, by: "oracle:r1#1" }, snapshot: "s@1", summary: "new summary" },
+		{ op: "update", id: "m_a", ts: 3, superseded_by: "m_b" },
+		{ op: "update", id: "m_a", ts: 4, claim: "not-a-claim" },
+	]);
+	const out = folded.get("m_a");
+	assert.equal(out.claim, "interpreted", "an invalid claim in an op is ignored");
+	assert.equal(out.settlement_criterion, "check the loader");
+	assert.deepEqual(out.verification, { query_sha: "abcd", snapshot: "s@1", reproduced: true, by: "oracle:r1#1" });
+	assert.equal(out.snapshot, "s@1");
+	assert.equal(out.summary, "new summary");
+	assert.equal(out.superseded_by, "m_b");
 });
