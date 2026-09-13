@@ -521,9 +521,13 @@ function handle(name, ev) {
 				if (ev.isError || !/Agent ID:\s*\S/.test(text)) dropUnclaimedSubagentEntry(timeline, ev.toolCallId);
 			}
 			break;
+		case "message_start":
+			if (ev.message?.role === "assistant") s.generating = true;
+			break;
 		case "message_end": {
 			const m = ev.message;
 			if (m?.role === "assistant") {
+				s.generating = false;
 				s.cost += m.usage?.cost?.total ?? 0;
 				// Context as the model saw it on this request; feeds the compaction decision.
 				s.contextTokens = contextTokensOf(m.usage) || s.contextTokens || 0;
@@ -689,8 +693,11 @@ function pumpCompaction() {
 	if (!o || !o.ready) return;
 	if (compaction.phase === "idle") {
 		if (!boundaryPending) return;
-		const d = decideCompaction({ contextTokens: o.contextTokens ?? 0, threshold: CAPS.compactAtTokens, compactions: compactions.length, maxCompactions: CAPS.maxCompactions, turnsSinceLast: o.turnsSinceCompaction ?? 0, minGapTurns: CAPS.minGapTurns, busy: Boolean(o.busy), workersLive: liveWorkers(state).length > 0 });
-		if (d.reason === "busy" || d.reason === "worker_live") return; // the boundary waits
+		const d = decideCompaction({ contextTokens: o.contextTokens ?? 0, threshold: CAPS.compactAtTokens, compactions: compactions.length, maxCompactions: CAPS.maxCompactions, turnsSinceLast: o.turnsSinceCompaction ?? 0, minGapTurns: CAPS.minGapTurns, busy: Boolean(o.generating), workersLive: liveWorkers(Object.values(state)).length > 0 });
+		// pi's compact() aborts the running turn itself, so the orchestrator need not be
+		// idle — only not mid-generation (an abort there throws away a long brief) and
+		// not waiting on a live worker. Both make the boundary wait, not lapse.
+		if (d.reason === "busy" || d.reason === "worker_live") return;
 		const boundary = boundaryPending;
 		boundaryPending = null;
 		log({ type: "compaction_decision", msg: `${boundary}: context ${o.contextTokens ?? 0} tokens → ${d.compact ? "compact" : `skip (${d.reason})`}` });
@@ -702,7 +709,7 @@ function pumpCompaction() {
 	if (compaction.phase === "awaiting") {
 		const got = tracker.checkpoints.length > compaction.checkpointsBefore;
 		const timedOut = Date.now() - compaction.since > CAPS.checkpointWaitSec * 1000;
-		if (!(got || timedOut) || o.busy) return;
+		if (!(got || timedOut) || o.generating || liveWorkers(Object.values(state)).length > 0) return;
 		const checkpoint = got ? lastCheckpoint() : null;
 		const instructions = composeInstructions({ ledger: compactionLedger(), checkpoint });
 		compaction = { ...compaction, phase: "compacting", id: `compact-${compactions.length + 1}`, startedAt: Date.now(), hadCheckpoint: got, instructionsChars: instructions.length };
@@ -1356,7 +1363,18 @@ setInterval(pumpBus, 200);
 // Faster than the bus poll for the lifecycle (a spawn/report is the run's structure)
 // and slower for transcripts (whole turns, and a readdir per tick).
 setInterval(pumpLifecycle, 200);
-setInterval(pumpCompaction, 500);
+// A bug in the compaction machinery must never take a run down: the run's other
+// pumps keep going and the failure is an audit line (found live: 2026-09-13T04-44-18
+// died at its first boundary on a TypeError inside this tick).
+setInterval(() => {
+	try {
+		pumpCompaction();
+	} catch (err) {
+		log({ type: "compaction_error", msg: `pumpCompaction: ${err?.stack ?? err}`.slice(0, 600) });
+		compaction = { phase: "idle" };
+		boundaryPending = null;
+	}
+}, 500);
 setInterval(pumpChildTranscripts, 500);
 setInterval(checkIdle, 5000);
 setInterval(checkCaps, 5000);

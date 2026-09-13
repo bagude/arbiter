@@ -1,0 +1,5 @@
+{ "task": "pathnorm", "pattern": "orchestrator", "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 6000 },
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
+  "guards": { "result_handles": true },
+  "caps": { "toolCalls": 250, "wallSec": 1800, "usd": 5, "doneAttempts": 5, "compactAtTokens": 1000, "maxCompactions": 3, "minGapTurns": 1, "checkpointWaitSec": 90 },
+  "_note": "Smoke config for memory search mode on a small task: the index is built and pinned, a seeded brief replaces injection, and memory_search/memory_get are available to both roles." }
