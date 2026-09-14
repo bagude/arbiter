@@ -560,6 +560,7 @@ function handleEvent(name, ev) {
 			if (m?.role === "assistant") {
 				s.generating = false;
 				s.cost += m.usage?.cost?.total ?? 0;
+				s.tokens += (m.usage?.input ?? 0) + (m.usage?.output ?? 0);
 				// Context as the model saw it on this request; feeds the compaction decision.
 				s.contextTokens = contextTokensOf(m.usage) || s.contextTokens || 0;
 				s.turnsSinceCompaction = (s.turnsSinceCompaction ?? 0) + 1;
@@ -1135,6 +1136,7 @@ function totals() {
 	return {
 		toolCalls: agents.reduce((n, a) => n + a.toolCalls, 0),
 		cost: agents.reduce((n, a) => n + a.cost, 0),
+		tokens: agents.reduce((n, a) => n + (a.tokens ?? 0), 0),
 		wallSec: (Date.now() - startedAt) / 1000,
 	};
 }
@@ -1143,6 +1145,7 @@ function checkCaps() {
 	const t = totals();
 	if (t.toolCalls >= CAPS.toolCalls) return finish(`CAP: tool calls ${t.toolCalls} >= ${CAPS.toolCalls}`);
 	if (t.cost >= CAPS.usd) return finish(`CAP: cost $${t.cost.toFixed(2)} >= $${CAPS.usd}`);
+	if (CAPS.tokens && t.tokens >= CAPS.tokens) return finish(`CAP: tokens ${t.tokens} >= ${CAPS.tokens}`);
 	if (t.wallSec >= CAPS.wallSec) return finish(`CAP: wall ${t.wallSec.toFixed(0)}s >= ${CAPS.wallSec}s`);
 }
 // Solo runs: the terminal signal is host-derived, not only mail-based. Six earlier
@@ -1290,6 +1293,7 @@ function finish(reason) {
 		verifier: PDEF.verifier,
 	});
 	summary.snapshot = SNAPSHOT;
+	summary.tokens = t.tokens;
 	summary.memory = {
 		mode: MEMORY_MODE,
 		recall: CONFIG.memory ? CONFIG.memory : null,
@@ -1347,7 +1351,7 @@ function finish(reason) {
 	} catch (err) {
 		log({ type: "warn", msg: `memory retention failed: ${err?.message ?? err}` });
 	}
-	log({ type: "finish", msg: `FINISH: ${reason} | $${t.cost.toFixed(3)} | ${t.toolCalls} tool calls | ${mailCount} mails | ${t.wallSec.toFixed(0)}s` });
+	log({ type: "finish", msg: `FINISH: ${reason} | $${t.cost.toFixed(3)} | ${t.tokens} tokens | ${t.toolCalls} tool calls | ${mailCount} mails | ${t.wallSec.toFixed(0)}s` });
 	// Kill the agent processes before touching WSROOT — on Windows, removing a
 	// directory that's still a live process's cwd fails with EPERM (found live:
 	// killTree ran after the archive attempt and the rmSync below failed every time).

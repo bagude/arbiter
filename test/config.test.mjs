@@ -114,3 +114,10 @@ test("report: off by default, `true` means the tool with no auto-probe, an objec
 	assert.equal(loadConfig({ configPath: tmpConfig({ ...base, report: false }), env: {} }).report, null);
 	assert.throws(() => loadConfig({ configPath: tmpConfig({ ...base, report: "yes" }), env: {} }), /report must be true, false or \{ autoProbe \}/);
 });
+
+test("caps.tokens: off by default, set from the file, env ARBITER_CAP_TOKENS overrides", () => {
+	const roles = { builder: { provider: "llama.cpp", model: "qwen3-27b" } };
+	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles }), env: {} }).caps.tokens, 0);
+	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, caps: { tokens: 250000 } }), env: {} }).caps.tokens, 250000);
+	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, caps: { tokens: 250000 } }), env: { ARBITER_CAP_TOKENS: "1000" } }).caps.tokens, 1000);
+});
