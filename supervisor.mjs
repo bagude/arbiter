@@ -22,7 +22,7 @@ import { PATTERNS, WORKER_TOOLS } from "./lib/patterns.mjs";
 import { writeWorkerDefinition, installWorkspaceExtension, resolveWorkerPrompt } from "./lib/worker-def.mjs";
 import { readMounts, installMounts, archiveFilter, uninstallMounts } from "./lib/mounts.mjs";
 import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
-import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry } from "./lib/workers.mjs";
+import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry, unreportedWorkers } from "./lib/workers.mjs";
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
@@ -86,6 +86,9 @@ const GUARDS = [
 	// nothing unless CONFIG.guards.pre_spawn_compact is set); only the orchestrator ever
 	// calls `subagent`, but every role loads it like every other guard here.
 	path.join(here, "ext", "guards", "pre-spawn-compact.ts"),
+	// Worker `report` tool (ext/report-ext.ts): registers nothing unless ARBITER_REPORT_FILE
+	// is set; only the worker definition's tools line names it.
+	path.join(here, "ext", "report-ext.ts"),
 ];
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
@@ -354,6 +357,7 @@ function launch(name) {
 			ARBITER_RESULT_HANDLES: CONFIG.guards.result_handles ? JSON.stringify(CONFIG.guards.result_handles) : "",
 			ARBITER_RESULTS_DIR: path.join(RUN, "results"),
 			ARBITER_CHECKPOINT_FILE: PATTERN === "orchestrator" && name === "orchestrator" ? CHECKPOINT_FILE : "",
+			ARBITER_REPORT_FILE: PATTERN === "orchestrator" && CONFIG.report ? REPORT_FILE : "",
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -683,6 +687,8 @@ let boundaryPending = null;
 let compaction = { phase: "idle" };
 const compactions = [];
 const CHECKPOINT_FILE = path.join(RUN, "checkpoint.jsonl");
+const REPORT_FILE = path.join(RUN, "reports.jsonl");
+let autoProbes = 0; // probes the supervisor ran from workers' verify cases (report.autoProbe)
 
 function lastCheckpoint() {
 	try {
@@ -707,10 +713,10 @@ function memoryIdsFetched() {
 function compactionLedger() {
 	// Probes are numbered in the order the orchestrator sent them (#1, #2, … as the
 	// transcript numbers them); the head is the request, which names the cases.
-	const probes = timeline.filter((m) => m.kind === "probe" && m.from === "orchestrator").map((m, i) => ({ n: i + 1, head: String(m.body).replace(/\s+/g, " ").slice(0, 100) }));
+	const probes = timeline.filter((m) => m.kind === "probe" && (m.from === "orchestrator" || m.auto)).map((m, i) => ({ n: i + 1, head: `${m.auto ? `(auto, ${m.auto}) ` : ""}${String(m.body).replace(/\s+/g, " ").slice(0, 100)}` }));
 	const workers = Object.values(state).filter((s) => s.role === "worker").map((s) => ({ id: s.name, status: s.done ? "completed" : s.busy ? "running" : "idle", description: s.description ?? "" }));
 	const oracle = lastOracleResult ? `${lastOracleResult.pass}/${lastOracleResult.total} (attempt ${lastOracleResult.attempt})` : null;
-	return ledgerLines({ probes, memoryIds: memoryIdsFetched(), workers, handles: tracker.handles.ids, oracle, time: timeStatus("orchestrator") });
+	return ledgerLines({ probes, memoryIds: memoryIdsFetched(), workers, handles: tracker.handles.ids, oracle, time: timeStatus("orchestrator"), reports: CONFIG.report ? tracker.reports : null });
 }
 
 // The compaction state machine, one step per tick. idle → (boundary + decision)
@@ -785,6 +791,13 @@ function pumpLifecycle() {
 		// this is the one boundary that can fire with no worker yet spawned, before the tool
 		// call that would otherwise hold the orchestrator's turn open for the child's whole run.
 		if (ev === "guard:pre_spawn_compact_denied") boundaryPending = boundaryPending ?? "pre-spawn (context large before a foreground worker)";
+		// A worker's report carries probe-shaped verify cases; with report.autoProbe the
+		// supervisor runs them at once — a probe the orchestrator did not have to ask for,
+		// delivered to it labelled as the worker's own cases. Tasks without a probe.mjs skip.
+		if (ev === "worker:report" && CONFIG.report?.autoProbe && Array.isArray(data?.verifyCases) && data.verifyCases.length && fs.existsSync(path.join(TASK, "oracle", "probe.mjs"))) {
+			const wid = tracker.reports[tracker.reports.length - 1]?.role ?? String(data.role ?? "worker");
+			runProbe({ from: "supervisor", to: VERIFIER, kind: "probe", body: JSON.stringify(data.verifyCases) }, { auto: wid });
+		}
 	}
 }
 
@@ -838,8 +851,13 @@ let probeCountAtFirstOracle = null;
 // live: one run re-probed the same disputed pattern 3+ times across ~1400s with
 // no new information between checks.
 const seenCases = new Map(); // argsKey -> { probeNum, srcHash, resultLine }
-function runProbe(msg) {
+function runProbe(msg, { auto = null } = {}) {
 	probeCount++;
+	if (auto) {
+		autoProbes++;
+		timeline.push({ ts: Date.now(), from: "supervisor", to: VERIFIER, kind: "probe", body: msg.body, auto });
+	}
+	const whose = auto ? "the worker's" : "your";
 	const runner = path.join(TASK, "oracle", "probe.mjs");
 	if (!fs.existsSync(runner)) {
 		deliver(VERIFIER, M.probe.unsupported(TASK_NAME), "probe unsupported");
@@ -966,12 +984,12 @@ function runProbe(msg) {
 		log({ type: "probe", msg: `probe #${probeCount}: ${results.length} case(s) executed, ${blocked.length} blocked` });
 		const parts = [];
 		if (expectById.size > 0) {
-			parts.push(`${matchCount}/${expectById.size} matched your stated expectations.`);
+			parts.push(`${matchCount}/${expectById.size} matched ${whose} stated expectations.`);
 			if (withExpect.length) parts.push(`Mismatches:\n${withExpect.join("\n")}`);
 		}
 		if (withoutExpect.length) parts.push(`${expectById.size > 0 ? "Other cases (no expectation given):\n" : ""}${withoutExpect.join("\n")}`);
 		if (blockedLines.length) parts.push(`Blocked (exact repeats, not re-run):\n${blockedLines.join("\n")}`);
-		deliver(VERIFIER, M.probe.results(probeCount, parts), "probe results");
+		deliver(VERIFIER, auto ? M.probe.autoResults(probeCount, auto, parts) : M.probe.results(probeCount, parts), auto ? `auto-probe results (${auto})` : "probe results");
 	} catch (err) {
 		deliver(VERIFIER, M.probe.crashed(probeCount, err?.message ?? err), "probe crash");
 	}
@@ -990,10 +1008,11 @@ function handleApproval() {
 		srcExists,
 		lastEditTs: lastEditAcross(Object.values(state)),
 		now: Date.now(),
+		unreported: CONFIG.report ? unreportedWorkers(tracker, state) : [],
 	});
 	if (verdict.ok) return runOracle();
-	const why = M.gate[verdict.reason](verdict.sinceEditMs);
-	const label = { no_probe: "approval without probe", no_src: "approval error", stale: "approval stale (src changed since probe)", too_soon: "approval too soon after edit" }[verdict.reason];
+	const why = verdict.reason === "unreported" ? M.gate.unreported(verdict.unreported) : M.gate[verdict.reason](verdict.sinceEditMs);
+	const label = { no_probe: "approval without probe", no_src: "approval error", unreported: "approval without worker report", stale: "approval stale (src changed since probe)", too_soon: "approval too soon after edit" }[verdict.reason];
 	deliver(VERIFIER, why, label);
 	boundaryPending = `approval rejected (${verdict.reason})`;
 }
@@ -1281,6 +1300,17 @@ function finish(reason) {
 		workerReserve: MEMORY_MODE === "search" ? WORKER_RESERVE : null,
 		calls: MEMORY_MODE === "search" ? { ...tracker.memory, ledger: spent(MEMORY_LEDGER) } : null,
 	};
+	if (PATTERN === "orchestrator") {
+		summary.reports = {
+			enabled: Boolean(CONFIG.report),
+			autoProbe: Boolean(CONFIG.report?.autoProbe),
+			total: tracker.reports.length,
+			byWorker: tracker.reports.reduce((m, r) => ((m[r.role] = (m[r.role] ?? 0) + 1), m), {}),
+			unreported: CONFIG.report ? unreportedWorkers(tracker, state) : [],
+			verifyCases: tracker.reports.reduce((n, r) => n + (Number(r.verify) || 0), 0),
+			autoProbes,
+		};
+	}
 	fs.writeFileSync(path.join(RUN, "summary.json"), JSON.stringify(summary, null, 2));
 	fs.writeFileSync(path.join(RUN, "transcript.md"), renderTranscript({ runId, reason, startedAt, timeline, pattern: PATTERN }));
 	// Retention happens for every run, recall or not: the harness learns from each
@@ -1303,7 +1333,13 @@ function finish(reason) {
 		} catch {
 			deliverable = null;
 		}
-		appendLog(MEMORY.log, retainFromRun({ summary, timeline, deliverable, oracle: lastOracleResult }));
+		let reports = [];
+		try {
+			if (CONFIG.report && fs.existsSync(REPORT_FILE)) reports = fs.readFileSync(REPORT_FILE, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+		} catch {
+			reports = [];
+		}
+		appendLog(MEMORY.log, retainFromRun({ summary, timeline, deliverable, oracle: lastOracleResult, reports }));
 		// Fold what this run restated into what earlier runs already established.
 		const ops = consolidate(foldLog(readLog(MEMORY.log)));
 		if (ops.length) appendLog(MEMORY.log, ops);
@@ -1379,12 +1415,12 @@ if (PATTERN === "orchestrator") {
 	for (const g of GUARDS) installWorkspaceExtension(WS.workspace, g);
 	// The worker's prompt is the task's own worker.md when it has one (tasks/<task>/
 	// worker.md), else the generic one; the memory excerpt rides along.
-	const workerPrompt = resolveWorkerPrompt({ taskDir: TASK, home: here, memoryText: MEMORY_TEXT });
+	const workerPrompt = resolveWorkerPrompt({ taskDir: TASK, home: here, memoryText: MEMORY_TEXT, report: Boolean(CONFIG.report) });
 	log({ type: "worker_prompt", msg: `worker prompt: ${path.relative(here, workerPrompt.file)}${MEMORY_TEXT ? " + memory excerpt" : ""}` });
 	writeWorkerDefinition(WS.workspace, {
 		provider: ROLES.worker.provider,
 		model: ROLES.worker.model,
-		tools: WORKER_TOOLS,
+		tools: CONFIG.report ? [...WORKER_TOOLS, "report"] : WORKER_TOOLS,
 		prompt: workerPrompt.prompt,
 		maxTurns: 60,
 		thinking: ROLES.worker.thinking ?? null,
