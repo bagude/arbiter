@@ -24,6 +24,7 @@ export default function (pi: ExtensionAPI) {
 	if (!FILE) return;
 	pi.registerTool({
 		name: "report",
+		label: "Report",
 		description:
 			"Record your report before you finish: status, a short summary, the files you changed, findings labelled observed (you ran it and saw it), interpreted (your reading) or hypothesis (not tested), verify cases as [{ id, args, expect? }] the supervisor can execute against the real code, and open questions. Call it once at the end of your work; the run cannot complete until every worker has reported.",
 		parameters: Type.Object({
