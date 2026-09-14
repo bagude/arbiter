@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadCampaign, validateCampaign, legacyCampaign } from "../lib/campaign.mjs";
+import { loadCampaign, validateCampaign, legacyCampaign, median, decideRound } from "../lib/campaign.mjs";
 
 function root() {
 	const r = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-camp-"));
@@ -51,4 +51,21 @@ test("legacy args become a one-phase campaign; a .json first argument is not leg
 	assert.equal(c.budget, null);
 	assert.equal(legacyCampaign(["campaigns/x.json"], { root: r }), null);
 	assert.equal(legacyCampaign([], { root: r }), null);
+});
+
+test("median: empty is null, odd and even lengths, ignores non-finite", () => {
+	assert.equal(median([]), null);
+	assert.equal(median([5]), 5);
+	assert.equal(median([3, 1, 2]), 2);
+	assert.equal(median([4, 1, 3, 2]), 2.5);
+	assert.equal(median([1, NaN, 3]), 2);
+});
+
+test("decideRound: no budget always runs; exhausted skips; below the median round skips; otherwise runs with the remainder", () => {
+	assert.deepEqual(decideRound({}), { run: true, remaining: null, reason: null });
+	assert.deepEqual(decideRound({ budgetTokens: 1000, spentTokens: 1000 }), { run: false, remaining: 0, reason: "budget exhausted (1000 of 1000 tokens spent)" });
+	assert.deepEqual(decideRound({ budgetTokens: 1000, spentTokens: 1200, roundTokens: [1200] }), { run: false, remaining: 0, reason: "budget exhausted (1200 of 1000 tokens spent)" });
+	assert.deepEqual(decideRound({ budgetTokens: 1000, spentTokens: 700, roundTokens: [200, 300] }), { run: true, remaining: 300, reason: null });
+	assert.deepEqual(decideRound({ budgetTokens: 1000, spentTokens: 800, roundTokens: [400, 400] }), { run: false, remaining: 200, reason: "remaining 200 tokens below the median round (400)" });
+	assert.deepEqual(decideRound({ budgetTokens: 1000, spentTokens: 0, roundTokens: [] }), { run: true, remaining: 1000, reason: null });
 });
