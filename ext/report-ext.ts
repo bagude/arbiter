@@ -7,6 +7,10 @@
  * worker candidates, and with report.autoProbe the verify cases run as a probe at once.
  * Registers nothing when the file is unset. Only the worker definition's `tools:` line
  * names `report`, so the orchestrator never sees it.
+ * An identical consecutive report from the same worker (every field byte-for-byte the
+ * same as that worker's last one) is a no-op: nothing is appended and no lifecycle
+ * event fires, so a worker that calls `report` again with nothing new does not pollute
+ * the file or the tally. A changed report — any field differs — still files normally.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -22,6 +26,7 @@ const FILE = process.env.ARBITER_REPORT_FILE ?? "";
 
 export default function (pi: ExtensionAPI) {
 	if (!FILE) return;
+	const last = new Map<string, string>();
 	pi.registerTool({
 		name: "report",
 		label: "Report",
@@ -55,6 +60,15 @@ export default function (pi: ExtensionAPI) {
 		executionMode: "sequential",
 		async execute(_id, params, _signal, _update, ctx) {
 			const role = kit.roleFor(ctx);
+			const key = JSON.stringify({ status: params.status, summary: params.summary, changed: params.changed, findings: params.findings, verify: params.verify, open_questions: params.open_questions });
+			if (last.get(role) === key) {
+				return {
+					content: [{ type: "text", text: "report already recorded — identical to your last report; nothing was added. Finish your turn with a short message." }],
+					details: { duplicate: true },
+					isError: false,
+				};
+			}
+			last.set(role, key);
 			const entry = { ts: Date.now(), role, ...params };
 			fs.mkdirSync(path.dirname(FILE), { recursive: true });
 			fs.appendFileSync(FILE, `${JSON.stringify(entry)}\n`);

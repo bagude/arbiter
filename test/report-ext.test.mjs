@@ -81,3 +81,12 @@ test("execute appends the entry under the worker's session name and emits worker
 	assert.equal(lines[0].data.verify, 1);
 	assert.deepEqual(lines[0].data.verifyCases, REPORT.verify);
 });
+
+test("an identical consecutive report from the same worker is a no-op; a changed one files again", () => {
+	const { out, lines, entries } = run({ calls: [REPORT, REPORT, { ...REPORT, status: "partial" }], on: true });
+	assert.equal(entries.length, 2);
+	assert.equal(lines.length, 2);
+	assert.equal(out[1].details.duplicate, true);
+	assert.match(out[1].content[0].text, /already recorded/);
+	assert.equal(entries[1].status, "partial");
+});
