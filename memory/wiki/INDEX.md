@@ -1,6 +1,6 @@
 # Arbiter memory wiki
 
-Compiled 2026-09-14T00:21:16.202Z from 383 live record(s) across 18 scope(s), 77 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
+Compiled 2026-09-14T17:16:44.818Z from 419 live record(s) across 18 scope(s), 86 run(s). Start at [[SCHEMA]]; open a scope page for its Facts, History and Candidates; [[LINT]] lists what needs a ruling.
 
 ## Repos
 
@@ -12,12 +12,12 @@ Compiled 2026-09-14T00:21:16.202Z from 383 live record(s) across 18 scope(s), 77
 
 - [[scopes/task-bucket]] — 2 facts, 0 candidates, last run: 2026-09-12T07-04-20 SUCCESS
 - [[scopes/task-csv]] — 0 facts, 0 candidates, last run: 2026-09-12T06-21-03 CAP
-- [[scopes/task-glob]] — 0 facts, 0 candidates, last run: 2026-09-11T18-42-34 CAP
+- [[scopes/task-glob]] — 0 facts, 2 candidates, last run: 2026-09-11T18-42-34 CAP
 - [[scopes/task-intervals]] — 1 fact, 0 candidates, last run: 2026-09-12T07-46-05 SUCCESS
 - [[scopes/task-jsondiff]] — 1 fact, 0 candidates, last run: 2026-09-12T07-31-04 SUCCESS
 - [[scopes/task-lru]] — 1 fact, 0 candidates, last run: 2026-09-12T06-13-34 SUCCESS
 - [[scopes/task-mdtable]] — 2 facts, 0 candidates, last run: 2026-09-12T07-14-49 SUCCESS
-- [[scopes/task-orbit]] — 1 fact, 0 candidates, last run: 2026-09-11T21-35-14 SUCCESS
+- [[scopes/task-orbit]] — 4 facts, 31 candidates, last run: 2026-09-11T21-35-14 SUCCESS
 - [[scopes/task-pathnorm]] — 3 facts, 1 candidate, last run: 2026-09-12T07-25-47 SUCCESS
 - [[scopes/task-review-guard]] — 11 facts, 0 candidates, last run: 2026-09-12T08-24-41 SUCCESS
 - [[scopes/task-run-analysis]] — 4 facts, 0 candidates, last run: 2026-09-12T05-30-35 SUCCESS
@@ -38,6 +38,15 @@ Compiled 2026-09-14T00:21:16.202Z from 383 live record(s) across 18 scope(s), 77
 
 ## Runs
 
+- [[runs/2026-09-14T17-15-16]] — CAP, glob
+- [[runs/2026-09-14T17-14-15]] — CAP, glob
+- [[runs/2026-09-14T16-40-08]] — SUCCESS, orbit
+- [[runs/2026-09-14T16-18-08]] — SUCCESS, orbit
+- [[runs/2026-09-14T15-45-09]] — SUCCESS, orbit
+- [[runs/2026-09-14T15-25-03]] — CAP, glob
+- [[runs/2026-09-14T15-23-50]] — CAP, glob
+- [[runs/2026-09-14T15-10-05]] — CAP, glob
+- [[runs/2026-09-14T14-34-28]] — CAP, glob
 - [[runs/2026-09-14T00-07-57]] — SUCCESS, dw-explore-real
 - [[runs/2026-09-13T17-09-06]] — SUCCESS, dw-paper-synthesis
 - [[runs/2026-09-13T16-41-50]] — SUCCESS, dw-paper-apply

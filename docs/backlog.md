@@ -109,3 +109,7 @@ The findings are grounded (every quote verbatim) and of mixed quality — exactl
 - Provider keys in `~/.pi/agent/auth.json` (`type: "api_key"`) for zai / openai / anthropic before spec §6 runs 2–4.
 - Flash-Next run: restart the llama router with only Flash resident and ≥ ~12 GB RAM free before launching `configs/orch-orbit-flash.json`.
 - The 9B download + 27B `ctx-size = 65536` before run 5.
+
+## From Claude Code's Workflow tool (2026-09-14 — `docs/superpowers/specs/2026-09-14-workflow-borrowings-design.md`)
+
+24. **Worker report contract** — done 2026-09-14 (`ext/report-ext.ts`, gate reason `unreported`, `report.autoProbe`, worker findings retained as `source: "agent"` candidates under the ledger's own criterion rule; `docs/batch/worker-report.md`). Off by default; flip the default only when a second orbit pair agrees with the first. Open: resolves #20's "report format" half; the free-text result still reaches the orchestrator too — measure whether the pair is a confound before delivering the structured copy instead.

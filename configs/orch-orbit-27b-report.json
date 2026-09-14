@@ -1,0 +1,4 @@
+{ "task": "orbit", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
+  "caps": { "toolCalls": 250, "wallSec": 6000, "usd": 5, "doneAttempts": 5 },
+  "_note": "Paired with orch-orbit-27b.json (2026-09-14): worker report tool on, gate refuses done while a completed worker has no report." }
