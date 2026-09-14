@@ -49,3 +49,15 @@ test("resolveWorkerPrompt prefers the task's own worker.md, falls back to prompt
 	assert.equal(r.file, path.join(task, "worker.md"));
 	assert.equal(r.prompt, "OWN\n\n# MEMORY\n- fact");
 });
+
+test("resolveWorkerPrompt inserts the report instruction between the prompt and the memory excerpt when asked", async () => {
+	const { resolveWorkerPrompt, REPORT_INSTRUCTION } = await import("../lib/worker-def.mjs");
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-home-"));
+	fs.mkdirSync(path.join(home, "prompts"));
+	fs.writeFileSync(path.join(home, "prompts", "worker.md"), "GENERIC\n");
+	const task = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-task-"));
+	assert.equal(resolveWorkerPrompt({ taskDir: task, home }).prompt, "GENERIC");
+	assert.equal(resolveWorkerPrompt({ taskDir: task, home, report: true }).prompt, `GENERIC\n\n${REPORT_INSTRUCTION}`);
+	assert.equal(resolveWorkerPrompt({ taskDir: task, home, report: true, memoryText: "# MEMORY" }).prompt, `GENERIC\n\n${REPORT_INSTRUCTION}\n\n# MEMORY`);
+	assert.match(REPORT_INSTRUCTION, /call the `report` tool once/);
+});
