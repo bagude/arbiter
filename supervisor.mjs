@@ -842,9 +842,11 @@ function pumpChildTranscripts() {
 // Silently no-ops (with a clear error reply) on tasks that have no probe.mjs —
 // e.g. intercom-review, which isn't a call-a-function task.
 let probeCount = 0;
+let ownProbeCount = 0; // probes the orchestrator asked for itself — the behaviour the pattern measures; auto-probes are excluded
 // Snapshotted the first time the oracle runs, so summary.json can answer a question
 // the orchestrator pattern exists to test: did the orchestrator verify the workspace
-// itself before claiming done, or did it just relay a worker's own claim?
+// itself before claiming done, or did it just relay a worker's own claim? Counts only
+// the orchestrator's own probes (ownProbeCount), never auto-probes.
 let probeCountAtFirstOracle = null;
 // Keyed by JSON.stringify(args) + the src hash at the time — lets a repeat probe
 // against unchanged code get flagged as "you already saw this" instead of
@@ -854,6 +856,7 @@ let probeCountAtFirstOracle = null;
 const seenCases = new Map(); // argsKey -> { probeNum, srcHash, resultLine }
 function runProbe(msg, { auto = null } = {}) {
 	probeCount++;
+	if (!auto) ownProbeCount++;
 	if (auto) {
 		autoProbes++;
 		timeline.push({ ts: Date.now(), from: "supervisor", to: VERIFIER, kind: "probe", body: msg.body, auto });
@@ -1032,7 +1035,7 @@ function handleApproval() {
 function runOracle() {
 	// Before the try, and before anything that can reach finish(): a first oracle that
 	// passes never returns here.
-	if (probeCountAtFirstOracle === null) probeCountAtFirstOracle = probeCount;
+	if (probeCountAtFirstOracle === null) probeCountAtFirstOracle = ownProbeCount;
 	doneAttempts++;
 	const dir = path.join(RUN, `oracle-${doneAttempts}`);
 	try {
