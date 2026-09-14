@@ -104,3 +104,13 @@ test("roles.<role>.thinking: absent by default, validated, the worker rejects ma
 	const env = loadConfig({ configPath: tmpConfig({ task: "orbit", pattern: "orchestrator", roles }), env: { ROLE_worker_THINKING: "off" } });
 	assert.equal(env.roles.worker.thinking, "off");
 });
+
+test("report: off by default, `true` means the tool with no auto-probe, an object sets autoProbe, junk is rejected", () => {
+	const roles = { orchestrator: { provider: "llama.cpp", model: "qwen3-27b" }, worker: { provider: "llama.cpp", model: "qwen3-27b" } };
+	const base = { task: "orbit", pattern: "orchestrator", roles };
+	assert.equal(loadConfig({ configPath: tmpConfig(base), env: {} }).report, null);
+	assert.deepEqual(loadConfig({ configPath: tmpConfig({ ...base, report: true }), env: {} }).report, { autoProbe: false });
+	assert.deepEqual(loadConfig({ configPath: tmpConfig({ ...base, report: { autoProbe: true } }), env: {} }).report, { autoProbe: true });
+	assert.equal(loadConfig({ configPath: tmpConfig({ ...base, report: false }), env: {} }).report, null);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ ...base, report: "yes" }), env: {} }), /report must be true, false or \{ autoProbe \}/);
+});
