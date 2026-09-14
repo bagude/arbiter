@@ -2,8 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createTracker, applyLifecycleEvent, bindTranscript, reportsFor, unreportedWorkers } from "../lib/workers.mjs";
 
-// Synthetic lifecycle sequences: the pump time `now` increases by one per event, exactly
-// as supervisor.mjs pumpLifecycle() feeds the reducer.
+// Synthetic lifecycle sequences. The reducer assigns `seq` in the order events are fed —
+// that order is the lifecycle file's own order, which is what unreportedWorkers() relies
+// on. The harness's `now` only feeds `ts` (display data); it does not drive ordering.
 const started = (id) => ({ ev: "subagents:started", data: { id, description: `work ${id}` } });
 const completed = (id) => ({ ev: "subagents:completed", data: { id, status: "completed", result: `done ${id}` } });
 const failed = (id) => ({ ev: "subagents:failed", data: { id, error: "boom" } });
@@ -23,8 +24,16 @@ function harness() {
 			audit.push(...applyLifecycleEvent(tracker, state, timeline, { ev, data, now }).audit);
 		}
 	};
+	// Feeds events without advancing `now` — all land at the same clock tick, the way
+	// pumpLifecycle() can deliver a batch read in one poll. Ordering must still come from
+	// the reducer's `seq`, assigned in the order the events are fed here.
+	const feedSame = (...events) => {
+		for (const { ev, data } of events) {
+			audit.push(...applyLifecycleEvent(tracker, state, timeline, { ev, data, now }).audit);
+		}
+	};
 	const bind = (session) => bindTranscript(tracker, state, `C:/sessions/orchestrator/tasks/${session}.jsonl`);
-	return { state, tracker, audit, feed, bind };
+	return { state, tracker, audit, feed, feedSame, bind };
 }
 
 test("a report resolves to the bound worker, is tallied, and satisfies the gate input", () => {
@@ -66,5 +75,15 @@ test("a report that arrives before its transcript is bound resolves at query tim
 	assert.equal(h.tracker.reports[0].role, "worker:sess-a", "unresolved at arrival");
 	assert.deepEqual(unreportedWorkers(h.tracker, h.state), ["worker:a"]);
 	h.bind("sess-a");
+	assert.deepEqual(unreportedWorkers(h.tracker, h.state), []);
+});
+
+test("a report and a resume in the same millisecond order by file position, not by clock", () => {
+	const h = harness();
+	h.feed(started("a"));
+	h.bind("sess-a");
+	h.feedSame(report("sess-a"), completed("a"), resuming("a"), resumed("a"));
+	assert.deepEqual(unreportedWorkers(h.tracker, h.state), ["worker:a"]);
+	h.feedSame(report("sess-a"));
 	assert.deepEqual(unreportedWorkers(h.tracker, h.state), []);
 });
