@@ -22,6 +22,13 @@ test("definition has the frontmatter pi-subagents reads", () => {
 	assert.match(md, /\nmax_turns: 12\n/);
 	assert.match(md, /\nrun_in_background: false\n---\nBuild it\.\n$/);
 });
+test("definition carries a thinking line only when a level is set", () => {
+	const none = workerDefinition({ provider: "llama.cpp", model: "qwen3-27b", tools: ["read"], prompt: "x" });
+	assert.doesNotMatch(none, /\nthinking:/);
+	const low = workerDefinition({ provider: "llama.cpp", model: "qwen3-27b", tools: ["read"], prompt: "x", thinking: "low" });
+	assert.match(low, /\nmodel: llama\.cpp\/qwen3-27b\nthinking: low\nmax_turns: 60\n/);
+});
+
 test("writeWorkerDefinition creates the agent file and the concurrency setting", () => {
 	const ws = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-ws-"));
 	const p = writeWorkerDefinition(ws, { provider: "llama.cpp", model: "qwen3-27b", tools: ["read"], prompt: "x", max: 1 });
