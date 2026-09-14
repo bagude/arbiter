@@ -24,6 +24,7 @@ test("a valid campaign loads with defaults filled", () => {
 	assert.deepEqual(c.brake, { minNovelty: 0.6, sameTitle: 0.4 });
 	assert.deepEqual(c.budget, { tokens: 1000 });
 	assert.equal(validateCampaign({ name: "x", phases: [{ phase: "p", config: "configs/a.json", rounds: 1 }] }, { root: r }).budget, null);
+	assert.equal(validateCampaign({ name: "abs", phases: [{ phase: "p", config: path.join(r, "configs", "a.json"), rounds: 1 }] }, { root: r }).phases[0].config, path.join(r, "configs", "a.json"));
 });
 
 test("every malformed shape fails at load with the field named", () => {
@@ -40,6 +41,10 @@ test("every malformed shape fails at load with the field named", () => {
 	bad({ budget: { usd: 5 } }, /unknown budget key "usd"/);
 	bad({ brake: { minNovelty: 2 } }, /brake\.minNovelty must be between 0 and 1/);
 	bad({ surprise: true }, /unknown key "surprise"/);
+	bad({ phases: [{ phase: "p", config: path.join("..", "escape.json"), rounds: 1 }] }, /config "\.\.[\\/]escape\.json" must be a path inside/);
+	bad({ phases: [{ phase: "p", config: path.join(os.tmpdir(), "outside.json"), rounds: 1 }] }, /must be a path inside/);
+	bad({ phases: [{ phase: "bad name", config: "configs/a.json", rounds: 1 }] }, /phases\[0\]: phase must match/);
+	bad({ brake: { foo: 0.5 } }, /unknown brake key "foo"/);
 });
 
 test("legacy args become a one-phase campaign; a .json first argument is not legacy", () => {
