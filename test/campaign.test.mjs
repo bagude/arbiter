@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadCampaign, validateCampaign, legacyCampaign, median, decideRound, noveltyTally, findingsWithRows, seedTally } from "../lib/campaign.mjs";
+import { loadCampaign, validateCampaign, legacyCampaign, median, decideRound, noveltyTally, findingsWithRows, seedTally, roundOutcome } from "../lib/campaign.mjs";
 
 function root() {
 	const r = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-camp-"));
@@ -116,4 +116,12 @@ test("seedTally reads earlier runs' deliverables for the campaign's tasks and se
 	assert.equal(t.isKnown({ title: "Epsilon zeta eta theta" }), null, "other task's run is not a seed");
 	assert.equal(t.isKnown({ title: "Iota kappa lambda mu" }), "similar title");
 	assert.equal(t.isKnown({ title: "Nu xi omicron pi" }), null, "other scope is not a seed");
+});
+
+test("roundOutcome tells success, budget, and oracle failure apart", () => {
+	assert.equal(roundOutcome("SUCCESS: oracle passed"), "success");
+	assert.equal(roundOutcome("CAP: tokens 2117 >= 1500"), "budget");
+	assert.equal(roundOutcome("CAP: wall 60s >= 60s"), "failed");
+	assert.equal(roundOutcome("STALLED"), "failed");
+	assert.equal(roundOutcome(undefined), "failed");
 });

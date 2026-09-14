@@ -18,7 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { loadCampaign, legacyCampaign, decideRound, noveltyTally, seedTally, findingsWithRows, DELIVERABLES } from "../lib/campaign.mjs";
+import { loadCampaign, legacyCampaign, decideRound, noveltyTally, seedTally, findingsWithRows, roundOutcome, DELIVERABLES } from "../lib/campaign.mjs";
 import { freshTokens } from "../lib/usage.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -136,8 +136,14 @@ for (const ph of phases) {
 		rows.push(row);
 		say(`${ph.phase} round ${round}: ${row.reason} in ${row.wallSec}s, ${tokens} tokens${budgetTokens != null ? ` (${spent}/${budgetTokens} spent)` : ""}; ${findings.length} findings, ${fresh.length} novel (novelty ${novelty.toFixed(2)}); memory ${row.searches}/${row.gets}/${row.refused}; ${row.compactions} compaction(s)`);
 		tally.absorb(findings);
-		if (!String(row.reason).startsWith("SUCCESS")) {
-			say(`stop ${ph.phase}: round ${round} did not pass the oracle`);
+		const outcome = roundOutcome(row.reason);
+		if (outcome === "budget") {
+			say(`stop: round ${round} of ${ph.phase} hit the campaign's token backstop (${row.reason}) — the budget is spent`);
+			stopped = `budget exhausted: ${ph.phase} round ${round} ended with ${row.reason}`;
+			break;
+		}
+		if (outcome === "failed") {
+			say(`stop ${ph.phase}: round ${round} did not pass the oracle (${row.reason})`);
 			break;
 		}
 		passed++;
@@ -149,7 +155,7 @@ for (const ph of phases) {
 	// A phase that ran and never passed ends the campaign; a phase that was skipped
 	// entirely (--from, budget) does not — the next phase decides for itself.
 	const ran = rows.filter((r) => r.phase === ph.phase && r.runId).length;
-	if (ran && !passed) stopped = `phase ${ph.phase} had no passing round`;
+	if (!stopped && ran && !passed) stopped = `phase ${ph.phase} had no passing round`;
 }
 if (stopped) say(`campaign stopped: ${stopped}`);
 
