@@ -35,3 +35,10 @@ test("composeInstructions labels the two parts, keeps ids verbatim, and says whe
 	assert.match(without, /no checkpoint was written/);
 	assert.match(without, /Probes run: none yet\./);
 });
+
+test("ledgerLines lists worker reports only when the feature is on", () => {
+	assert.ok(!ledgerLines({}).some((l) => l.startsWith("Worker reports")));
+	assert.ok(ledgerLines({ reports: [] }).includes("Worker reports: none yet — a completed worker without one blocks done."));
+	const [line] = ledgerLines({ reports: [{ role: "worker:a", status: "done", findings: 2, verify: 1 }] }).filter((l) => l.startsWith("Worker reports"));
+	assert.equal(line, "Worker reports (tool `report`, schema-checked): worker:a done (2 findings, 1 verify cases)");
+});

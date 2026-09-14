@@ -318,3 +318,28 @@ test("findingsOf reads a watchlist's candidates as findings naming company and t
 	assert.equal(f[0].title, "Halvard Semiconductor (HLVS), bullish: Supply deal marks an inflection.");
 	assert.deepEqual(f[0].evidence_refs, []);
 });
+
+test("retainFromRun files worker report findings as agent candidates on a successful run only; a hypothesis or interpretation without a settlement criterion is unreviewed", () => {
+	const summary = { runId: "r1", task: "orbit", reason: "SUCCESS: oracle passed", wallSec: 10, config: { pattern: "orchestrator", roles: {} }, mailByKind: {}, doneAttempts: 1 };
+	const findings = [
+		{ claim: "observed", text: "tests pass 4/4", evidence_refs: ["src/x.test.mjs"] },
+		{ claim: "hypothesis", text: "edge case untested" },
+		{ claim: "interpreted", text: "the slow path is the parser", settlement_criterion: "profile parse() on the 10k-line fixture" },
+		{ claim: "nonsense", text: "" },
+	];
+	const reports = [{ ts: 1, role: "worker:a", status: "done", summary: "s", changed: [], verify: [], open_questions: [], findings }];
+	const out = retainFromRun({ summary, timeline: [], reports, ts: 5 });
+	// retainFromRun itself only ever writes supervisor records, so `agent` isolates the worker's.
+	const worker = out.filter((r) => r.source === "agent");
+	assert.equal(worker.length, 3, "the empty-text finding is dropped");
+	assert.deepEqual(worker.map((r) => [r.kind, r.claim, r.status, r.confidence]), [["semantic", "observed", "candidate", 0.4], ["semantic", "unreviewed", "candidate", 0.4], ["semantic", "interpreted", "candidate", 0.4]]);
+	assert.equal(worker[2].settlement_criterion, "profile parse() on the 10k-line fixture");
+	assert.equal("settlement_criterion" in worker[1], false);
+	assert.equal(worker[0].scope, "task:orbit");
+	assert.equal(worker[0].summary, "tests pass 4/4");
+	assert.match(worker[0].text, /^tests pass 4\/4 \(worker report, worker:a\)$/);
+	assert.deepEqual(worker[0].evidence, ["run:r1", "worker:a", "src/x.test.mjs"]);
+	assert.deepEqual(worker[1].evidence, ["run:r1", "worker:a"]);
+	const failed = retainFromRun({ summary: { ...summary, reason: "CAP: wall 100s >= 100s" }, timeline: [], reports, ts: 5 });
+	assert.equal(failed.filter((r) => r.source === "agent").length, 0);
+});
