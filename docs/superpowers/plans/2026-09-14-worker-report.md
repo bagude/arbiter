@@ -300,6 +300,8 @@ git -c user.name="bagude" -c user.email="45043048+bagude@users.noreply.github.co
 
 ### Task 3: Reducer — tally reports, know who has not reported
 
+> **Superseded during execution (2026-09-14):** the `lastStartedTs` / `report.ts >= lastStartedTs` ordering below was replaced in the task's fix round by a per-tracker sequence (`tracker.seq`, assigned once per event in `applyLifecycleEvent`; `lastStartedSeq` on the worker; `r.seq > lastStartedSeq`), because pump-time stamps can tie within one poll batch on Windows. The tests gained a same-`now` case. Read the code, not this text, for the ordering rule.
+
 **Files:**
 - Modify: `lib/workers.mjs` (`createTracker`, the `subagents:created`/`started`/`resuming` cases, a new branch before the `memory:` match, two new exports)
 - Test: `test/workers-reports.test.mjs`
@@ -555,7 +557,7 @@ git -c user.name="bagude" -c user.email="45043048+bagude@users.noreply.github.co
 - Test: `test/memory.test.mjs`, `test/compaction.test.mjs`
 
 **Interfaces:**
-- Produces: `retainFromRun({ summary, timeline, deliverable, oracle, reports = [], ts })` adds one semantic record per report finding on a `SUCCESS` run (`source: "worker"`, `status: "candidate"`, confidence 0.4); `ledgerLines({ ..., reports = null })` adds a `Worker reports` line when `reports` is an array.
+- Produces: `retainFromRun({ summary, timeline, deliverable, oracle, reports = [], ts })` adds one semantic record per report finding on a `SUCCESS` run (`source: "agent"`, `status: "candidate"`, confidence 0.4); `ledgerLines({ ..., reports = null })` adds a `Worker reports` line when `reports` is an array.
 
 - [ ] **Step 1: Write the failing tests** — append to `test/memory.test.mjs` (it already imports `retainFromRun`; if not, add it to the import list):
 

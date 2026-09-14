@@ -183,7 +183,10 @@ does. Supervisor wiring is verified by the paired runs in each plan's final task
 
 - Whether pi maps `--thinking low` to anything on the llama.cpp provider (plan A checks
   the provider code first; `off` is the fallback treatment).
-- The gate rule on a resumed worker uses lifecycle pump time for ordering; a report and a
-  resume in the same millisecond tie in the report's favour (`>=`). Acceptable.
+- The gate rule on a resumed worker orders a report against the worker's latest start or
+  resume by lifecycle-file position (`tracker.seq`, assigned per event in the reducer), not
+  by clock: the first implementation compared pump-time stamps, and review showed
+  same-millisecond ties on Windows would have counted a pre-resume report as satisfying
+  the post-resume requirement. Fixed in the worker-report plan's Task 3 fix round.
 - Worker `evidence_refs` are stored as given (paths, probe ids), not prefixed `memory:`
   like the explorer's; the wiki lint may want a rule later.
