@@ -1,0 +1,10 @@
+{
+  "name": "spe162910",
+  "_note": "Deep research on SPE 162910 as a campaign (was tools/research.mjs until 2026-09-14): a cited reading, the paper's models on real wells, one synthesis whose citations the oracle resolves. Memory scope repo:research-162910. First run 2026-09-13: 5/5 rounds passed, report docs/batch/research-spe162910.md.",
+  "phases": [
+    { "phase": "study",     "config": "configs/orch-dw-paper-study-27b.json",     "rounds": 2, "file": "study.json" },
+    { "phase": "apply",     "config": "configs/orch-dw-paper-apply-27b.json",     "rounds": 3, "file": "exploration.json" },
+    { "phase": "synthesis", "config": "configs/orch-dw-paper-synthesis-27b.json", "rounds": 1, "file": "report.json" }
+  ],
+  "brake": { "minNovelty": 0.5, "sameTitle": 0.4 }
+}

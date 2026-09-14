@@ -1,0 +1,8 @@
+{
+  "name": "dw-explore-real",
+  "_note": "Self-recursive exploration of the real warehouse (93 M rows): each round recalls what the last retained. The budget admits about one round at 27B (a round is roughly 400k fresh tokens); raise it for a longer campaign.",
+  "phases": [
+    { "phase": "explore", "config": "configs/orch-dw-explore-real-27b.json", "rounds": 3, "file": "exploration.json" }
+  ],
+  "budget": { "tokens": 500000 }
+}
