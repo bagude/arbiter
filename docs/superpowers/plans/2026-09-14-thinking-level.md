@@ -281,6 +281,6 @@ Expected on the treatment run: the worker's `share` well under the baseline's 0.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add configs/orch-dw-explore-real-27b-nothink.json docs/batch/thinking-2026-09-14.md docs/batch/thinking-level.md docs/backlog.md memory/ runs/*/summary.json
+git add configs/orch-dw-explore-real-27b-nothink.json docs/batch/thinking-2026-09-14.md docs/batch/thinking-level.md docs/backlog.md memory/
 git -c user.name="bagude" -c user.email="45043048+bagude@users.noreply.github.com" commit -m "thinking level: paired dw-explore-real batch (worker off), report, backlog" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01MWkhSZsRjU8L3V3TWfwTLz"
 ```

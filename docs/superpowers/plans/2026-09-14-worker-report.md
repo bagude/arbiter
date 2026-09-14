@@ -896,7 +896,7 @@ node -e "const fs=require('fs');const id=process.argv[1];const rep=fs.readFileSy
 - [ ] **Step 6: Commit**
 
 ```bash
-git add configs/orch-orbit-27b-report.json configs/orch-orbit-27b-report-autoprobe.json docs/batch/report-2026-09-14.md docs/batch/worker-report.md docs/backlog.md memory/ runs/*/summary.json
+git add configs/orch-orbit-27b-report.json configs/orch-orbit-27b-report-autoprobe.json docs/batch/report-2026-09-14.md docs/batch/worker-report.md docs/backlog.md memory/
 git -c user.name="bagude" -c user.email="45043048+bagude@users.noreply.github.com" commit -m "worker report: paired orbit batch, report, backlog" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01MWkhSZsRjU8L3V3TWfwTLz"
 ```
 

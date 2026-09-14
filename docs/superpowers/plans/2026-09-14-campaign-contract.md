@@ -938,6 +938,6 @@ Expected: one `SUCCESS` row with a token count equal to that run's `summary.toke
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/backlog.md docs/batch/campaign-dw-explore-real.md memory/ runs/*/summary.json
+git add docs/backlog.md docs/batch/campaign-dw-explore-real.md memory/
 git -c user.name="bagude" -c user.email="45043048+bagude@users.noreply.github.com" commit -m "campaign: first budgeted dw-explore-real run, backlog" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01MWkhSZsRjU8L3V3TWfwTLz"
 ```
