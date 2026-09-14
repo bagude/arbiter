@@ -1,6 +1,6 @@
 # guard call_args
 
-Totals across 8 run(s): rewritten 177.
+Totals across 9 run(s): rewritten 198.
 
 ## By run
 
@@ -12,3 +12,4 @@ Totals across 8 run(s): rewritten 177.
 - [[runs/2026-09-13T17-09-06]] — rewritten 2
 - [[runs/2026-09-14T00-07-57]] — rewritten 10
 - [[runs/2026-09-14T17-16-44]] — rewritten 1
+- [[runs/2026-09-14T17-31-33]] — rewritten 21
