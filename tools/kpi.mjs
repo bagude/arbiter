@@ -1,34 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { discoverRuns } from "./extract-runs.mjs";
-import { readJsonl } from "../lib/jsonl.mjs";
+import { tokenTotals } from "../lib/usage.mjs";
 
 const RUNS = discoverRuns().map((r) => ({ dir: r.dir, label: r.label }));
-
-function tokenTotals(dir) {
-	let input = 0,
-		output = 0,
-		cacheRead = 0,
-		cacheWrite = 0,
-		turns = 0;
-	const byRole = {};
-	const rawFiles = fs.readdirSync(dir).filter((f) => /^raw-.*\.jsonl$/.test(f));
-	for (const f of rawFiles) {
-		const role = f.slice(4).split(/[_.]/)[0];
-		for (const ev of readJsonl(path.join(dir, f))) {
-			if (ev.type !== "message_end") continue;
-			const m = ev.message;
-			if (!m || m.role !== "assistant" || !m.usage) continue;
-			input += m.usage.input || 0;
-			output += m.usage.output || 0;
-			cacheRead += m.usage.cacheRead || 0;
-			cacheWrite += m.usage.cacheWrite || 0;
-			turns++;
-			byRole[role] = (byRole[role] || 0) + (m.usage.input || 0) + (m.usage.output || 0);
-		}
-	}
-	return { input, output, cacheRead, cacheWrite, turns, byRole };
-}
 
 console.log(
 	"label".padEnd(58),
