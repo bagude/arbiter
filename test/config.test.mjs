@@ -90,3 +90,17 @@ test("memory.extraScopes are read scopes, validated", () => {
 	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search" } }), env: {} }).memory.extraScopes, undefined);
 	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", extraScopes: ["nope"] } }), env: {} }), /extraScopes/);
 });
+
+test("roles.<role>.thinking: absent by default, validated, the worker rejects max, env overrides", () => {
+	const roles = { orchestrator: { provider: "llama.cpp", model: "qwen3-27b" }, worker: { provider: "llama.cpp", model: "qwen3-27b" } };
+	const none = loadConfig({ configPath: tmpConfig({ task: "orbit", pattern: "orchestrator", roles }), env: {} });
+	assert.equal("thinking" in none.roles.worker, false);
+	assert.equal("thinking" in none.roles.orchestrator, false);
+	const set = loadConfig({ configPath: tmpConfig({ task: "orbit", pattern: "orchestrator", roles: { orchestrator: { ...roles.orchestrator, thinking: "max" }, worker: { ...roles.worker, thinking: "low" } } }), env: {} });
+	assert.equal(set.roles.orchestrator.thinking, "max");
+	assert.equal(set.roles.worker.thinking, "low");
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "orbit", pattern: "orchestrator", roles: { ...roles, worker: { ...roles.worker, thinking: "max" } } }), env: {} }), /roles\.worker\.thinking must be one of off, minimal, low, medium, high, xhigh in/);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "orbit", pattern: "orchestrator", roles: { ...roles, orchestrator: { ...roles.orchestrator, thinking: "lots" } } }), env: {} }), /roles\.orchestrator\.thinking must be one of off, minimal, low, medium, high, xhigh, max in/);
+	const env = loadConfig({ configPath: tmpConfig({ task: "orbit", pattern: "orchestrator", roles }), env: { ROLE_worker_THINKING: "off" } });
+	assert.equal(env.roles.worker.thinking, "off");
+});
