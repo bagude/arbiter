@@ -235,7 +235,7 @@ for (const role of PDEF.roles) {
 	if (role === "worker") continue; // workers are pi-subagents children, not supervisor-launched processes
 	let tools = PDEF.tools[role];
 	if (role === "builder" && fs.existsSync(toolsOverride)) tools = fs.readFileSync(toolsOverride, "utf8").trim();
-	AGENTS[role] = { tools, peer: PDEF.peer[role], provider: ROLES[role].provider, model: ROLES[role].model };
+	AGENTS[role] = { tools, peer: PDEF.peer[role], provider: ROLES[role].provider, model: ROLES[role].model, thinking: ROLES[role].thinking ?? null };
 }
 
 // ---------- agent processes ----------
@@ -281,6 +281,7 @@ function launch(name) {
 		cfg.provider,
 		"--model",
 		cfg.model,
+		...(cfg.thinking ? ["--thinking", cfg.thinking] : []),
 		"--session-dir",
 		path.join(SESSIONS, name),
 		"--name",
@@ -360,6 +361,7 @@ function launch(name) {
 	const s = createAgentState({ id: name, role: name, child, raw });
 	s.name = name; // existing code reads s.name throughout
 	state[name] = s;
+	log({ agent: name, type: "launch", msg: `${cfg.provider}/${cfg.model}${cfg.thinking ? ` thinking=${cfg.thinking}` : ""} tools=${cfg.tools}` });
 
 	child.stdout.on("data", (chunk) => {
 		s.buf += chunk.toString("utf8");
@@ -1385,6 +1387,7 @@ if (PATTERN === "orchestrator") {
 		tools: WORKER_TOOLS,
 		prompt: workerPrompt.prompt,
 		maxTurns: 60,
+		thinking: ROLES.worker.thinking ?? null,
 		background: ROLES.worker.background,
 		max: ROLES.worker.max,
 	});
