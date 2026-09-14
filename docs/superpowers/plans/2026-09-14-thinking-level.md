@@ -16,7 +16,7 @@
 - Precondition: `git status --short` clean before Task 2 (the pre-spawn-compact work from 2026-09-14 is the user's to commit first; if it is still there, stop and ask). Task 1 writes nothing.
 - Commit with `git -c user.name="bagude" -c user.email="45043048+bagude@users.noreply.github.com" commit -m "<subject>" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" -m "Claude-Session: https://claude.ai/code/session_01MWkhSZsRjU8L3V3TWfwTLz"`; never write git config.
 - Run tests with `npm test`. All existing tests keep passing.
-- The llama router key file is `.llama-api-key` next to `qwen-flash/serve.ps1` (under `C:\Users\user\open_harnessess\pi\qwen-flash`). Read it into a shell variable or a `$(cat …)` header; never print it, never paste it into a file.
+- The llama router key file is `.llama-api-key` next to `serve.ps1` in `C:\Users\user\Downloads\claude_playground\os\qwen-flash`. Read it into a shell variable or a `$(cat …)` header; never print it, never paste it into a file.
 - Nothing changes for a config without `thinking`: no flag, no frontmatter line, no prompt suffix.
 - While the paired batch runs, do not edit `supervisor.mjs`, `lib/` or `ext/`.
 
