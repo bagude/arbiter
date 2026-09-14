@@ -1,0 +1,6 @@
+id: ARCX-PR-2026-09-07
+title: Arc Pharmaceuticals reports topline results from Phase 2 study
+publisher: Arc Pharmaceuticals, Inc. (fictional press release)
+published: 2026-09-07T11:00:00Z
+
+Arc Pharmaceuticals, Inc. today reported topline results from its Phase 2 study. The study did not meet its primary endpoint. The Company will complete a full analysis of the data and determine next steps for the program.

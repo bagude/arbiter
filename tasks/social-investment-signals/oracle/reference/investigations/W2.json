@@ -1,0 +1,24 @@
+{
+  "candidate": "W2",
+  "company": "Meridian Grid Storage",
+  "ticker": "MRDN",
+  "thesis": "Bullish Q4-2026 Sonora narrative contradicted by the company's own release",
+  "evidence_handles": ["rs-003", "rs-004", "ri-006", "rw-003", "x-002", "MRDN-PR-2026-09-10"],
+  "supporting_evidence": [
+    { "post": "ri-006", "quote": "the Sonora commissioning slips to the second quarter of 2027 on interconnection permitting" }
+  ],
+  "counterevidence": [
+    { "post": "rs-003", "quote": "Sonora 600 MWh site goes live Q4 2026 per their investor day slides" },
+    { "post": "rw-003", "quote": "$MRDN Sonora goes live Q4, free money, calls for December" },
+    { "post": "x-002", "quote": "Sonora 600 MWh online Q4 2026, first utility-scale revenue" }
+  ],
+  "verification_status": "verified",
+  "verification": [
+    { "claim": "Commissioning now Q2 2027", "status": "verified", "primary": { "doc": "MRDN-PR-2026-09-10", "quote": "commissioning of the 600 MWh Sonora facility is now expected in the second quarter of 2027" } },
+    { "claim": "Goes live Q4 2026", "status": "contradicted", "primary": { "doc": "MRDN-PR-2026-09-10", "quote": "compared with the previously communicated fourth quarter of 2026" } }
+  ],
+  "unresolved_questions": [
+    "Do the contracted capacity payments carry a start date tied to commissioning, or a fixed calendar date?",
+    "Is the interconnection permit on a published queue with a date?"
+  ]
+}

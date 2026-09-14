@@ -82,6 +82,10 @@ const GUARDS = [
 	path.join(here, "ext", "guards", "result-handles.ts"),
 	// Write/edit argument elision (registers nothing unless CONFIG.guards.call_args is set).
 	path.join(here, "ext", "guards", "call-args.ts"),
+	// Deny a fresh foreground `subagent` call while context is already large (registers
+	// nothing unless CONFIG.guards.pre_spawn_compact is set); only the orchestrator ever
+	// calls `subagent`, but every role loads it like every other guard here.
+	path.join(here, "ext", "guards", "pre-spawn-compact.ts"),
 ];
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
@@ -334,6 +338,7 @@ function launch(name) {
 			// options (possibly {}) turns it on for every role in the run.
 			ARBITER_CONTEXT_DIET: CONFIG.guards.context_diet ? JSON.stringify(CONFIG.guards.context_diet) : "",
 			ARBITER_CALL_ARGS: CONFIG.guards.call_args ? JSON.stringify(CONFIG.guards.call_args) : "",
+			ARBITER_PRE_SPAWN_COMPACT: CONFIG.guards.pre_spawn_compact ? JSON.stringify(CONFIG.guards.pre_spawn_compact) : "",
 			ARBITER_MOUNTS: MOUNTS.length ? JSON.stringify(MOUNTS) : "",
 			// Memory tools (ext/memory-ext.ts): empty index = the extension registers
 			// nothing. Scopes and budget are enforced inside the tools on every call.
@@ -774,6 +779,10 @@ function pumpLifecycle() {
 		const { audit: lines, decision } = applyLifecycleEvent(tracker, state, timeline, { ev, data, now: Date.now() });
 		for (const line of lines) log(line);
 		if (decision) pendingDecisionFor = decision;
+		// A fresh, foreground `subagent` call was denied for size (ext/guards/pre-spawn-compact.ts):
+		// this is the one boundary that can fire with no worker yet spawned, before the tool
+		// call that would otherwise hold the orchestrator's turn open for the child's whole run.
+		if (ev === "guard:pre_spawn_compact_denied") boundaryPending = boundaryPending ?? "pre-spawn (context large before a foreground worker)";
 	}
 }
 
@@ -1277,11 +1286,12 @@ function finish(reason) {
 	try {
 		// The explorer's deliverable, when there is one, becomes one record per
 		// observation with the oracle's per-observation verification stamped on it.
-		// Three deliverable shapes carry findings: the explorer's exploration.json
-		// (observations), a study's study.json and a report's report.json (claims).
+		// Four deliverable shapes carry findings: the explorer's exploration.json
+		// (observations), a study's study.json and a report's report.json (claims), and
+		// a watchlist.json (candidates).
 		let deliverable = null;
 		try {
-			for (const name of ["exploration.json", "study.json", "report.json"]) {
+			for (const name of ["exploration.json", "study.json", "report.json", "watchlist.json"]) {
 				const f = path.join(WS.workspace, "src", name);
 				if (fs.existsSync(f)) {
 					deliverable = JSON.parse(fs.readFileSync(f, "utf8"));

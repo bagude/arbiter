@@ -1,0 +1,6 @@
+id: OSPR-PR-2026-09-04
+title: Osprey Freight Lines declares quarterly dividend
+publisher: Osprey Freight Lines, Inc. (fictional press release)
+published: 2026-09-04T13:00:00Z
+
+The Board of Directors of Osprey Freight Lines, Inc. declared a quarterly cash dividend of $0.42 per share, unchanged from the prior quarter, payable October 15, 2026 to shareholders of record on September 30, 2026.

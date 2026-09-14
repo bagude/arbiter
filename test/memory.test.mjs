@@ -309,3 +309,12 @@ test("retainFromRun turns a study's claims into finding records, verified ones p
 	assert.ok(c2.evidence.includes("memory:m_000000000001"));
 	assert.ok(out.some((r) => r.kind === "question" && r.text.startsWith("Does the terminal")));
 });
+
+test("findingsOf reads a watchlist's candidates as findings naming company and ticker", () => {
+	const f = findingsOf({ candidates: [{ id: "W1", claim: "observed", company: "Halvard Semiconductor", ticker: "HLVS", stance: "bullish", thesis: "Supply deal marks an inflection." }, null] });
+	assert.equal(f.length, 1);
+	assert.equal(f[0].id, "W1");
+	assert.equal(f[0].claim, "observed");
+	assert.equal(f[0].title, "Halvard Semiconductor (HLVS), bullish: Supply deal marks an inflection.");
+	assert.deepEqual(f[0].evidence_refs, []);
+});

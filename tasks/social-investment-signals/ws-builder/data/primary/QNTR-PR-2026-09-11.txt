@@ -1,0 +1,8 @@
+id: QNTR-PR-2026-09-11
+title: Quantera Biolabs announces FDA acceptance of New Drug Application
+publisher: Quantera Biolabs, Inc. (fictional press release)
+published: 2026-09-11T11:30:00Z
+
+Quantera Biolabs, Inc. today announced that the U.S. Food and Drug Administration has accepted for review the New Drug Application for its lead candidate. The FDA has assigned a Prescription Drug User Fee Act (PDUFA) target action date of March 14, 2027.
+
+The application is supported by the Phase 3 program, which met its primary and key secondary endpoints. This release does not include updated financial information.

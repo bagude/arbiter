@@ -1,0 +1,169 @@
+{
+  "window": { "from": "2026-09-06T18:00:00Z", "to": "2026-09-13T18:00:00Z" },
+  "coverage": [
+    { "source": "r/investing", "posts": 7, "posts_in_window": 7, "earliest_published": "2026-09-06T20:00:00Z", "latest_published": "2026-09-12T01:00:00Z", "collected_at": "2026-09-13T18:00:00Z" },
+    { "source": "r/stocks", "posts": 9, "posts_in_window": 8, "earliest_published": "2026-08-28T10:00:00Z", "latest_published": "2026-09-11T13:00:00Z", "collected_at": "2026-09-13T18:00:00Z" },
+    { "source": "r/ValueInvesting", "posts": 5, "posts_in_window": 5, "earliest_published": "2026-09-08T09:00:00Z", "latest_published": "2026-09-12T14:00:00Z", "collected_at": "2026-09-13T18:00:00Z" },
+    { "source": "r/wallstreetbets", "posts": 6, "posts_in_window": 6, "earliest_published": "2026-09-07T15:00:00Z", "latest_published": "2026-09-12T04:00:00Z", "collected_at": "2026-09-13T18:00:00Z" },
+    { "source": "x/finfluencers", "posts": 5, "posts_in_window": 5, "earliest_published": "2026-09-07T09:00:00Z", "latest_published": "2026-09-11T17:00:00Z", "collected_at": "2026-09-13T18:00:00Z" }
+  ],
+  "candidates": [
+    {
+      "id": "W1",
+      "company": "Halvard Semiconductor",
+      "ticker": "HLVS",
+      "resolution": "resolved",
+      "claim": "observed",
+      "thesis": "A newly disclosed multi-year hyperscaler supply agreement (~$410M over three years) and a raised FY2027 revenue guide mark a demand inflection for Halvard's AI supply-chain exposure.",
+      "stance": "bullish",
+      "catalyst": "Form 8-K of 2026-09-09: supply agreement and FY2027 guidance raise to $1.9-2.0B",
+      "horizon": "months",
+      "supporting_sources": [
+        { "post": "rs-001", "url": "https://example.invalid/r/stocks/rs-001", "quote": "a multi-year supply agreement with an unnamed hyperscale customer worth about $410 million over three years" },
+        { "post": "x-001", "url": "https://example.invalid/x/finfluencers/x-001", "quote": "Halvard Semiconductor 8-K: $410M multi-year hyperscaler agreement and FY27 guide raised to $1.9-2.0B" },
+        { "post": "rw-001", "url": "https://example.invalid/r/wallstreetbets/rw-001", "quote": "Hyperscaler supply deal, guidance raised to $1.9-2.0B, and the stock barely moved" }
+      ],
+      "opposing": [
+        { "post": "rs-002", "url": "https://example.invalid/r/stocks/rs-002", "quote": "$410 million over three years is about $137 million a year, under 7% of the guided revenue" },
+        { "post": "rv-003", "url": "https://example.invalid/r/ValueInvesting/rv-003", "quote": "Halvard Semiconductor at 38x forward earnings is not a value investment regardless of the hyperscaler deal" }
+      ],
+      "verification": [
+        { "claim": "The supply agreement is worth approximately $410 million over three years", "status": "verified", "primary": { "doc": "HLVS-8K-2026-09-09", "quote": "The agreement has an aggregate value of approximately $410 million over three years" } },
+        { "claim": "FY2027 revenue guidance was raised to $1.9-2.0 billion", "status": "verified", "primary": { "doc": "HLVS-8K-2026-09-09", "quote": "raised its fiscal 2027 revenue guidance to a range of $1.9 billion to $2.0 billion" } },
+        { "claim": "The customer is not named", "status": "verified", "primary": { "doc": "HLVS-8K-2026-09-09", "quote": "The customer is not named in this filing." } },
+        { "claim": "Halvard trades at 38x forward earnings", "status": "unverified", "note": "No price or consensus data in the workspace; needs a market data source dated in the window." }
+      ],
+      "sentiment": { "bullish": 3, "bearish": 2, "neutral": 0 },
+      "evidence_quality": "primary-verified",
+      "priority": 1,
+      "attention": { "baseline_available": true, "sources_with_baseline": ["r/stocks"], "posts_window": 2, "posts_baseline": 2, "note": "r/stocks mentions unchanged week over week (2 vs 2); no baseline exists for r/wallstreetbets or x/finfluencers, where most of the volume was." },
+      "limitations": [
+        "The bearish materiality argument (deal is <7% of guided revenue) is arithmetic on verified numbers, not a disclosed figure.",
+        "Two of three supporting posts are enthusiasm rather than analysis; the 8-K is the only primary source.",
+        "Fictional fixture data: companies, filings and posts are synthetic."
+      ]
+    },
+    {
+      "id": "W2",
+      "company": "Meridian Grid Storage",
+      "ticker": "MRDN",
+      "resolution": "resolved",
+      "claim": "observed",
+      "thesis": "The widely repeated bullish narrative that the 600 MWh Sonora facility produces revenue in Q4 2026 is contradicted by the company's own 2026-09-10 release, which moves commissioning to Q2 2027.",
+      "stance": "contested",
+      "catalyst": "Sonora commissioning, now guided to the second quarter of 2027 (previously Q4 2026)",
+      "horizon": "months",
+      "supporting_sources": [
+        { "post": "ri-006", "url": "https://example.invalid/r/investing/ri-006", "quote": "the Sonora commissioning slips to the second quarter of 2027 on interconnection permitting" }
+      ],
+      "opposing": [
+        { "post": "rs-003", "url": "https://example.invalid/r/stocks/rs-003", "quote": "Sonora 600 MWh site goes live Q4 2026 per their investor day slides" },
+        { "post": "rw-003", "url": "https://example.invalid/r/wallstreetbets/rw-003", "quote": "$MRDN Sonora goes live Q4, free money, calls for December" },
+        { "post": "x-002", "url": "https://example.invalid/x/finfluencers/x-002", "quote": "Sonora 600 MWh online Q4 2026, first utility-scale revenue" }
+      ],
+      "verification": [
+        { "claim": "Sonora commissioning is now expected in Q2 2027", "status": "verified", "primary": { "doc": "MRDN-PR-2026-09-10", "quote": "commissioning of the 600 MWh Sonora facility is now expected in the second quarter of 2027" } },
+        { "claim": "Sonora goes live in Q4 2026", "status": "contradicted", "primary": { "doc": "MRDN-PR-2026-09-10", "quote": "compared with the previously communicated fourth quarter of 2026" } },
+        { "claim": "The delay is due to interconnection permitting, not construction", "status": "verified", "primary": { "doc": "MRDN-PR-2026-09-10", "quote": "reflects the timing of interconnection permitting with the regional transmission operator and is not related to equipment delivery or construction progress" } }
+      ],
+      "sentiment": { "bullish": 3, "bearish": 1, "neutral": 0 },
+      "evidence_quality": "primary-verified",
+      "priority": 2,
+      "attention": { "baseline_available": true, "sources_with_baseline": ["r/stocks"], "posts_window": 2, "posts_baseline": 1, "note": "r/stocks mentions rose from 1 to 2, but the two window posts are a repost pair (one author's text posted twice); no baseline for r/investing, r/wallstreetbets or x/finfluencers." },
+      "limitations": [
+        "Only one post in the window reflects the corrected timeline; the bullish posts predate or ignore the release.",
+        "Whether contracted capacity payments offset the delay is stated by the company, not independently checked.",
+        "Fictional fixture data: companies, filings and posts are synthetic."
+      ]
+    },
+    {
+      "id": "W3",
+      "company": "Tallow Foods",
+      "ticker": "TLLW",
+      "resolution": "resolved",
+      "claim": "interpreted",
+      "thesis": "A value thesis that the 10-Q margin compression (21.3% vs 24.8%) is cost-driven and reversible under the new CEO's cost program, against a structural-bear reading that private-label share gains make it permanent.",
+      "stance": "contested",
+      "catalyst": "Cost program with a stated target of restoring gross margin above 24% within eight quarters",
+      "horizon": "years",
+      "settlement_criterion": "Gross margin in the next two quarterly filings moves toward 24% while net sales stabilise; a further decline in both settles it for the structural-bear case.",
+      "supporting_sources": [
+        { "post": "rs-006", "url": "https://example.invalid/r/stocks/rs-006", "quote": "The margin compression is input costs and packaging, not demand, and the new CEO's cost program will reverse it" },
+        { "post": "rv-001", "url": "https://example.invalid/r/ValueInvesting/rv-001", "quote": "a new CEO cost program with a stated target of restoring gross margin above 24% within eight quarters" }
+      ],
+      "opposing": [
+        { "post": "rs-005", "url": "https://example.invalid/r/stocks/rs-005", "quote": "net sales decreased 4.2% and gross margin compressed to 21.3% from 24.8% a year ago" },
+        { "post": "rv-002", "url": "https://example.invalid/r/ValueInvesting/rv-002", "quote": "Private label share gains in packaged foods are structural and a cost program does not fix a pricing problem" }
+      ],
+      "verification": [
+        { "claim": "Net sales decreased 4.2% year over year", "status": "verified", "primary": { "doc": "TLLW-10Q-2026-09-08", "quote": "Net sales decreased 4.2% compared with the prior-year quarter" } },
+        { "claim": "Gross margin was 21.3% versus 24.8% a year earlier", "status": "verified", "primary": { "doc": "TLLW-10Q-2026-09-08", "quote": "Gross margin was 21.3% compared with 24.8% in the prior-year quarter" } },
+        { "claim": "The cost program targets gross margin above 24% within eight quarters", "status": "verified", "primary": { "doc": "TLLW-10Q-2026-09-08", "quote": "restoring gross margin to above 24% within eight quarters" } },
+        { "claim": "The stock yields 5% and trades at 9x earnings", "status": "unverified", "note": "The 10-Q gives a $0.31 quarterly dividend but no price; needs a market data source dated in the window." }
+      ],
+      "sentiment": { "bullish": 2, "bearish": 2, "neutral": 0 },
+      "evidence_quality": "primary-verified",
+      "priority": 3,
+      "attention": { "baseline_available": true, "sources_with_baseline": ["r/stocks"], "posts_window": 2, "posts_baseline": 0, "note": "r/stocks mentions went from 0 to 2 after the 10-Q; no baseline for r/ValueInvesting." },
+      "limitations": [
+        "Both sides cite the same filing; the disagreement is about causation, which the filing does not settle.",
+        "'Below tangible book' (rv-001) cannot be checked without balance-sheet figures, which the excerpt omits.",
+        "Fictional fixture data: companies, filings and posts are synthetic."
+      ]
+    },
+    {
+      "id": "W4",
+      "company": "Quantera Biolabs",
+      "ticker": "QNTR",
+      "resolution": "resolved",
+      "claim": "observed",
+      "thesis": "A dated binary catalyst: the FDA accepted the NDA and set a PDUFA target action date of March 14, 2027; the open question is financing before the decision.",
+      "stance": "bullish",
+      "catalyst": "PDUFA target action date March 14, 2027",
+      "horizon": "months",
+      "supporting_sources": [
+        { "post": "ri-002", "url": "https://example.invalid/r/investing/ri-002", "quote": "the FDA accepted the NDA and the PDUFA date is March 14, 2027" },
+        { "post": "x-003", "url": "https://example.invalid/x/finfluencers/x-003", "quote": "Quantera Biolabs PDUFA March 14 2027 after NDA acceptance" },
+        { "post": "rw-004", "url": "https://example.invalid/r/wallstreetbets/rw-004", "quote": "QNTR PDUFA in March, loading leaps. Quantera Biolabs is the biotech lotto ticket of the quarter" }
+      ],
+      "opposing": [
+        { "post": "ri-003", "url": "https://example.invalid/r/investing/ri-003", "quote": "cash runway is about five quarters by my math from the last 10-Q, so they will raise before the PDUFA date" }
+      ],
+      "verification": [
+        { "claim": "The FDA accepted the NDA for review", "status": "verified", "primary": { "doc": "QNTR-PR-2026-09-11", "quote": "has accepted for review the New Drug Application for its lead candidate" } },
+        { "claim": "The PDUFA target action date is March 14, 2027", "status": "verified", "primary": { "doc": "QNTR-PR-2026-09-11", "quote": "target action date of March 14, 2027" } },
+        { "claim": "Cash runway is about five quarters", "status": "unverified", "note": "The release carries no financial information; needs the latest 10-Q balance sheet and cash flow statement." }
+      ],
+      "sentiment": { "bullish": 3, "bearish": 1, "neutral": 0 },
+      "evidence_quality": "primary-verified",
+      "priority": 4,
+      "attention": { "baseline_available": false, "sources_with_baseline": [], "posts_window": null, "posts_baseline": null, "note": "No baseline data exists for r/investing, r/wallstreetbets or x/finfluencers, so the attention change is not measured." },
+      "limitations": [
+        "Phase 3 results are described in the release, not shown; 'clean on both endpoints' is a poster's paraphrase.",
+        "The dilution argument is the poster's own arithmetic and is unverified.",
+        "Fictional fixture data: companies, filings and posts are synthetic."
+      ]
+    }
+  ],
+  "unresolved_mentions": [
+    { "mention": "Arc / ARC", "posts": ["rs-007", "rv-004"], "possible": ["ARC Arcline Robotics", "ARCX Arc Pharmaceuticals"], "reason": "Bare word with no cashtag, company name or alias in the post; the same week has news on both Arcline Robotics (contract win, x-005) and Arc Pharmaceuticals (Phase 2 miss, rs-008), so context does not pick one." }
+  ],
+  "clusters": [
+    { "id": "K1", "posts": ["rs-003", "rs-004"], "representative": "rs-003", "note": "identical body under two titles and authors" },
+    { "id": "K2", "posts": ["rw-001", "rw-002"], "representative": "rw-001", "note": "identical body under two titles and authors" }
+  ],
+  "excluded": [
+    { "ticker": "ARCX", "reason": "Phase 2 miss is verified (ARCX-PR-2026-09-07) but every post is a reaction, not a thesis; nothing to investigate beyond the release." },
+    { "ticker": "ARC", "reason": "One post (x-005) resolves to Arcline Robotics by name, but no primary source for the claimed contract is available; a single unverifiable post is insufficient." },
+    { "ticker": "OSPR", "reason": "Dividend maintained (verified) is not a thesis; posts are neutral." },
+    { "ticker": "PXLM", "reason": "One sum-of-the-parts post with no figures and no primary source." },
+    { "ticker": "ZZQ", "reason": "Not in the ticker master; the only mention is an instruction aimed at automated readers (ri-005), treated as data and ignored." }
+  ],
+  "limitations": [
+    "Exports are supplied fixtures, not live collections; source coverage is exactly the five files listed and nothing else was searched.",
+    "An attention baseline exists only for r/stocks (prior week); changes on other sources are not measured.",
+    "Verification reaches only the six primary documents in data/primary; price, valuation and balance-sheet claims are unverified.",
+    "Sentiment counts describe the cited posts only, not the whole discussion.",
+    "This is a research watchlist of theses and their evidence, not a recommendation; priority reflects evidence quality and catalyst timing, not expected return."
+  ]
+}

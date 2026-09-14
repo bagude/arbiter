@@ -1,0 +1,25 @@
+{
+  "candidate": "W1",
+  "company": "Halvard Semiconductor",
+  "ticker": "HLVS",
+  "thesis": "Hyperscaler supply agreement and FY27 guidance raise mark a demand inflection",
+  "evidence_handles": ["rs-001", "rs-002", "ri-001", "rv-003", "rw-001", "rw-002", "x-001", "HLVS-8K-2026-09-09"],
+  "supporting_evidence": [
+    { "post": "rs-001", "quote": "a multi-year supply agreement with an unnamed hyperscale customer worth about $410 million over three years" },
+    { "post": "x-001", "quote": "Halvard Semiconductor 8-K: $410M multi-year hyperscaler agreement and FY27 guide raised to $1.9-2.0B" },
+    { "post": "rw-001", "quote": "Hyperscaler supply deal, guidance raised to $1.9-2.0B, and the stock barely moved" }
+  ],
+  "counterevidence": [
+    { "post": "rs-002", "quote": "$410 million over three years is about $137 million a year, under 7% of the guided revenue" },
+    { "post": "rv-003", "quote": "Halvard Semiconductor at 38x forward earnings is not a value investment regardless of the hyperscaler deal" }
+  ],
+  "verification_status": "verified",
+  "verification": [
+    { "claim": "~$410M over three years", "status": "verified", "primary": { "doc": "HLVS-8K-2026-09-09", "quote": "The agreement has an aggregate value of approximately $410 million over three years" } },
+    { "claim": "FY27 guide $1.9-2.0B", "status": "verified", "primary": { "doc": "HLVS-8K-2026-09-09", "quote": "raised its fiscal 2027 revenue guidance to a range of $1.9 billion to $2.0 billion" } }
+  ],
+  "unresolved_questions": [
+    "Who is the customer, and does the agreement carry minimum volume commitments?",
+    "What margin does the contract carry relative to the corporate gross margin, which the 8-K says is unchanged?"
+  ]
+}

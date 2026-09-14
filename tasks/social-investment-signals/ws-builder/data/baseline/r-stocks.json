@@ -1,0 +1,18 @@
+{
+  "source": "r/stocks",
+  "window": {
+    "from": "2026-08-30T18:00:00Z",
+    "to": "2026-09-06T18:00:00Z"
+  },
+  "method": "posts in the window whose title or body mentions the ticker ($SYMBOL, the whole-word symbol, the company name or an alias from tickers.csv), case-insensitive",
+  "mentions": {
+    "HLVS": 2,
+    "MRDN": 1,
+    "TLLW": 0,
+    "PXLM": 5,
+    "QNTR": 0,
+    "OSPR": 1,
+    "ARC": 0,
+    "ARCX": 0
+  }
+}

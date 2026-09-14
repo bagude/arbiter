@@ -1,0 +1,8 @@
+id: HLVS-8K-2026-09-09
+title: Halvard Semiconductor — Form 8-K, Item 1.01 Entry into a Material Definitive Agreement
+publisher: Halvard Semiconductor, Inc. (fictional filing)
+published: 2026-09-09T20:45:00Z
+
+On September 9, 2026, Halvard Semiconductor, Inc. entered into a multi-year supply agreement with a hyperscale cloud customer. The customer is not named in this filing. The agreement has an aggregate value of approximately $410 million over three years, subject to volume commitments and customary termination provisions.
+
+In connection with the agreement, the Company raised its fiscal 2027 revenue guidance to a range of $1.9 billion to $2.0 billion, from the prior range of $1.75 billion to $1.85 billion. Gross margin guidance is unchanged.

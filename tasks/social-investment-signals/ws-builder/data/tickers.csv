@@ -1,0 +1,9 @@
+symbol,name,exchange,aliases,ambiguous
+HLVS,Halvard Semiconductor,NASDAQ,Halvard;Halvard Semi,false
+MRDN,Meridian Grid Storage,NYSE,Meridian Grid;Meridian,false
+ARC,Arcline Robotics,NASDAQ,Arcline,true
+ARCX,Arc Pharmaceuticals,NASDAQ,Arc Pharma,true
+TLLW,Tallow Foods,NYSE,Tallow,false
+QNTR,Quantera Biolabs,NASDAQ,Quantera,false
+PXLM,Pixelmarch Entertainment,NYSE,Pixelmarch,false
+OSPR,Osprey Freight Lines,NYSE,Osprey Freight;Osprey,false

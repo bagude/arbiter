@@ -1,0 +1,25 @@
+{
+  "candidate": "W4",
+  "company": "Quantera Biolabs",
+  "ticker": "QNTR",
+  "thesis": "Dated PDUFA catalyst (March 14, 2027) with financing risk before the decision",
+  "evidence_handles": ["ri-002", "ri-003", "rw-004", "x-003", "QNTR-PR-2026-09-11"],
+  "supporting_evidence": [
+    { "post": "ri-002", "quote": "the FDA accepted the NDA and the PDUFA date is March 14, 2027" },
+    { "post": "x-003", "quote": "Quantera Biolabs PDUFA March 14 2027 after NDA acceptance" },
+    { "post": "rw-004", "quote": "QNTR PDUFA in March, loading leaps. Quantera Biolabs is the biotech lotto ticket of the quarter" }
+  ],
+  "counterevidence": [
+    { "post": "ri-003", "quote": "cash runway is about five quarters by my math from the last 10-Q, so they will raise before the PDUFA date" }
+  ],
+  "verification_status": "verified",
+  "verification": [
+    { "claim": "NDA accepted", "status": "verified", "primary": { "doc": "QNTR-PR-2026-09-11", "quote": "has accepted for review the New Drug Application for its lead candidate" } },
+    { "claim": "PDUFA March 14, 2027", "status": "verified", "primary": { "doc": "QNTR-PR-2026-09-11", "quote": "target action date of March 14, 2027" } },
+    { "claim": "Runway ~5 quarters", "status": "unverified", "note": "no financials in the release" }
+  ],
+  "unresolved_questions": [
+    "Cash and quarterly burn from the latest 10-Q; does runway reach past March 2027 without a raise?",
+    "Is there an advisory committee meeting scheduled before the PDUFA date?"
+  ]
+}

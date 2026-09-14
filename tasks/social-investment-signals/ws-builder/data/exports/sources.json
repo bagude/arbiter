@@ -1,0 +1,10 @@
+{
+  "collected_at": "2026-09-13T18:00:00Z",
+  "sources": {
+    "r/investing": "exports/reddit/r-investing.jsonl",
+    "r/stocks": "exports/reddit/r-stocks.jsonl",
+    "r/ValueInvesting": "exports/reddit/r-ValueInvesting.jsonl",
+    "r/wallstreetbets": "exports/reddit/r-wallstreetbets.jsonl",
+    "x/finfluencers": "exports/x/x-finfluencers.jsonl"
+  }
+}

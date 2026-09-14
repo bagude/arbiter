@@ -1,6 +1,6 @@
 # guard context_diet
 
-Totals across 7 run(s): rewritten 369.
+Totals across 8 run(s): rewritten 415.
 
 ## By run
 
@@ -11,3 +11,4 @@ Totals across 7 run(s): rewritten 369.
 - [[runs/2026-09-13T16-06-37]] — rewritten 118
 - [[runs/2026-09-13T16-41-50]] — rewritten 87
 - [[runs/2026-09-13T17-09-06]] — rewritten 21
+- [[runs/2026-09-14T00-07-57]] — rewritten 46

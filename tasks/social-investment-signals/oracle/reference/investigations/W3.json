@@ -1,0 +1,25 @@
+{
+  "candidate": "W3",
+  "company": "Tallow Foods",
+  "ticker": "TLLW",
+  "thesis": "Margin compression is cost-driven and reversible (bull) vs structural private-label pressure (bear)",
+  "evidence_handles": ["rs-005", "rs-006", "rv-001", "rv-002", "TLLW-10Q-2026-09-08"],
+  "supporting_evidence": [
+    { "post": "rs-006", "quote": "The margin compression is input costs and packaging, not demand, and the new CEO's cost program will reverse it" },
+    { "post": "rv-001", "quote": "a new CEO cost program with a stated target of restoring gross margin above 24% within eight quarters" }
+  ],
+  "counterevidence": [
+    { "post": "rs-005", "quote": "net sales decreased 4.2% and gross margin compressed to 21.3% from 24.8% a year ago" },
+    { "post": "rv-002", "quote": "Private label share gains in packaged foods are structural and a cost program does not fix a pricing problem" }
+  ],
+  "verification_status": "verified",
+  "verification": [
+    { "claim": "Net sales -4.2%", "status": "verified", "primary": { "doc": "TLLW-10Q-2026-09-08", "quote": "Net sales decreased 4.2% compared with the prior-year quarter" } },
+    { "claim": "Gross margin 21.3% vs 24.8%", "status": "verified", "primary": { "doc": "TLLW-10Q-2026-09-08", "quote": "Gross margin was 21.3% compared with 24.8% in the prior-year quarter" } },
+    { "claim": "9x earnings, 5% yield", "status": "unverified", "note": "needs a price; the 10-Q gives only the $0.31 quarterly dividend" }
+  ],
+  "unresolved_questions": [
+    "How much of the 4.2% sales decline is volume versus price, by segment?",
+    "Is the dividend covered by free cash flow after the cost program's restructuring charges?"
+  ]
+}
