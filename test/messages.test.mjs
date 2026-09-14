@@ -114,6 +114,17 @@ test("the orchestrator's texts never name roles the run does not have", () => {
 	for (const text of all) assert.doesNotMatch(text, /BUILDER|CRITIC|your counterpart/, text);
 });
 
+test("gate: unreported names the workers and the fix; probe: autoResults names the worker whose cases ran", () => {
+	assert.equal(
+		orch.gate.unreported(["worker:a1", "worker:b2"]),
+		'[SUPERVISOR] Approval not accepted: worker:a1, worker:b2 finished without calling `report`. Resume each one with `subagent` (resume: "<worker id>") and ask it to call `report` with what it did and how to verify it, then send done again.',
+	);
+	assert.equal(
+		orch.probe.autoResults(3, "worker:a1", ["1/1 matched the worker's stated expectations."]),
+		"[SUPERVISOR] Probe run #3 — worker:a1's own verify cases from its report, executed by the supervisor against the current src/, not self-reported. They check only what the worker chose to check; probe anything else you need before done.\n1/1 matched the worker's stated expectations.",
+	);
+});
+
 test("compaction messages name the checkpoint tool and keep ids valid after a compaction", () => {
 	const orch = messages("orchestrator");
 	assert.match(orch.compaction.checkpointRequest(41000), /^\[SUPERVISOR\] Context checkpoint: your context is 41000 tokens/);

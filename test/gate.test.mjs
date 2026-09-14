@@ -26,3 +26,13 @@ test("accepts when probed, unchanged and quiet", () => {
 test("checks are ordered: no_probe wins over stale", () => {
 	assert.equal(decideApproval({ ...base, lastProbeHash: null, currentHash: "zzz" }).reason, "no_probe");
 });
+test("rejects when a completed worker has no report — after no_probe and no_src, before stale", () => {
+	const r = decideApproval({ ...base, unreported: ["worker:a"] });
+	assert.equal(r.reason, "unreported");
+	assert.deepEqual(r.unreported, ["worker:a"]);
+	assert.equal(decideApproval({ ...base, lastProbeHash: null, unreported: ["worker:a"] }).reason, "no_probe");
+	assert.equal(decideApproval({ ...base, srcExists: false, unreported: ["worker:a"] }).reason, "no_src");
+	assert.equal(decideApproval({ ...base, currentHash: "h2", unreported: ["worker:a"] }).reason, "unreported");
+	assert.equal(decideApproval({ ...base, lastEditTs: 50_000, unreported: [] }).ok, true);
+	assert.equal(decideApproval({ ...base, lastEditTs: 50_000 }).ok, true, "default is an empty list");
+});
