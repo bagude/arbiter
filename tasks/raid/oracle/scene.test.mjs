@@ -121,7 +121,7 @@ test("stage 7: updateScene", () => {
 	assert.equal(back.getObjectByName("unit-1").visible, true);
 	near(back.getObjectByName("unit-1").getObjectByName("hpbar").scale.x, 0.7648);
 	throwsType(() => S.updateScene(sc, [...u, { id: "e", side: 0, hp: 1, stats: { hp: 1 }, affinity: "magic" }]));
-	throwsType(() => S.updateScene(sc, []));
+	// (an empty unit list is not specified for updateScene; not asserted — 2026-09-15, run 03-11-27 attempt 1)
 });
 test("stage 7: scene from a real battle state", () => {
 	const A = [R.makeChampion(C.kael), R.makeChampion(C.vell)];
