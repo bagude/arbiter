@@ -1,0 +1,4 @@
+{ "task": "raid", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1, "thinking": "off" } },
+  "caps": { "toolCalls": 400, "wallSec": 10800, "usd": 5, "doneAttempts": 6 },
+  "_note": "Paired with orch-raid-27b.json (2026-09-15): worker thinking off (chat-template enable_thinking=false via the ~/.pi/agent/models.json override); orchestrator unchanged. The second thinking pair the backlog asked for before any default flips, on the largest implement-to-spec task so far." }
