@@ -1,0 +1,4 @@
+{ "task": "raid", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
+  "caps": { "toolCalls": 400, "wallSec": 10800, "usd": 5, "doneAttempts": 6 },
+  "_note": "First run of the raid task (2026-09-14): a seven-stage squad-RPG core plus a three.js scene (vendored r186), the largest implement-to-spec task so far (~78 hidden tests over two suites via a validate.mjs wrapper). Caps raised from the orbit footprint (250 calls / 6000 s) for the size." }

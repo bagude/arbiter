@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>raid — battle replay</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b1020; color: #e5e7eb; font: 14px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #log { position: fixed; left: 12px; top: 12px; width: 360px; max-height: calc(100% - 24px); overflow: auto; background: rgba(15, 23, 42, 0.85); padding: 10px 12px; border-radius: 8px; }
+  #log h1 { font-size: 15px; margin: 0 0 6px; }
+  #log p { margin: 2px 0; }
+  .crit { color: #fbbf24; } .kill { color: #f87171; } .buff { color: #93c5fd; }
+</style>
+</head>
+<body>
+<div id="log"><h1>raid — battle replay</h1><p id="status">loading…</p></div>
+<script type="module">
+  import * as THREE from "./vendor/three.module.js";
+  import { SAMPLE_CHAMPIONS, makeChampion, runBattle } from "./raid.mjs";
+  import { makeCamera, buildScene, updateScene } from "./scene.mjs";
+
+  const C = SAMPLE_CHAMPIONS;
+  const teamA = [makeChampion(C.kael), makeChampion(C.vell)];
+  const teamB = [makeChampion(C.grim), makeChampion(C.nyx)];
+  const seed = 1;
+  const battle = runBattle(teamA, teamB, seed);
+  const names = [...teamA, ...teamB].map((c) => c.name);
+  const skills = [...teamA, ...teamB].map((c) => c.skills.map((s) => s.name));
+
+  // Live copy of the units at the start of the battle; hits are applied as the log replays.
+  let live = [...teamA.map((c) => ({ ...c, side: 0 })), ...teamB.map((c) => ({ ...c, side: 1 }))];
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+  const camera = makeCamera(window.innerWidth / window.innerHeight);
+  const scene = buildScene(live);
+  window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  const logEl = document.getElementById("log");
+  const status = document.getElementById("status");
+  status.textContent = `seed ${seed}: ${names.slice(0, 2).join(" + ")} vs ${names.slice(2).join(" + ")} — ${battle.turns} turns, winner ${battle.winner}`;
+
+  let i = 0;
+  let flash = null;
+  function step() {
+    if (i >= battle.log.length) return;
+    const t = battle.log[i++];
+    const p = document.createElement("p");
+    const parts = t.hits.map((h) => `${names[h.target]} −${h.damage}${h.crit ? " CRIT" : ""}${h.killed ? " ☠" : ""}`);
+    p.innerHTML = `<b>T${t.turn}</b> ${names[t.actor]} → ${skills[t.actor][t.skill]}${parts.length ? ": " + parts.join(", ") : " <span class=buff>(no damage)</span>"}`;
+    if (t.hits.some((h) => h.crit)) p.classList.add("crit");
+    if (t.hits.some((h) => h.killed)) p.classList.add("kill");
+    logEl.appendChild(p);
+    logEl.scrollTop = logEl.scrollHeight;
+    live = live.map((u, k) => {
+      const hit = t.hits.filter((h) => h.target === k).reduce((s, h) => s + h.damage, 0);
+      return hit ? { ...u, hp: Math.max(0, u.hp - hit) } : u;
+    });
+    updateScene(scene, live);
+    flash = { actor: t.actor, until: performance.now() + 250 };
+  }
+  setInterval(step, 600);
+
+  function frame(now) {
+    for (let k = 0; k < live.length; k++) {
+      const g = scene.getObjectByName(`unit-${k}`);
+      const body = g.getObjectByName("body");
+      const active = flash && flash.actor === k && now < flash.until;
+      body.position.x = active ? (live[k].side === 0 ? 0.6 : -0.6) : 0;
+    }
+    scene.getObjectByName("side-0").rotation.y = Math.sin(now / 2000) * 0.02;
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>

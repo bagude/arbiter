@@ -1,0 +1,4 @@
+{ "task": "raid-timeline", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
+  "caps": { "toolCalls": 300, "wallSec": 5400, "usd": 5, "doneAttempts": 5 },
+  "_note": "raid follow-on (night of 2026-09-14): deterministic animation keyframes for a battle log, and the animated state at any time." }

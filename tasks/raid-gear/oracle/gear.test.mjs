@@ -1,0 +1,134 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as R from "./src/raid.mjs";
+import * as G from "./src/gear.mjs";
+
+const C = R.SAMPLE_CHAMPIONS;
+const throwsType = (fn, prefix = "invalid argument") => assert.throws(fn, (e) => e instanceof TypeError && e.message.startsWith(prefix), `expected TypeError "${prefix}..."`);
+const throwsRange = (fn, prefix) => assert.throws(fn, (e) => e instanceof RangeError && e.message.startsWith(prefix), `expected RangeError "${prefix}..."`);
+const kael = () => R.makeChampion(C.kael);
+const gearAll = () => G.sampleArtifacts().reduce((c, a) => G.equip(c, a), kael());
+const piece = (id, slot, set, stat, value) => ({ id, slot, set, main: { stat, value } });
+
+test("constants", () => {
+	assert.deepEqual(G.SLOTS, ["weapon", "helmet", "shield", "gloves", "chest", "boots"]);
+	assert.deepEqual(G.SETS.relentless, { pieces: 4, bonus: { stat: "atk%", value: 30 } });
+	assert.equal(G.MAX_SUBS, 4);
+});
+test("stage 1: sampleArtifacts is the documented six and fresh each call", () => {
+	const a = G.sampleArtifacts();
+	assert.deepEqual(a.map((x) => [x.id, x.slot, x.set]), [["ember-blade", "weapon", "fierce"], ["ember-gloves", "gloves", "fierce"], ["wind-boots", "boots", "swift"], ["wind-helm", "helmet", "swift"], ["oak-shield", "shield", "sturdy"], ["oak-chest", "chest", "sturdy"]]);
+	assert.deepEqual(a[0].main, { stat: "atk", value: 40 });
+	assert.deepEqual(a[0].subs, [{ stat: "atk%", value: 5 }, { stat: "spd", value: 3 }]);
+	assert.deepEqual(a[3].subs, [{ stat: "hp%", value: 6 }, { stat: "def%", value: 4 }]);
+	assert.deepEqual(a[4], { id: "oak-shield", slot: "shield", set: "sturdy", main: { stat: "def", value: 50 }, subs: [{ stat: "hp", value: 150 }] });
+	assert.notEqual(G.sampleArtifacts(), a);
+	assert.notEqual(G.sampleArtifacts()[0], a[0]);
+});
+test("stage 1: validateArtifact normalises and rejects", () => {
+	assert.deepEqual(G.validateArtifact({ id: "a", slot: "boots", set: "swift", main: { stat: "spd", value: 5 } }), { id: "a", slot: "boots", set: "swift", main: { stat: "spd", value: 5 }, subs: [] });
+	const src = { id: "b", slot: "chest", set: "vital", main: { stat: "hp%", value: 8 }, subs: [{ stat: "def", value: 3 }] };
+	const v = G.validateArtifact(src);
+	assert.deepEqual(v, src);
+	assert.notEqual(v, src);
+	assert.notEqual(v.main, src.main);
+	assert.notEqual(v.subs, src.subs);
+	throwsType(() => G.validateArtifact(null));
+	throwsType(() => G.validateArtifact({ ...src, id: "" }));
+	throwsType(() => G.validateArtifact({ ...src, slot: "ring" }));
+	throwsType(() => G.validateArtifact({ ...src, set: "mystic" }));
+	throwsType(() => G.validateArtifact({ ...src, main: { stat: "crit", value: 1 } }));
+	throwsType(() => G.validateArtifact({ ...src, main: { stat: "atk", value: 0 } }));
+	throwsType(() => G.validateArtifact({ ...src, main: { stat: "atk", value: 2.5 } }));
+	throwsType(() => G.validateArtifact({ ...src, subs: [1, 2, 3, 4, 5].map(() => ({ stat: "hp", value: 1 })) }));
+	throwsType(() => G.validateArtifact({ ...src, subs: [{ stat: "hp", value: -1 }] }));
+});
+test("stage 1: equip replaces the slot and copies", () => {
+	const k = kael();
+	const [blade, gloves] = G.sampleArtifacts();
+	const x = { ...gloves, slot: "weapon", id: "x" };
+	const k1 = G.equip(k, x);
+	assert.deepEqual(Object.keys(k1.gear), ["weapon"]);
+	assert.equal(k1.gear.weapon.id, "x");
+	assert.notEqual(k1.gear.weapon, x);
+	const k2 = G.equip(k1, blade);
+	assert.deepEqual(Object.keys(k2.gear), ["weapon"]);
+	assert.equal(k2.gear.weapon.id, "ember-blade");
+	assert.equal(k1.gear.weapon.id, "x", "earlier champion untouched");
+	assert.equal(k.gear, undefined, "input champion untouched");
+	assert.deepEqual(k2.stats, k.stats, "equip does not recompute stats");
+	assert.equal(k2.hp, 1500);
+	assert.notEqual(k2.skills, k.skills);
+	assert.deepEqual(k2.skills, k.skills);
+	throwsType(() => G.equip(k, { id: "z", slot: "hat", set: "swift", main: { stat: "hp", value: 1 } }));
+	throwsType(() => G.equip({ level: 1 }, blade));
+});
+test("stage 1: equip all six in order; unequip", () => {
+	const k = gearAll();
+	assert.deepEqual(Object.keys(k.gear), ["weapon", "gloves", "boots", "helmet", "shield", "chest"]);
+	const u = G.unequip(k, "boots");
+	assert.deepEqual(Object.keys(u.gear), ["weapon", "gloves", "helmet", "shield", "chest"]);
+	assert.ok(!("boots" in u.gear));
+	assert.deepEqual(Object.keys(k.gear).length, 6, "input untouched");
+	throwsRange(() => G.unequip(u, "boots"), "nothing equipped");
+	throwsRange(() => G.unequip(kael(), "weapon"), "nothing equipped");
+	throwsType(() => G.unequip(k, "ring"));
+});
+test("stage 2: gearStats no gear and full set", () => {
+	assert.deepEqual(G.gearStats(kael()), { flat: { hp: 0, atk: 0, def: 0, spd: 0 }, pct: { hp: 0, atk: 0, def: 0, spd: 0 }, sets: {} });
+	const g = G.gearStats(gearAll());
+	assert.deepEqual(g, { flat: { hp: 450, atk: 40, def: 70, spd: 15 }, pct: { hp: 6, atk: 30, def: 31, spd: 12 }, sets: { swift: 1, sturdy: 1, fierce: 1 } });
+	assert.deepEqual(Object.keys(g), ["flat", "pct", "sets"]);
+});
+test("stage 2: gearStats partial and broken sets", () => {
+	const [blade, , boots] = G.sampleArtifacts();
+	const k = G.equip(G.equip(kael(), blade), boots);
+	assert.deepEqual(G.gearStats(k), { flat: { hp: 0, atk: 40, def: 0, spd: 15 }, pct: { hp: 0, atk: 5, def: 0, spd: 0 }, sets: {} });
+	assert.deepEqual(G.gearStats(G.unequip(gearAll(), "boots")).sets, { sturdy: 1, fierce: 1 });
+});
+test("stage 2: gearStats multi-piece and repeated sets", () => {
+	const four = ["weapon", "helmet", "shield", "gloves"].map((slot, i) => piece(`r${i}`, slot, "relentless", "atk", 10));
+	const k4 = four.reduce((c, a) => G.equip(c, a), kael());
+	assert.deepEqual(G.gearStats(k4), { flat: { hp: 0, atk: 40, def: 0, spd: 0 }, pct: { hp: 0, atk: 30, def: 0, spd: 0 }, sets: { relentless: 1 } });
+	const k6 = [piece("r4", "chest", "relentless", "atk", 10), piece("r5", "boots", "relentless", "atk", 10)].reduce((c, a) => G.equip(c, a), k4);
+	assert.deepEqual(G.gearStats(k6).sets, { relentless: 1 });
+	assert.equal(G.gearStats(k6).flat.atk, 60);
+	const swift4 = [0, 1, 2, 3].map((i) => piece(`s${i}`, G.SLOTS[i], "swift", "spd", 1)).reduce((c, a) => G.equip(c, a), kael());
+	assert.deepEqual(G.gearStats(swift4), { flat: { hp: 0, atk: 0, def: 0, spd: 4 }, pct: { hp: 0, atk: 0, def: 0, spd: 24 }, sets: { swift: 2 } });
+	const three = [0, 1, 2].map((i) => piece(`v${i}`, G.SLOTS[i], "vital", "hp", 1)).reduce((c, a) => G.equip(c, a), kael());
+	assert.deepEqual(G.gearStats(three).sets, { vital: 1 });
+	assert.equal(G.gearStats(three).pct.hp, 15);
+	throwsType(() => G.gearStats({ ...kael(), gear: { ring: piece("q", "boots", "swift", "spd", 1) } }));
+});
+test("stage 3: gearedStats", () => {
+	assert.deepEqual(G.gearedStats(kael()), { hp: 1500, atk: 130, def: 90, spd: 104, crit: 0.3, critDmg: 1.6 });
+	assert.deepEqual(G.gearedStats(gearAll()), { hp: 2067, atk: 221, def: 209, spd: 133, crit: 0.3, critDmg: 1.6 });
+	const [blade, , boots] = G.sampleArtifacts();
+	assert.deepEqual(G.gearedStats(G.equip(G.equip(kael(), blade), boots)), { hp: 1500, atk: 178, def: 90, spd: 119, crit: 0.3, critDmg: 1.6 });
+	const four = ["weapon", "helmet", "shield", "gloves"].map((slot, i) => piece(`r${i}`, slot, "relentless", "atk", 10));
+	const k4 = four.reduce((c, a) => G.equip(c, a), kael());
+	assert.equal(G.gearedStats(k4).atk, 221);
+	const k6 = [piece("r4", "chest", "relentless", "atk", 10), piece("r5", "boots", "relentless", "atk", 10)].reduce((c, a) => G.equip(c, a), k4);
+	assert.equal(G.gearedStats(k6).atk, 247);
+	const swift4 = [0, 1, 2, 3].map((i) => piece(`s${i}`, G.SLOTS[i], "swift", "spd", 1)).reduce((c, a) => G.equip(c, a), kael());
+	assert.equal(G.gearedStats(swift4).spd, 133);
+	const lvl10 = G.sampleArtifacts().reduce((c, a) => G.equip(c, a), R.makeChampion(C.kael, 10));
+	assert.deepEqual(G.gearedStats(lvl10), { hp: 2639, atk: 280, def: 251, spd: 133, crit: 0.3, critDmg: 1.6 });
+});
+test("stage 3: applyGear", () => {
+	const k = gearAll();
+	const a = G.applyGear(k);
+	assert.deepEqual(a.stats, { hp: 2067, atk: 221, def: 209, spd: 133, crit: 0.3, critDmg: 1.6 });
+	assert.equal(a.hp, 2067);
+	assert.equal(a.level, 1);
+	assert.equal(a.xp, 0);
+	assert.deepEqual(a.base, k.base);
+	assert.deepEqual(Object.keys(a.gear), Object.keys(k.gear));
+	assert.notEqual(a.gear, k.gear);
+	assert.equal(k.stats.hp, 1500, "input untouched");
+	assert.equal(k.hp, 1500);
+	const plain = G.applyGear(kael());
+	assert.deepEqual(plain.stats, kael().stats);
+	assert.equal(plain.hp, 1500);
+	throwsType(() => G.applyGear(null));
+});
