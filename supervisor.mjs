@@ -32,6 +32,7 @@ import { seededBrief } from "./lib/memory-brief.mjs";
 import { snapshotId } from "./lib/snapshot.mjs";
 import { contextTokensOf, decideCompaction, composeInstructions, ledgerLines } from "./lib/compaction.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
+import { argsKey as probeArgsKey, matchCase as matchProbeCase } from "./lib/probe-match.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const REPO = "C:/Users/user/open_harnessess/pi/pi";
@@ -904,7 +905,7 @@ function runProbe(msg, { auto = null } = {}) {
 		const blocked = [];
 		const novelCases = [];
 		for (const c of requestCases) {
-			const argsKey = c?.args !== undefined ? JSON.stringify(c.args) : null;
+			const argsKey = probeArgsKey(c?.args);
 			const prior = argsKey !== null ? seenCases.get(argsKey) : null;
 			if (prior && prior.srcHash === currentSrcHash) {
 				blocked.push({ id: c?.id ?? "?", args: c?.args, priorProbeNum: prior.probeNum, priorResultLine: prior.resultLine });
@@ -967,19 +968,17 @@ function runProbe(msg, { auto = null } = {}) {
 
 			// seenCases stores the truncated display line — a repeat of this exact case
 			// only needs to show what it showed before, not re-materialize the full value.
-			const argsKey = args !== undefined ? JSON.stringify(args) : null;
+			const argsKey = probeArgsKey(args);
 			if (argsKey !== null) seenCases.set(argsKey, { probeNum: probeCount, srcHash: currentSrcHash, resultLine: actual });
 
 			if (expectById.has(res.id)) {
 				const expect = expectById.get(res.id);
-				let matched;
-				if (expect && typeof expect === "object" && "throws" in expect) {
-					matched = !res.ok && String(res.error).includes(String(expect.throws));
-				} else {
-					matched = res.ok && actualFull === JSON.stringify(expect);
-				}
+				// probe.mjs's own verdict (match/diff) stands when it gives one; otherwise a
+				// key-order-insensitive comparison over the keys the expectation names.
+				// Never a raw JSON string compare — see lib/probe-match.mjs for what that did.
+				const { matched, detail } = matchProbeCase(res, expect);
 				if (matched) matchCount++;
-				else withExpect.push(`${line} — EXPECTED ${truncateForMail(JSON.stringify(expect))}, MISMATCH`);
+				else withExpect.push(`${line} — EXPECTED ${truncateForMail(JSON.stringify(expect))}, MISMATCH${detail ? ` (${truncateForMail(detail)})` : ""}`);
 			} else {
 				withoutExpect.push(line);
 			}
