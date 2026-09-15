@@ -164,7 +164,7 @@ for (const c of cases) {
 		if (typeof c.fn !== "string") throw new Error("probe: fn must be a string");
 		let mod = raid;
 		let name = c.fn;
-		if (name.startsWith("scene.")) {
+		const loadScene = async () => {
 			if (!scene && !sceneError) {
 				try {
 					scene = await load("scene.mjs");
@@ -173,11 +173,17 @@ for (const c of cases) {
 				}
 			}
 			if (!scene) throw new Error(`failed to import src/scene.mjs: ${sceneError}`);
-			mod = scene;
+			return scene;
+		};
+		if (name.startsWith("scene.")) {
+			mod = await loadScene();
 			name = name.slice("scene.".length);
+		} else if (typeof raid[name] !== "function" && ["unitPosition", "makeCamera", "buildScene", "updateScene", "AFFINITY_COLORS"].includes(name)) {
+			// An unprefixed scene export: accept it (the prefix form "scene.<name>" is the documented one).
+			mod = await loadScene();
 		}
 		const fn = mod[name];
-		if (typeof fn !== "function") throw new Error(`probe: ${c.fn} is not an exported function`);
+		if (typeof fn !== "function") throw new Error(`probe: ${c.fn} is not an exported function of src/raid.mjs${mod === raid ? ' (scene exports are called as "scene.<name>")' : " or src/scene.mjs"}`);
 		const args = Array.isArray(c.args) ? c.args.map(decode) : [];
 		const value = fn(...args);
 		const out = { id, ok: true, value: encode(value) };
