@@ -21,8 +21,9 @@ import { loadConfig, parseArgs } from "./lib/config.mjs";
 import { PATTERNS, WORKER_TOOLS } from "./lib/patterns.mjs";
 import { writeWorkerDefinition, installWorkspaceExtension, resolveWorkerPrompt } from "./lib/worker-def.mjs";
 import { readMounts, installMounts, archiveFilter, uninstallMounts } from "./lib/mounts.mjs";
-import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
+import { childTranscriptDir, JsonlTailer, workerIdFromTranscript } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry, unreportedWorkers } from "./lib/workers.mjs";
+import { appendManifest, transcriptManifestPath } from "./lib/worker-manifest.mjs";
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
@@ -90,6 +91,8 @@ const GUARDS = [
 	// Worker `report` tool (ext/report-ext.ts): registers nothing unless ARBITER_REPORT_FILE
 	// is set; only the worker definition's tools line names it.
 	path.join(here, "ext", "report-ext.ts"),
+	// context_usage tool (always on; a tool, not a guard — the list name is historical).
+	path.join(here, "ext", "context-usage-ext.ts"),
 ];
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
@@ -239,7 +242,7 @@ for (const role of PDEF.roles) {
 	if (role === "worker") continue; // workers are pi-subagents children, not supervisor-launched processes
 	let tools = PDEF.tools[role];
 	if (role === "builder" && fs.existsSync(toolsOverride)) tools = fs.readFileSync(toolsOverride, "utf8").trim();
-	AGENTS[role] = { tools, peer: PDEF.peer[role], provider: ROLES[role].provider, model: ROLES[role].model, thinking: ROLES[role].thinking ?? null };
+	AGENTS[role] = { tools, peer: PDEF.peer[role], provider: ROLES[role].provider, model: ROLES[role].model, thinking: ROLES[role].thinking ?? null, contextWindow: ROLES[role].contextWindow ?? null };
 }
 
 // ---------- agent processes ----------
@@ -344,6 +347,10 @@ function launch(name) {
 			ARBITER_CONTEXT_DIET: CONFIG.guards.context_diet ? JSON.stringify(CONFIG.guards.context_diet) : "",
 			ARBITER_CALL_ARGS: CONFIG.guards.call_args ? JSON.stringify(CONFIG.guards.call_args) : "",
 			ARBITER_PRE_SPAWN_COMPACT: CONFIG.guards.pre_spawn_compact ? JSON.stringify(CONFIG.guards.pre_spawn_compact) : "",
+			// context_usage tool: this role's context window from the model preflight
+			// (lib/config.mjs), "" when unknown. Workers spawned by pi-subagents inherit
+			// this process's env, so they report against the orchestrator's own window.
+			ARBITER_CONTEXT_WINDOW: cfg.contextWindow != null ? String(cfg.contextWindow) : "",
 			ARBITER_MOUNTS: MOUNTS.length ? JSON.stringify(MOUNTS) : "",
 			// Memory tools (ext/memory-ext.ts): empty index = the extension registers
 			// nothing. Scopes and budget are enforced inside the tools on every call.
@@ -789,6 +796,30 @@ function pumpLifecycle() {
 		const { audit: lines, decision } = applyLifecycleEvent(tracker, state, timeline, { ev, data, now: Date.now() });
 		for (const line of lines) log(line);
 		if (decision) pendingDecisionFor = decision;
+		// workers.jsonl: the wid-to-transcript join, on disk (lib/worker-manifest.mjs).
+		// lib/workers.mjs keeps this only in the in-memory tracker; this is the same five
+		// lifecycle events, recorded separately so a later reader need not replay the
+		// reducer. wid is derived the same way applyLifecycleEvent derives it internally.
+		const manifestWid = data?.id ? `worker:${data.id}` : null;
+		if (manifestWid) {
+			// workers.jsonl is a nice-to-have record, not the run's source of truth (the
+			// lifecycle tracker above is already updated); a disk error here must not take
+			// down the interval pump that is mid-way through draining this tick's events.
+			try {
+				if (ev === "subagents:created") appendManifest(RUN, { ev: "created", wid: manifestWid, description: data.description ?? null, background: Boolean(data.isBackground) });
+				else if (ev === "subagents:resuming") appendManifest(RUN, { ev: "resuming", wid: manifestWid });
+				else if (ev === "subagents:completed" || ev === "subagents:failed" || ev === "subagents:resumed") {
+					const status = ev.slice("subagents:".length);
+					// outcome is the raw pi-subagents status string (data.status) — subagents:resumed
+					// is the one channel for both a real success and an errored resume (see
+					// lib/workers.mjs's TERMINAL_ERROR_STATUS), so status alone can't tell them
+					// apart; a reader resolves that itself instead of this module importing it.
+					appendManifest(RUN, { ev: status, wid: manifestWid, status, outcome: data.status ?? null });
+				}
+			} catch (err) {
+				log({ type: "warn", msg: `workers.jsonl append failed: ${err?.message ?? err}` });
+			}
+		}
 		// A fresh, foreground `subagent` call was denied for size (ext/guards/pre-spawn-compact.ts):
 		// this is the one boundary that can fire with no worker yet spawned, before the tool
 		// call that would otherwise hold the orchestrator's turn open for the child's whole run.
@@ -823,7 +854,16 @@ function pumpChildTranscripts() {
 		// (see bindTranscript for why inventing an id was worse).
 		const wid = bindTranscript(tracker, state, p);
 		if (!wid) continue;
-		if (!childTails.has(p)) childTails.set(p, new JsonlTailer(p));
+		if (!childTails.has(p)) {
+			childTails.set(p, new JsonlTailer(p));
+			// See the try/catch in pumpLifecycle: workers.jsonl is a nice-to-have record,
+			// not the run's source of truth, so a disk error here must not stop this pump.
+			try {
+				appendManifest(RUN, { ev: "bound", wid, sessionId: workerIdFromTranscript(p), transcriptPath: transcriptManifestPath(SESSIONS, p) });
+			} catch (err) {
+				log({ type: "warn", msg: `workers.jsonl append failed: ${err?.message ?? err}` });
+			}
+		}
 		const s = state[wid];
 		// Same raw-*.jsonl record an RPC agent gets, so a worker's stream is replayable
 		// and diffable the same way. ":" is not a legal Windows filename character.
