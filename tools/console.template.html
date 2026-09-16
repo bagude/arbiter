@@ -161,6 +161,21 @@
           <div class="p-3.5 font-mono text-[12.5px] leading-relaxed text-stone-300 overflow-auto max-h-[640px]" id="codeBody"></div>
         </div>
       </section>
+
+      <!-- CONTEXT LANES: per-agent prefill timeline -->
+      <section class="relative bg-stone-900 border border-stone-800 shadow-2xl overflow-hidden">
+        <div class="flex items-center justify-between bg-stone-850 border-b border-stone-800 px-3 py-2">
+          <div class="flex items-center gap-1.5 font-mono text-xs font-bold text-stone-50">
+            <span class="text-stone-500 font-normal">02</span>
+            <span>CONTEXT LANES</span>
+          </div>
+          <span class="font-mono text-[9px] text-stone-500 uppercase tracking-widest">prefill per call · cached vs fresh</span>
+        </div>
+        <div class="flex items-center gap-px bg-stone-850 border-b border-stone-800 font-mono text-[10.5px] flex-wrap" id="lanesStats"></div>
+        <div class="px-3 pt-3" id="lanesWrap"></div>
+        <div class="px-3 py-2.5 flex items-center gap-3 font-mono text-[9px] text-stone-500 uppercase tracking-wider flex-wrap" id="lanesLegend"></div>
+        <div class="absolute z-50 bg-stone-950 border border-stone-700 px-2 py-1 font-mono text-[10px] text-stone-200 pointer-events-none shadow-xl" id="lanesTip" hidden></div>
+      </section>
     </div>
   </main>
 
@@ -324,6 +339,197 @@ function buildStats(){
       '<span class="font-bold '+(it.cls||"text-stone-100")+'">'+it.v+'</span>'+
     '</div>'
   ).join("");
+}
+
+// ---------- context lanes (per-agent prefill timeline) ----------
+// One lane per agent of the run's trace document: every model call is a bar whose
+// height is its prefill relative to the run's peak, split cached (bottom) / fresh
+// (top), with lifecycle markers on the lane baseline. The x axis is the same
+// run-relative second clock the scrubber uses: trace timestamps are absolute epoch
+// ms, so a call at `ms` sits at tRel0 + (ms - t0)/1000.
+const LANE_H = 56, LANE_LABEL_H = 14, LANE_AXIS_H = 20, LANE_PAD_L = 8, LANE_PAD_R = 8;
+const LANE_C = {
+  // Page tokens, not Tailwind defaults: this file redefines the whole stone ramp in
+  // its tailwind.config, so stone-600 is #484842 and stone-50 is #F5F5F0.
+  cached:"#484842", fresh:"#0055FF", output:"#2DD4BF", spawn:"#FF3B30", ret:"#2DD4BF",
+  resume:"#FFB703", guard:"#FFB703", compaction:"#FF3B30", tick:"#64645C",
+  base:"#232320", label:"#8E8E84", axis:"#353530", playhead:"#F5F5F0"
+};
+const LANE_LEGEND = [
+  { label:"cached", c:LANE_C.cached }, { label:"fresh", c:LANE_C.fresh }, { label:"output", c:LANE_C.output },
+  { label:"spawn ▲", c:LANE_C.spawn }, { label:"return ▼", c:LANE_C.ret },
+  { label:"guard ▏", c:LANE_C.guard }, { label:"compaction ▌", c:LANE_C.compaction }
+];
+// Set by buildContextLanes so seekTo can move the playhead without rebuilding.
+let lanes = null;
+
+function fmtK(n){
+  if (n == null) return "—";
+  return n >= 1000 ? (n/1000).toFixed(1) + "k" : String(n);
+}
+function fmtSec(ms){ return ms == null ? "—" : (ms/1000).toFixed(1) + "s"; }
+function attrEsc(s){ return esc(String(s)).replace(/"/g, "&quot;"); }
+function markerGlyph(kind){
+  return kind === "spawn" ? "▲" : kind === "return" ? "▼" : kind === "resume" ? "▲" :
+    kind === "guard" ? "▏" : kind === "compaction" ? "▌" : "·";
+}
+function laneStatsGroup(a){
+  const t = a.totals || {};
+  const items = [
+    { k:"calls", v: t.calls || 0 },
+    { k:"hit",   v: (t.hitRatio || 0).toFixed(2) },
+    { k:"fresh", v: fmtK(t.fresh || 0) },
+    { k:"peak",  v: fmtK(t.peakContext || 0) },
+    { k:"infer", v: fmtTime((t.inferenceMs || 0)/1000) },
+    { k:"tools", v: fmtTime((t.toolMs || 0)/1000) },
+  ];
+  return '<div class="flex items-center gap-px bg-stone-850">'+
+    '<div class="bg-stone-900 px-3 py-1.5 whitespace-nowrap">'+
+      '<span class="font-bold '+(isBuilderLike(a.id) ? "text-klein-light" : "text-amber")+'">'+esc(a.id)+'</span>'+
+    '</div>'+
+    items.map((it) =>
+      '<div class="bg-stone-900 px-3 py-1.5 flex items-center gap-2 whitespace-nowrap">'+
+        '<span class="text-stone-500 text-[9px] uppercase tracking-wider">'+it.k+'</span>'+
+        '<span class="font-bold text-stone-100">'+it.v+'</span>'+
+      '</div>').join("")+
+  '</div>';
+}
+function laneCallTip(agent, call, toSec){
+  const lines = [esc(agent.id)];
+  lines.push("#"+call.i+"  t+"+fmtTime(toSec(call.startMs))+
+    "  ctx "+call.context+" (cached "+call.cached+" / fresh "+call.fresh+")"+
+    "  hit "+(call.hitRatio || 0).toFixed(2)+
+    "  retained "+(call.retained == null ? "—" : call.retained.toFixed(2))+
+    "  out "+call.output+
+    "  inference "+fmtSec(call.inferenceMs)+
+    "  tools "+fmtSec(call.toolMs));
+  for (const m of call.markers || [])
+    lines.push(markerGlyph(m.kind)+" "+m.kind+"  t+"+fmtTime(toSec(m.tMs))+(m.detail ? "  "+m.detail : ""));
+  return lines.join("\n");
+}
+function buildContextLanes(){
+  const r = RUNS[currentId];
+  const trace = r ? r.trace : null;
+  const statsEl = document.getElementById("lanesStats");
+  const wrap = document.getElementById("lanesWrap");
+  const legendEl = document.getElementById("lanesLegend");
+  const tip = document.getElementById("lanesTip");
+  lanes = null;
+  tip.hidden = true;
+  if (!trace || !trace.agents || !trace.agents.length){
+    statsEl.innerHTML = "";
+    legendEl.innerHTML = "";
+    wrap.innerHTML = '<div class="text-stone-600 italic font-mono text-xs p-2">no session archive for this run</div>';
+    return;
+  }
+  const agents = trace.agents;
+  statsEl.innerHTML = agents.map(laneStatsGroup).join("");
+  legendEl.innerHTML = LANE_LEGEND.map((l) =>
+    '<span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 inline-block" style="background:'+l.c+'"></span>'+l.label+'</span>').join("");
+
+  const width = Math.max(320, wrap.clientWidth || 960);
+  const plotW = Math.max(40, width - LANE_PAD_L - LANE_PAD_R);
+  const rowH = LANE_H + LANE_LABEL_H;
+  const lanesH = agents.length * rowH;
+  const height = lanesH + LANE_AXIS_H;
+  const toSec = (ms) => trace.tRel0 + (ms - trace.t0)/1000;
+  const x = (sec) => LANE_PAD_L + Math.max(0, Math.min(1, duration ? sec/duration : 0)) * plotW;
+  const xm = (ms) => x(toSec(ms));
+  let maxContext = 1;
+  for (const a of agents) for (const c of a.calls) if (c.context > maxContext) maxContext = c.context;
+
+  const baseOf = (i) => i * rowH + LANE_LABEL_H + LANE_H;
+  const parts = [];
+  agents.forEach((a, i) => {
+    const laneTop = i * rowH + LANE_LABEL_H;
+    const base = laneTop + LANE_H;
+    parts.push('<text x="'+LANE_PAD_L+'" y="'+(laneTop - 4)+'" fill="'+LANE_C.label+'" font-family="monospace" font-size="9">'+
+      esc(a.id)+' · '+(a.calls.length)+' calls · peak '+fmtK(a.totals ? a.totals.peakContext : 0)+'</text>');
+    parts.push('<line x1="'+LANE_PAD_L+'" y1="'+base+'" x2="'+(LANE_PAD_L+plotW)+'" y2="'+base+'" stroke="'+LANE_C.base+'" stroke-width="1"/>');
+
+    // dashed connector: parent baseline at the spawn instant -> this lane's first call
+    if (a.spawn && a.spawn.createdMs != null && a.parent && a.calls.length){
+      const pi = agents.findIndex((p) => p.id === a.parent);
+      if (pi >= 0){
+        const sx = xm(a.spawn.createdMs), fx = xm(a.calls[0].startMs);
+        parts.push('<path d="M '+sx+' '+baseOf(pi)+' V '+base+' H '+fx+'" fill="none" stroke="'+LANE_C.cached+
+          '" stroke-width="1" stroke-dasharray="2 2"/>');
+      }
+    }
+
+    for (const c of a.calls){
+      const x0 = xm(c.startMs);
+      const x1 = Math.max(xm(c.endMs), x0 + 2);
+      const w = x1 - x0;
+      const hAll = (c.context / maxContext) * LANE_H;
+      const hCached = (c.cached / maxContext) * LANE_H;
+      const hFresh = Math.max(0, hAll - hCached);
+      if (hCached > 0) parts.push('<rect x="'+x0+'" y="'+(base - hCached)+'" width="'+w+'" height="'+hCached+'" fill="'+LANE_C.cached+'"/>');
+      if (hFresh > 0) parts.push('<rect x="'+x0+'" y="'+(base - hAll)+'" width="'+w+'" height="'+hFresh+'" fill="'+LANE_C.fresh+'"/>');
+      if (c.output > 0) parts.push('<rect x="'+x0+'" y="'+(base - hAll - 2)+'" width="'+w+'" height="2" fill="'+LANE_C.output+'"/>');
+    }
+
+    for (const m of a.calls.reduce((acc, c) => acc.concat(c.markers || []), [])){
+      const mx = xm(m.tMs);
+      if (m.kind === "guard")
+        parts.push('<rect x="'+mx+'" y="'+laneTop+'" width="1" height="'+LANE_H+'" fill="'+LANE_C.guard+'" fill-opacity="0.75"/>');
+      else if (m.kind === "compaction")
+        parts.push('<rect x="'+(mx-1)+'" y="'+laneTop+'" width="2" height="'+LANE_H+'" fill="'+LANE_C.compaction+'"/>');
+      else if (m.kind === "spawn" || m.kind === "resume")
+        parts.push('<polygon points="'+(mx-4)+','+(base+5)+' '+(mx+4)+','+(base+5)+' '+mx+','+(base-3)+'" fill="'+
+          (m.kind === "spawn" ? LANE_C.spawn : LANE_C.resume)+'"/>');
+      else if (m.kind === "return")
+        parts.push('<polygon points="'+(mx-4)+','+(base-3)+' '+(mx+4)+','+(base-3)+' '+mx+','+(base+5)+'" fill="'+LANE_C.ret+'"/>');
+      else
+        parts.push('<rect x="'+mx+'" y="'+(base-6)+'" width="1" height="9" fill="'+LANE_C.tick+'"/>');
+    }
+
+    // hit targets last so they sit above the paint
+    for (const c of a.calls){
+      const x0 = xm(c.startMs);
+      const w = Math.max(xm(c.endMs), x0 + 2) - x0;
+      parts.push('<rect x="'+x0+'" y="'+laneTop+'" width="'+w+'" height="'+LANE_H+'" fill="#000" fill-opacity="0" pointer-events="all" data-tip="'+
+        attrEsc(laneCallTip(a, c, toSec))+'"/>');
+    }
+  });
+
+  // axis
+  parts.push('<line x1="'+LANE_PAD_L+'" y1="'+lanesH+'" x2="'+(LANE_PAD_L+plotW)+'" y2="'+lanesH+'" stroke="'+LANE_C.axis+'" stroke-width="1"/>');
+  for (let k = 0; k <= 4; k++){
+    const sec = duration * k/4, tx = x(sec);
+    parts.push('<line x1="'+tx+'" y1="'+lanesH+'" x2="'+tx+'" y2="'+(lanesH+4)+'" stroke="'+LANE_C.axis+'" stroke-width="1"/>');
+    parts.push('<text x="'+tx+'" y="'+(lanesH+15)+'" fill="'+LANE_C.label+'" font-family="monospace" font-size="9" text-anchor="'+
+      (k === 0 ? "start" : k === 4 ? "end" : "middle")+'">'+fmtTime(sec)+'</text>');
+  }
+  parts.push('<line id="lanesPlayhead" x1="'+x(playhead)+'" y1="0" x2="'+x(playhead)+'" y2="'+lanesH+'" stroke="'+
+    LANE_C.playhead+'" stroke-width="1" opacity="0.85" pointer-events="none"/>');
+
+  wrap.innerHTML = '<svg id="lanesSvg" width="'+width+'" height="'+height+'" viewBox="0 0 '+width+' '+height+
+    '" style="display:block; max-width:100%;">'+parts.join("")+'</svg>';
+  lanes = { toX: x };
+
+  const svg = document.getElementById("lanesSvg");
+  svg.addEventListener("mousemove", (ev) => {
+    const raw = ev.target && ev.target.dataset ? ev.target.dataset.tip : null;
+    if (!raw){ tip.hidden = true; return; }
+    tip.innerHTML = raw.split("\n").map((l) => '<div class="whitespace-pre">'+esc(l)+'</div>').join("");
+    tip.hidden = false;
+    const box = (tip.offsetParent || svg).getBoundingClientRect();
+    let left = ev.clientX - box.left + 12;
+    const maxLeft = box.width - tip.offsetWidth - 8;
+    if (left > maxLeft) left = Math.max(4, maxLeft);
+    tip.style.left = left + "px";
+    tip.style.top = (ev.clientY - box.top + 14) + "px";
+  });
+  svg.addEventListener("mouseleave", () => { tip.hidden = true; });
+}
+function updateLanePlayhead(){
+  if (!lanes) return;
+  const el = document.getElementById("lanesPlayhead");
+  if (!el) return;
+  const px = lanes.toX(playhead);
+  el.setAttribute("x1", px);
+  el.setAttribute("x2", px);
 }
 
 // ---------- facets (with live counts) ----------
@@ -636,6 +842,7 @@ function seekTo(t){
   }
   document.getElementById("timeNow").textContent = fmtTime(playhead);
   document.getElementById("scrub").value = Math.round(playhead/duration*1000);
+  updateLanePlayhead();
 }
 function tick(prevT){
   const now = performance.now();
@@ -671,7 +878,7 @@ function selectRun(id){
     r.complete ? "Replay — no live process. Reading a completed run's own log files." : "Replay — this run was still in progress when captured.";
   document.getElementById("outcomeLabel").textContent = r.complete ? (r.summary.reason.startsWith("SUCCESS") ? "ORACLE PASSED" : "STOPPED: " + r.summary.reason) : "IN PROGRESS";
 
-  buildStats(); buildChips(); buildFacets(); buildCode(); resetFeed(); buildScrubMarks();
+  buildStats(); buildContextLanes(); buildChips(); buildFacets(); buildCode(); resetFeed(); buildScrubMarks();
   document.getElementById("timeTotal").textContent = fmtTime(duration);
   document.getElementById("scrub").value = 0;
   document.getElementById("timeNow").textContent = "0:00";
@@ -685,6 +892,9 @@ document.getElementById("scrubEnd").addEventListener("click", () => { pause(); s
 document.getElementById("speed").addEventListener("change", (e) => speed = Number(e.target.value));
 document.getElementById("scrub").addEventListener("input", (e) => { pause(); seekTo(Number(e.target.value)/1000*duration); });
 document.getElementById("searchFilter").addEventListener("input", (e) => { searchQuery = e.target.value.toLowerCase(); applySearch(); });
+// The lanes SVG is sized from its container's pixel width, so it has to be rebuilt
+// when the window changes width.
+window.addEventListener("resize", () => { if (currentId) buildContextLanes(); });
 
 buildRunList();
 selectRun(Object.keys(RUNS)[Object.keys(RUNS).length-1]);
