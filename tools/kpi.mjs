@@ -2,6 +2,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { discoverRuns } from "./extract-runs.mjs";
 import { tokenTotals, hitRatio } from "../lib/usage.mjs";
+import { traceRun, meanRetained } from "../lib/context-trace.mjs";
+
+// A run without an archived sessions/ tree (older runs, or one still in progress) has no
+// trace to build; traceRun throws in that case, mirroring tools/extract-runs.mjs's safeTrace.
+function safeMeanRetained(dir) {
+	try {
+		return meanRetained(traceRun(dir));
+	} catch {
+		return null;
+	}
+}
 
 const RUNS = discoverRuns().map((r) => ({ dir: r.dir, label: r.label }));
 
@@ -14,6 +25,7 @@ console.log(
 	"outTok".padEnd(8),
 	"cacheRd".padEnd(8),
 	"hitRatio".padEnd(9),
+	"retained".padEnd(9),
 	"E_excl(1k)".padEnd(11),
 	"E_incl(1k)".padEnd(11),
 	"byRole",
@@ -28,6 +40,7 @@ for (const run of RUNS) {
 	const totalInclCache = input + output + cacheRead; // total context touched, cached or not
 	const eExcl = success === null ? null : success ? 1000 / (totalExclCache / 1000) : 0;
 	const eIncl = success === null ? null : success ? 1000 / (totalInclCache / 1000) : 0;
+	const retained = safeMeanRetained(dir);
 	console.log(
 		run.label.padEnd(58),
 		String(success === null ? "running" : success).padEnd(8),
@@ -37,12 +50,14 @@ for (const run of RUNS) {
 		String(output).padEnd(8),
 		String(cacheRead).padEnd(8),
 		hitRatio({ input, cacheRead }).toFixed(3).padEnd(9),
+		(retained === null ? "—" : retained.toFixed(3)).padEnd(9),
 		(eExcl === null ? "—" : eExcl.toFixed(3)).padEnd(11),
 		(eIncl === null ? "—" : eIncl.toFixed(3)).padEnd(11),
 		JSON.stringify(byRole),
 	);
 }
 console.log("\nhitRatio = cache reads / (fresh input + cache reads): the share of prompt tokens the server did not have to prefill.");
+console.log("retained = mean over calls of cacheRead / previous call's total tokens: 1.0 means the server reused the whole prefix every turn.");
 console.log("E_excl(1k) = successes per 1k tokens, counting only fresh input + generated output (excludes cache reads) — closer to what a hosted API bills.");
 console.log("E_incl(1k) = successes per 1k tokens, counting all context touched including cache reads — closer to total compute the local box actually did.");
 console.log("A run that failed/timed out scores 0 on both, regardless of tokens spent — that's the point of the metric: it punishes expensive failures, not just cheap ones.");

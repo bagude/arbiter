@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { traceRun, walkSessions, markersFor } from "../lib/context-trace.mjs";
+import { traceRun, walkSessions, markersFor, meanRetained } from "../lib/context-trace.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "fixtures", "run-trace");
@@ -74,6 +74,23 @@ test("orchestrator's first three calls match the verified fixture numbers", () =
 	assert.equal(c2.retained, 1);
 	assert.equal(c3.cached, 6538);
 	assert.equal(c3.retained, 1);
+});
+
+test("meanRetained is the unweighted mean of every non-null call.retained across all agents", () => {
+	const trace = traceRun(FIXTURE);
+	const values = trace.agents.flatMap((a) => a.calls).map((c) => c.retained).filter((v) => v !== null);
+	assert.ok(values.length > 0, "fixture should have at least one call with a non-null retained");
+	const expected = values.reduce((sum, v) => sum + v, 0) / values.length;
+	assert.ok(Math.abs(meanRetained(trace) - expected) < 1e-9);
+});
+
+test("meanRetained returns null when no call has a non-null retained", () => {
+	const trace = { agents: [{ calls: [{ retained: null }, { retained: null }] }, { calls: [{ retained: null }] }] };
+	assert.equal(meanRetained(trace), null);
+});
+
+test("meanRetained returns null for a trace with no calls at all", () => {
+	assert.equal(meanRetained({ agents: [] }), null);
 });
 
 test("orchestrator has exactly one compaction marker attached to the first call after it", () => {
