@@ -24,16 +24,17 @@ import { rosterSection } from "./lib/roster.mjs";
 import { readMounts, installMounts, archiveFilter, uninstallMounts } from "./lib/mounts.mjs";
 import { childTranscriptDir, JsonlTailer, workerIdFromTranscript } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry, unreportedWorkers } from "./lib/workers.mjs";
-import { appendManifest, transcriptManifestPath } from "./lib/worker-manifest.mjs";
+import { appendManifest, transcriptManifestPath, readManifest, manifestJoin } from "./lib/worker-manifest.mjs";
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
-import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
+import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, retainSpecialists, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { resolveLedger, buildIndex } from "./lib/memory-index.mjs";
 import { charge, spent } from "./lib/memory-budget.mjs";
 import { seededBrief } from "./lib/memory-brief.mjs";
 import { snapshotId } from "./lib/snapshot.mjs";
 import { contextTokensOf, decideCompaction, composeInstructions, ledgerLines } from "./lib/compaction.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
+import { readJsonl } from "./lib/jsonl.mjs";
 import { argsKey as probeArgsKey, matchCase as matchProbeCase } from "./lib/probe-match.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -1416,6 +1417,32 @@ function finish(reason) {
 			reports = [];
 		}
 		appendLog(MEMORY.log, retainFromRun({ summary, timeline, deliverable, oracle: lastOracleResult, reports }));
+		// Specialist retention (roster runs): a worker's remember() calls, resolved
+		// through the worker-manifest join to the specialist that made them, plus one
+		// procedural record per specialist that spawned. Kept in its own try/catch so a
+		// bad remember line or manifest read never takes down retainFromRun's records.
+		try {
+			const remembers = readJsonl(REMEMBER_FILE);
+			const manifestRows = [...manifestJoin(readManifest(RUN)).values()];
+			appendLog(
+				MEMORY.log,
+				retainSpecialists({
+					runId,
+					task: TASK_NAME,
+					passed: String(summary.reason).startsWith("SUCCESS"),
+					// lastOracleResult has no "n" field; its "attempt" is the same number the
+					// oracle's own verdict text names ("Oracle run #<attempt>"), which is what
+					// retainFromRun's `oracle:<runId>#<n>` evidence tags key off of.
+					oracleN: lastOracleResult?.attempt ?? null,
+					remembers,
+					manifestRows,
+					specialists: CONFIG.workers?.specialists ?? [],
+				}),
+			);
+			log({ type: "memory", msg: `remembers: ${remembers.length}` });
+		} catch (err) {
+			log({ type: "warn", msg: `specialist retention failed: ${err?.message ?? err}` });
+		}
 		// Fold what this run restated into what earlier runs already established.
 		const ops = consolidate(foldLog(readLog(MEMORY.log)));
 		if (ops.length) appendLog(MEMORY.log, ops);

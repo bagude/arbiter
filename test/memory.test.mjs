@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { makeRecord, foldLog, readLog, appendLog, retainFromRun, findingsOf, consolidate, CLAIMS, summarize, migrateDigests } from "../lib/memory.mjs";
+import { makeRecord, foldLog, readLog, appendLog, retainFromRun, retainSpecialists, findingsOf, consolidate, CLAIMS, summarize, migrateDigests } from "../lib/memory.mjs";
 
 const rec = (over) =>
 	makeRecord({ scope: "task:orbit", kind: "episodic", text: "x", evidence: [], confidence: 0.5, source: "human", ts: 1000, ...over });
@@ -349,4 +349,59 @@ test("retainFromRun files worker report findings as agent candidates on a succes
 	assert.deepEqual(worker[1].evidence, ["run:r1", "worker:a"]);
 	const failed = retainFromRun({ summary: { ...summary, reason: "CAP: wall 100s >= 100s" }, timeline: [], reports, ts: 5 });
 	assert.equal(failed.filter((r) => r.source === "agent").length, 0);
+});
+
+test("retainSpecialists files a specialist's remember as a candidate under its agent scope; an unresolved worker keeps its remember under the task scope", () => {
+	const remembers = [
+		{ ts: 1, role: "worker:sess-tester", text: "the fixture DB needs a fresh seed each run", evidence_refs: ["src/fixtures.mjs"] },
+		{ ts: 2, role: "worker:sess-unknown", text: "ambiguous scope worker note" },
+	];
+	const manifestRows = [{ wid: "w1", sessionId: "sess-tester", type: "tester", description: "write unit tests for the parser." }];
+	const specialists = [{ name: "tester", memory: "tester" }];
+	const out = retainSpecialists({ runId: "r1", task: "orbit", passed: true, oracleN: 2, remembers, manifestRows, specialists, ts: 5 });
+	const candidates = out.filter((r) => r.kind === "semantic");
+	assert.equal(candidates.length, 2);
+	const testerRec = candidates.find((r) => r.scope === "agent:tester");
+	assert.ok(testerRec, "tester's remember goes under agent:tester");
+	assert.equal(testerRec.claim, "unreviewed");
+	assert.equal(testerRec.source, "agent");
+	assert.equal(testerRec.status, "candidate");
+	assert.equal(testerRec.confidence, 0.4);
+	assert.deepEqual(testerRec.evidence, ["run:r1", "from_agent:tester", "worker:sess-tester", "src/fixtures.mjs"]);
+	const unresolvedRec = candidates.find((r) => r.scope === "task:orbit");
+	assert.ok(unresolvedRec, "unknown session keeps its remember under task:orbit");
+	assert.deepEqual(unresolvedRec.evidence, ["run:r1", "unresolved_worker:sess-unknown", "worker:sess-unknown"]);
+});
+
+test("retainSpecialists writes one procedural record per specialist type that spawned, promoted when the run passed with an oracle number, candidate when it failed", () => {
+	const manifestRows = [
+		{ wid: "w1", sessionId: "s1", type: "tester", description: "write unit tests for the parser. extra detail." },
+		{ wid: "w2", sessionId: "s2", type: "tester", description: "add regression coverage." },
+	];
+	const specialists = [{ name: "tester", memory: "tester" }, { name: "scout", memory: "scout" }];
+	const passedOut = retainSpecialists({ runId: "r2", task: "orbit", passed: true, oracleN: 3, remembers: [], manifestRows, specialists, ts: 9 });
+	const proc = passedOut.find((r) => r.kind === "procedural");
+	assert.ok(proc);
+	assert.equal(proc.scope, "agent:tester");
+	assert.equal(proc.text, "tester ran on orbit (2 spawn(s): write unit tests for the parser. | add regression coverage.) — run passed");
+	assert.equal(proc.source, "supervisor");
+	assert.equal(proc.confidence, 0.7);
+	assert.equal(proc.status, "promoted", "a passed run with an oracle number is host-vouched and auto-promotes");
+	assert.deepEqual(proc.evidence, ["run:r2", "oracle:r2#3", "applies_to:task:orbit"]);
+	assert.equal(passedOut.filter((r) => r.kind === "procedural").length, 1, "scout never spawned, so it gets no procedural record");
+	const failedOut = retainSpecialists({ runId: "r3", task: "orbit", passed: false, oracleN: null, remembers: [], manifestRows, specialists, ts: 9 });
+	const failedProc = failedOut.find((r) => r.kind === "procedural");
+	assert.equal(failedProc.status, "candidate");
+	assert.equal(failedProc.confidence, 0.4);
+	assert.deepEqual(failedProc.evidence, ["run:r3", "applies_to:task:orbit"]);
+});
+
+test("retainSpecialists never throws on a malformed remember line and never drops a resolvable one", () => {
+	const remembers = [null, { role: "worker:s1" }, { role: "not-a-worker-role", text: "x" }, { ts: 1, role: "worker:s1", text: "the fixture needs a reset" }];
+	const manifestRows = [{ wid: "w1", sessionId: "s1", type: "tester", description: "d." }];
+	const specialists = [{ name: "tester", memory: "tester" }];
+	const out = retainSpecialists({ runId: "r4", task: "orbit", passed: true, oracleN: 1, remembers, manifestRows, specialists, ts: 1 });
+	const candidates = out.filter((r) => r.kind === "semantic");
+	assert.equal(candidates.length, 1, "only the one well-formed remember produces a record");
+	assert.equal(candidates[0].scope, "agent:tester");
 });
