@@ -394,7 +394,21 @@ function laneStatsGroup(a){
       '</div>').join("")+
   '</div>';
 }
-function laneCallTip(agent, call, toSec){
+function markerKey(m){ return m.tMs + "|" + m.kind + "|" + m.ev; }
+// A marker is only attached to a call when it falls inside that call's window, so a
+// worker's own spawn (before its first call) and its return (after its last one) are
+// reachable only through trace.markers. Lanes draw the union of both, deduped.
+function orphanMarkers(agent, trace){
+  const attached = new Set();
+  for (const c of agent.calls) for (const m of c.markers || []) attached.add(markerKey(m));
+  return (trace.markers || []).filter((m) => m.agent === agent.id && !attached.has(markerKey(m)));
+}
+function laneMarkers(agent, trace){
+  return agent.calls.reduce((acc, c) => acc.concat(c.markers || []), [])
+    .concat(orphanMarkers(agent, trace))
+    .sort((p, q) => p.tMs - q.tMs);
+}
+function laneCallTip(agent, call, toSec, extra){
   const lines = [esc(agent.id)];
   lines.push("#"+call.i+"  t+"+fmtTime(toSec(call.startMs))+
     "  ctx "+call.context+" (cached "+call.cached+" / fresh "+call.fresh+")"+
@@ -403,7 +417,7 @@ function laneCallTip(agent, call, toSec){
     "  out "+call.output+
     "  inference "+fmtSec(call.inferenceMs)+
     "  tools "+fmtSec(call.toolMs));
-  for (const m of call.markers || [])
+  for (const m of (call.markers || []).concat(extra || []).sort((p, q) => p.tMs - q.tMs))
     lines.push(markerGlyph(m.kind)+" "+m.kind+"  t+"+fmtTime(toSec(m.tMs))+(m.detail ? "  "+m.detail : ""));
   return lines.join("\n");
 }
@@ -461,15 +475,17 @@ function buildContextLanes(){
       const x0 = xm(c.startMs);
       const x1 = Math.max(xm(c.endMs), x0 + 2);
       const w = x1 - x0;
-      const hAll = (c.context / maxContext) * LANE_H;
-      const hCached = (c.cached / maxContext) * LANE_H;
+      // the 2 px output cap is reserved inside the lane, so the tallest bar plus its
+      // cap still stops at the lane's top edge instead of reaching into the label row
+      const hAll = (c.context / maxContext) * (LANE_H - 2);
+      const hCached = (c.cached / maxContext) * (LANE_H - 2);
       const hFresh = Math.max(0, hAll - hCached);
       if (hCached > 0) parts.push('<rect x="'+x0+'" y="'+(base - hCached)+'" width="'+w+'" height="'+hCached+'" fill="'+LANE_C.cached+'"/>');
       if (hFresh > 0) parts.push('<rect x="'+x0+'" y="'+(base - hAll)+'" width="'+w+'" height="'+hFresh+'" fill="'+LANE_C.fresh+'"/>');
       if (c.output > 0) parts.push('<rect x="'+x0+'" y="'+(base - hAll - 2)+'" width="'+w+'" height="2" fill="'+LANE_C.output+'"/>');
     }
 
-    for (const m of a.calls.reduce((acc, c) => acc.concat(c.markers || []), [])){
+    for (const m of laneMarkers(a, trace)){
       const mx = xm(m.tMs);
       if (m.kind === "guard")
         parts.push('<rect x="'+mx+'" y="'+laneTop+'" width="1" height="'+LANE_H+'" fill="'+LANE_C.guard+'" fill-opacity="0.75"/>');
@@ -484,13 +500,15 @@ function buildContextLanes(){
         parts.push('<rect x="'+mx+'" y="'+(base-6)+'" width="1" height="9" fill="'+LANE_C.tick+'"/>');
     }
 
-    // hit targets last so they sit above the paint
-    for (const c of a.calls){
+    // hit targets last so they sit above the paint; markers that fall outside every
+    // call window (a worker's spawn and return) ride along on the last call's tooltip
+    const orphans = orphanMarkers(a, trace);
+    a.calls.forEach((c, ci) => {
       const x0 = xm(c.startMs);
       const w = Math.max(xm(c.endMs), x0 + 2) - x0;
       parts.push('<rect x="'+x0+'" y="'+laneTop+'" width="'+w+'" height="'+LANE_H+'" fill="#000" fill-opacity="0" pointer-events="all" data-tip="'+
-        attrEsc(laneCallTip(a, c, toSec))+'"/>');
-    }
+        attrEsc(laneCallTip(a, c, toSec, ci === a.calls.length - 1 ? orphans : null))+'"/>');
+    });
   });
 
   // axis
@@ -512,14 +530,21 @@ function buildContextLanes(){
   svg.addEventListener("mousemove", (ev) => {
     const raw = ev.target && ev.target.dataset ? ev.target.dataset.tip : null;
     if (!raw){ tip.hidden = true; return; }
-    tip.innerHTML = raw.split("\n").map((l) => '<div class="whitespace-pre">'+esc(l)+'</div>').join("");
+    // inline white-space, not a Tailwind class: the play CDN generates rules for newly
+    // inserted markup asynchronously, so a class here can land after the measurement
+    // below and leave the box narrower than its own longest line.
+    tip.innerHTML = raw.split("\n").map((l) => '<div style="white-space:pre">'+esc(l)+'</div>').join("");
     tip.hidden = false;
+    // The section is overflow-hidden, so the tooltip must stay inside it. Anchor it to
+    // whichever edge the pointer is nearer instead of measuring the box and clamping:
+    // its own width depends on the mono web font, which may still be loading when the
+    // first hover lands, so a measured clamp can be a few pixels short.
     const box = (tip.offsetParent || svg).getBoundingClientRect();
-    let left = ev.clientX - box.left + 12;
-    const maxLeft = box.width - tip.offsetWidth - 8;
-    if (left > maxLeft) left = Math.max(4, maxLeft);
-    tip.style.left = left + "px";
-    tip.style.top = (ev.clientY - box.top + 14) + "px";
+    const px = ev.clientX - box.left, py = ev.clientY - box.top;
+    if (px > box.width/2){ tip.style.left = "auto"; tip.style.right = (box.width - px + 12) + "px"; }
+    else { tip.style.right = "auto"; tip.style.left = (px + 12) + "px"; }
+    if (py > box.height/2){ tip.style.top = "auto"; tip.style.bottom = (box.height - py + 14) + "px"; }
+    else { tip.style.bottom = "auto"; tip.style.top = (py + 14) + "px"; }
   });
   svg.addEventListener("mouseleave", () => { tip.hidden = true; });
 }

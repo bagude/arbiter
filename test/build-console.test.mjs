@@ -17,6 +17,13 @@ test("a backtick pattern does not splice the template's own text into the data",
 	assert.equal(out.match(/TAIL/g).length, 1);
 });
 
+// A transcript that quotes HTML would otherwise end the page's own <script> element.
+test("a closing script tag in the data is escaped", () => {
+	const out = renderConsole("const RUNS = __RUNS_DATA__;", '{"t":"<script>x</script>"}');
+	assert.equal(out, 'const RUNS = {"t":"<script>x<\\/script>"};');
+	assert.equal(/<\/script/i.test(out), false);
+});
+
 test("only the first token is replaced", () => {
 	assert.equal(renderConsole("a __RUNS_DATA__ b __RUNS_DATA__", "X"), "a X b __RUNS_DATA__");
 });
