@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { tokenTotals, freshTokens } from "../lib/usage.mjs";
+import { tokenTotals, freshTokens, hitRatio } from "../lib/usage.mjs";
 
 test("tokenTotals sums fresh input and output per assistant message_end across raw-*.jsonl, by role", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-usage-"));
@@ -13,4 +13,9 @@ test("tokenTotals sums fresh input and output per assistant message_end across r
 	fs.writeFileSync(path.join(dir, "audit.jsonl"), "{}\n");
 	assert.deepEqual(tokenTotals(dir), { input: 180, output: 35, cacheRead: 400, cacheWrite: 0, turns: 3, byRole: { orchestrator: 175, worker: 40 } });
 	assert.equal(freshTokens(dir), 215);
+});
+
+test("hitRatio is cacheRead / (input + cacheRead), 0 when both are 0", () => {
+	assert.equal(hitRatio({ input: 100, cacheRead: 300 }), 0.75);
+	assert.equal(hitRatio({ input: 0, cacheRead: 0 }), 0);
 });
