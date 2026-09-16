@@ -27,7 +27,7 @@ import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubage
 import { appendManifest, transcriptManifestPath, readManifest, manifestJoin } from "./lib/worker-manifest.mjs";
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
-import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, retainSpecialists, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
+import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, retainSpecialists, lastOracleRunNumber, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { resolveLedger, buildIndex } from "./lib/memory-index.mjs";
 import { charge, spent } from "./lib/memory-budget.mjs";
 import { seededBrief } from "./lib/memory-brief.mjs";
@@ -1430,10 +1430,10 @@ function finish(reason) {
 					runId,
 					task: TASK_NAME,
 					passed: String(summary.reason).startsWith("SUCCESS"),
-					// lastOracleResult has no "n" field; its "attempt" is the same number the
-					// oracle's own verdict text names ("Oracle run #<attempt>"), which is what
-					// retainFromRun's `oracle:<runId>#<n>` evidence tags key off of.
-					oracleN: lastOracleResult?.attempt ?? null,
+					// From the verdict text in the timeline, not lastOracleResult: TAP-based
+					// oracles (hidden test suites) never set lastOracleResult, and the text is
+					// the same source retainFromRun's `oracle:<runId>#<n>` evidence uses.
+					oracleN: lastOracleRunNumber(timeline),
 					remembers,
 					manifestRows,
 					specialists: CONFIG.workers?.specialists ?? [],

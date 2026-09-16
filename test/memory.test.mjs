@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { makeRecord, foldLog, readLog, appendLog, retainFromRun, retainSpecialists, findingsOf, consolidate, CLAIMS, summarize, migrateDigests } from "../lib/memory.mjs";
+import { makeRecord, foldLog, readLog, appendLog, retainFromRun, retainSpecialists, lastOracleRunNumber, findingsOf, consolidate, CLAIMS, summarize, migrateDigests } from "../lib/memory.mjs";
 
 const rec = (over) =>
 	makeRecord({ scope: "task:orbit", kind: "episodic", text: "x", evidence: [], confidence: 0.5, source: "human", ts: 1000, ...over });
@@ -441,4 +441,22 @@ test("retainSpecialists uses the specialist's memory field, not its name, for sc
 	const proc = out.find((r) => r.kind === "procedural");
 	assert.equal(proc.scope, "agent:qa");
 	assert.match(proc.text, /^tester ran on orbit/);
+});
+
+test("lastOracleRunNumber reads the last supervisor oracle verdict from the timeline; null when none", () => {
+	const timeline = [
+		{ kind: "mail", from: "orchestrator", body: "Oracle run #9: 1/1 passed." },
+		{ kind: "oracle", from: "supervisor", body: "Oracle run #1: 60/70 passed." },
+		{ kind: "oracle", from: "supervisor", body: "Oracle run #2: 70/70 passed. 70/70 hidden tests" },
+	];
+	assert.equal(lastOracleRunNumber(timeline), 2);
+	assert.equal(lastOracleRunNumber([]), null);
+	assert.equal(lastOracleRunNumber([{ kind: "oracle", from: "supervisor", body: "Oracle run #0: 0/0 passed." }]), 0);
+});
+
+test("retainSpecialists tags oracle evidence for run number 0 as well (null-check, not truthiness)", () => {
+	const out = retainSpecialists({ runId: "r0", task: "t", passed: true, oracleN: 0, remembers: [], manifestRows: [{ sessionId: "s1", type: "tester", description: "Test it" }], specialists: [{ name: "tester", memory: "tester" }] });
+	const proc = out.find((r) => r.kind === "procedural");
+	assert.ok(proc.evidence.includes("oracle:r0#0"));
+	assert.equal(proc.status, "promoted");
 });
