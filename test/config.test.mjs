@@ -169,3 +169,81 @@ test("model preflight: ARBITER_SKIP_MODEL_PREFLIGHT=1 skips even when the store 
 	assert.equal(cfg.roles.builder.contextWindow, null);
 	assert.deepEqual(cfg.preflight, { skipped: "ARBITER_SKIP_MODEL_PREFLIGHT", looked: [storePath.replace(/\\/g, "/"), overridesPath.replace(/\\/g, "/")] });
 });
+
+function tmpRosterDir() {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-roster-"));
+	fs.writeFileSync(
+		path.join(dir, "worker.md"),
+		"---\nname: worker\ndescription: Generic worker.\ntools: read,bash,edit,write,ls,grep,find\n---\nDo the work.\n",
+	);
+	fs.writeFileSync(
+		path.join(dir, "tester.md"),
+		"---\nname: tester\ndescription: Writes and runs tests.\ntools: read,bash,edit,write,ls,grep,find\n---\nTest it.\n",
+	);
+	return dir;
+}
+
+test("workers block: selects specialists, applies overrides, resolves roles.worker for compatibility", () => {
+	const roster = tmpRosterDir();
+	const cfg = tmpConfig({
+		task: "glob", pattern: "orchestrator",
+		roles: { orchestrator: { provider: "llama.cpp", model: "qwen3-27b" } },
+		workers: { default: { provider: "llama.cpp", model: "qwen3-27b", thinking: "off" }, use: ["tester", "worker"], overrides: { tester: { thinking: "low" } }, max: 2 },
+	});
+	const c = loadConfig({ configPath: cfg, env: SKIP, rosterDir: roster });
+	assert.deepEqual(c.workers.use, ["tester", "worker"]);
+	assert.equal(c.workers.max, 2);
+	assert.deepEqual(c.workers.specialists.map((s) => s.name), ["tester", "worker"]);
+	assert.equal(c.workers.overrides.tester.thinking, "low");
+	assert.deepEqual(c.roles.worker, { provider: "llama.cpp", model: "qwen3-27b", thinking: "off", max: 2, background: false, contextWindow: null });
+});
+
+test('legacy roles.worker maps to workers.use = ["worker"]', () => {
+	const roster = tmpRosterDir();
+	const cfg = tmpConfig({
+		task: "glob", pattern: "orchestrator",
+		roles: { orchestrator: { provider: "p", model: "m" }, worker: { provider: "p", model: "m", max: 1, thinking: "off", background: true } },
+	});
+	const c = loadConfig({ configPath: cfg, env: SKIP, rosterDir: roster });
+	assert.deepEqual(c.workers.use, ["worker"]);
+	assert.equal(c.workers.default.thinking, "off");
+	assert.equal(c.workers.overrides.worker.background, true);
+	assert.equal(c.workers.max, 1);
+});
+
+test("workers.use naming an unknown specialist fails with the roster listing; both blocks at once is an error; dyad has workers null", () => {
+	const roster = tmpRosterDir();
+	assert.throws(
+		() => loadConfig({
+			configPath: tmpConfig({ task: "glob", pattern: "orchestrator", roles: { orchestrator: { provider: "p", model: "m" } }, workers: { default: { provider: "p", model: "m" }, use: ["ghost"] } }),
+			env: SKIP, rosterDir: roster,
+		}),
+		/unknown specialist "ghost" \(roster has: tester, worker\)/,
+	);
+	assert.throws(
+		() => loadConfig({
+			configPath: tmpConfig({ task: "glob", pattern: "orchestrator", roles: { orchestrator: { provider: "p", model: "m" }, worker: { provider: "p", model: "m" } }, workers: { default: { provider: "p", model: "m" }, use: ["worker"] } }),
+			env: SKIP, rosterDir: roster,
+		}),
+		/roles\.worker and workers cannot both be set/,
+	);
+	const d = loadConfig({
+		configPath: tmpConfig({ task: "glob", pattern: "dyad", roles: { builder: { provider: "p", model: "m" }, critic: { provider: "p", model: "m" } } }),
+		env: SKIP, rosterDir: roster,
+	});
+	assert.equal(d.workers, null);
+});
+
+test("workers overrides go through model preflight", () => {
+	const roster = tmpRosterDir();
+	const { storePath, overridesPath } = tmpStore({ p: { models: [{ id: "m" }] } });
+	const cfg = tmpConfig({
+		task: "glob", pattern: "orchestrator",
+		roles: { orchestrator: { provider: "p", model: "m" } },
+		workers: { default: { provider: "p", model: "m" }, use: ["tester", "worker"], overrides: { tester: { model: "zzz" } } },
+	});
+	assert.throws(
+		() => loadConfig({ configPath: cfg, env: { ARBITER_MODEL_STORE: storePath, ARBITER_MODEL_OVERRIDES: overridesPath }, rosterDir: roster }),
+		/model preflight: roles\.workers\.tester names "p\/zzz"/,
+	);
+});
