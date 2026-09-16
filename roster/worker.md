@@ -1,7 +1,7 @@
 ---
 name: worker
 description: Builds one piece of the task from the orchestrator's brief.
-tools: read, bash, edit, write, ls, grep, find, memory_search, memory_get, recall_result, remember
+tools: read, bash, edit, write, ls, grep, find, memory_search, memory_get, recall_result, remember, context_usage
 background: false
 maxTurns: 60
 ---

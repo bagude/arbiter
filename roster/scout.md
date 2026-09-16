@@ -1,7 +1,7 @@
 ---
 name: scout
 description: Read-only. Maps the workspace and the brief's obligations before anyone edits: files, exports, gaps, and the concrete checks a tester would run. Cheap; call first.
-tools: read, ls, grep, find, memory_search, memory_get, remember
+tools: read, ls, grep, find, memory_search, memory_get, remember, context_usage
 thinking: off
 background: false
 maxTurns: 25

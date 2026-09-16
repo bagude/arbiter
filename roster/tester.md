@@ -1,7 +1,7 @@
 ---
 name: tester
 description: Independent tester. Writes and runs a test file against the brief's obligations without reading any other worker's transcript, and reports failures with file:line evidence.
-tools: read, bash, write, ls, grep, find, memory_search, memory_get, remember
+tools: read, bash, write, ls, grep, find, memory_search, memory_get, remember, context_usage
 thinking: off
 background: false
 maxTurns: 40

@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Implements one piece under src/ from the orchestrator's brief, testing it locally before reporting.
-tools: read, bash, edit, write, ls, grep, find, memory_search, memory_get, recall_result, remember
+tools: read, bash, edit, write, ls, grep, find, memory_search, memory_get, recall_result, remember, context_usage
 thinking: off
 background: false
 maxTurns: 60
