@@ -410,13 +410,18 @@ function laneMarkers(agent, trace){
 }
 function laneCallTip(agent, call, toSec, extra){
   const lines = [esc(agent.id)];
-  lines.push("#"+call.i+"  t+"+fmtTime(toSec(call.startMs))+
+  let header = "#"+call.i+"  t+"+fmtTime(toSec(call.startMs))+
     "  ctx "+call.context+" (cached "+call.cached+" / fresh "+call.fresh+")"+
     "  hit "+(call.hitRatio || 0).toFixed(2)+
     "  retained "+(call.retained == null ? "—" : call.retained.toFixed(2))+
     "  out "+call.output+
     "  inference "+fmtSec(call.inferenceMs)+
-    "  tools "+fmtSec(call.toolMs));
+    "  tools "+fmtSec(call.toolMs);
+  if (call.timings){
+    header += "  prefill "+fmtSec(call.timings.promptMs)+"  decode "+fmtSec(call.timings.predictedMs);
+    if (call.timings.draftAcceptance != null) header += "  draft "+call.timings.draftAcceptance.toFixed(2);
+  }
+  lines.push(header);
   for (const m of (call.markers || []).concat(extra || []).sort((p, q) => p.tMs - q.tMs))
     lines.push(markerGlyph(m.kind)+" "+m.kind+"  t+"+fmtTime(toSec(m.tMs))+(m.detail ? "  "+m.detail : ""));
   return lines.join("\n");

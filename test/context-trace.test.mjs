@@ -262,6 +262,92 @@ test("markersFor unions a worker's own call markers with run-level markers attac
 	);
 });
 
+test("every fixture call has timings === null and totals.promptMs === 0 (no serverTimings in the fixture)", () => {
+	const trace = traceRun(FIXTURE);
+	for (const agent of trace.agents) {
+		for (const call of agent.calls) assert.equal(call.timings, null, `${agent.id} call ${call.i} timings`);
+		assert.equal(agent.totals.promptMs, 0, `${agent.id} totals.promptMs`);
+		assert.equal(agent.totals.predictedMs, 0, `${agent.id} totals.predictedMs`);
+	}
+	assert.equal(trace.totals.promptMs, 0);
+	assert.equal(trace.totals.predictedMs, 0);
+});
+
+test("a call with usage.serverTimings gets an exact timings object and draftAcceptance, and totals.promptMs sums it", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-timings-"));
+	const sessionsDir = path.join(tmp, "sessions", "orchestrator");
+	fs.mkdirSync(sessionsDir, { recursive: true });
+	const entry1 = { type: "session", version: 3, id: "sess-1", timestamp: "2026-01-01T00:00:00.000Z" };
+	const entry2 = {
+		type: "message",
+		id: "m1",
+		timestamp: "2026-01-01T00:00:05.000Z",
+		message: {
+			role: "assistant",
+			content: [],
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 0,
+				cacheWrite: 0,
+				reasoning: 0,
+				totalTokens: 110,
+				serverTimings: { promptN: 5000, promptMs: 4200, cacheN: 6000, predictedN: 300, predictedMs: 2800, draftN: 400, draftAccepted: 360 },
+			},
+			timestamp: 1767225600000,
+			stopReason: "endTurn",
+		},
+	};
+	fs.writeFileSync(path.join(sessionsDir, "x.jsonl"), [entry1, entry2].map((e) => JSON.stringify(e)).join("\n") + "\n");
+
+	const trace = traceRun(tmp);
+	const agent = trace.agents[0];
+	const call = agent.calls[0];
+	assert.deepEqual(call.timings, {
+		promptN: 5000,
+		promptMs: 4200,
+		cacheN: 6000,
+		predictedN: 300,
+		predictedMs: 2800,
+		draftN: 400,
+		draftAccepted: 360,
+		draftAcceptance: 0.9,
+	});
+	assert.equal(agent.totals.promptMs, 4200);
+	assert.equal(agent.totals.predictedMs, 2800);
+});
+
+test("timings with missing fields fill nulls, and draftAcceptance is null when draftN is 0 or missing", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-timings-partial-"));
+	const sessionsDir = path.join(tmp, "sessions", "orchestrator");
+	fs.mkdirSync(sessionsDir, { recursive: true });
+	const entry1 = { type: "session", version: 3, id: "sess-1", timestamp: "2026-01-01T00:00:00.000Z" };
+	const entry2 = {
+		type: "message",
+		id: "m1",
+		timestamp: "2026-01-01T00:00:05.000Z",
+		message: {
+			role: "assistant",
+			content: [],
+			usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 110, serverTimings: { promptMs: 1000, draftN: 0 } },
+			timestamp: 1767225600000,
+			stopReason: "endTurn",
+		},
+	};
+	fs.writeFileSync(path.join(sessionsDir, "x.jsonl"), [entry1, entry2].map((e) => JSON.stringify(e)).join("\n") + "\n");
+
+	const trace = traceRun(tmp);
+	const call = trace.agents[0].calls[0];
+	assert.equal(call.timings.promptN, null);
+	assert.equal(call.timings.promptMs, 1000);
+	assert.equal(call.timings.cacheN, null);
+	assert.equal(call.timings.predictedN, null);
+	assert.equal(call.timings.predictedMs, null);
+	assert.equal(call.timings.draftN, 0);
+	assert.equal(call.timings.draftAccepted, null);
+	assert.equal(call.timings.draftAcceptance, null);
+});
+
 test("walkSessions returns a sorted, recursive list of .jsonl paths", () => {
 	const files = walkSessions(path.join(FIXTURE, "sessions"));
 	assert.equal(files.length, 2);

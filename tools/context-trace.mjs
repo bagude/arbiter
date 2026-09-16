@@ -23,6 +23,7 @@ const COLUMNS = [
 	{ label: "hit", width: 5 },
 	{ label: "ret", width: 6 },
 	{ label: "out", width: 7 },
+	{ label: "pp s", width: 5 },
 ];
 const PREFIX_LEN = COLUMNS.reduce((n, c) => n + c.width + 1, 0); // +1 per column for its trailing separator space
 const ROW_HEADER = `${COLUMNS.map((c) => c.label.padStart(c.width)).join(" ")} tools / markers`;
@@ -50,8 +51,9 @@ function toolsAndMarkersCell(call, extraMarkers) {
 function formatRow(call, t0, extraMarkers) {
 	const tPlus = ((call.startMs - t0) / 1000).toFixed(1);
 	const ret = call.retained === null ? "—" : call.retained.toFixed(2);
+	const ppS = call.timings?.promptMs != null ? (call.timings.promptMs / 1000).toFixed(1) : "—";
 	const cell = toolsAndMarkersCell(call, extraMarkers);
-	const values = [String(call.i), tPlus, String(call.context), String(call.cached), String(call.fresh), call.hitRatio.toFixed(2), ret, String(call.output)];
+	const values = [String(call.i), tPlus, String(call.context), String(call.cached), String(call.fresh), call.hitRatio.toFixed(2), ret, String(call.output), ppS];
 	const fields = values.map((v, idx) => v.padStart(COLUMNS[idx].width));
 	return `${fields.join(" ")} ${cell}`;
 }
@@ -85,7 +87,8 @@ function agentHeaderLine(agent, t0) {
 	const t = agent.totals;
 	const inferenceS = (t.inferenceMs / 1000).toFixed(1);
 	const toolsS = (t.toolMs / 1000).toFixed(1);
-	return `## ${agent.id}${agentHeaderParenthetical(agent, t0)}: ${t.calls} calls, hit ${t.hitRatio.toFixed(3)}, fresh ${t.fresh}, cached ${t.cached}, peak ${t.peakContext}, inference ${inferenceS}s, tools ${toolsS}s`;
+	const prefill = t.promptMs > 0 ? `, prefill ${(t.promptMs / 1000).toFixed(1)}s` : "";
+	return `## ${agent.id}${agentHeaderParenthetical(agent, t0)}: ${t.calls} calls, hit ${t.hitRatio.toFixed(3)}, fresh ${t.fresh}, cached ${t.cached}, peak ${t.peakContext}, inference ${inferenceS}s, tools ${toolsS}s${prefill}`;
 }
 
 function printText(doc) {

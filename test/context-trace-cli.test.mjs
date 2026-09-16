@@ -35,6 +35,12 @@ test("the i and t+s columns of a call row never abut: a two-digit call index (19
 	assert.match(out, / 19 +1025\.7(?:\s|$)/m);
 });
 
+test("the header row contains the pp s column and fixture rows print — for it (no serverTimings in the fixture)", () => {
+	const out = run([FIXTURE]);
+	assert.match(out, /\bpp s\b/);
+	assert.match(out, /^\s+1\s+0\.9\s+6007\s+0\s+6007\s+\S+\s+\S+\s+\d+\s+—/m);
+});
+
 test("a worker's last row shows its return marker (attached only to the parent's call, surfaced via markersFor)", () => {
 	const out = run([FIXTURE]);
 	const workerSection = out.slice(out.indexOf("## worker:"));
