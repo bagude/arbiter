@@ -18,6 +18,11 @@ const home = process.env.ARBITER_HOME ?? path.resolve(here, "..");
 const kit = await import(new URL(`file:///${path.join(home, "ext", "guard-kit.ts").replace(/\\/g, "/")}`).href);
 const tools = await import(kit.homeUrl(home, "lib", "memory-tools.mjs"));
 
+// Per-process call counts for `remember`, keyed by role (worker:<id> or orchestrator).
+// Module-level so the 5-per-run limit holds across calls within one run without a
+// file read on every call; a fresh process (a fresh run) starts a fresh Map.
+const rememberState = new Map<string, number>();
+
 export default function (pi: ExtensionAPI) {
 	const cfg = tools.readToolEnv(process.env);
 	if (!cfg) return;
@@ -53,6 +58,25 @@ export default function (pi: ExtensionAPI) {
 			const role = kit.roleFor(ctx);
 			const r = tools.getTool(cfg, params, role);
 			kit.emit(r.refused ? "memory:refused" : "memory:get", ctx, { chars: r.chars, detail: params.ids.join(",") });
+			return reply(r.text);
+		},
+	});
+
+	if (!cfg.rememberFile) return;
+
+	pi.registerTool({
+		name: "remember",
+		label: "Remember a lesson",
+		description:
+			"Save one lesson for future workers of your kind, as a candidate a human will review. Say what you learned, where the evidence is (file, test, command), and when it applies. Not for task-specific facts.",
+		parameters: Type.Object({
+			text: Type.String({ description: "20-600 characters: what you learned, where the evidence is, and when it applies." }),
+			evidence_refs: Type.Optional(Type.Array(Type.String())),
+		}),
+		async execute(_id, params, _signal, _update, ctx) {
+			const role = kit.roleFor(ctx);
+			const r = tools.rememberTool(cfg, params, role, rememberState);
+			kit.emit(r.refused ? "memory:refused" : "memory:remember", ctx, { chars: r.refused ? 0 : r.chars, detail: r.refused ? r.text : String(params.text).slice(0, 80) });
 			return reply(r.text);
 		},
 	});

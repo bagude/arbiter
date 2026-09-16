@@ -22,3 +22,8 @@ test("WORKER_TOOLS includes context_usage", () => {
 test("dyad critic's tool string includes context_usage", () => {
 	assert.ok(PATTERNS.dyad.tools.critic.split(",").includes("context_usage"));
 });
+
+test("WORKER_TOOLS includes remember; ORCHESTRATOR_TOOLS does not", () => {
+	assert.ok(WORKER_TOOLS.includes("remember"));
+	assert.ok(!ORCHESTRATOR_TOOLS.split(",").includes("remember"));
+});

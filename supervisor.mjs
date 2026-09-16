@@ -209,6 +209,9 @@ let MEMORY_INDEX = "";
 let MEMORY_REVISION = "";
 let MEMORY_SEED_CHARS = 0;
 const MEMORY_LEDGER = path.join(RUN, "memory-calls.jsonl");
+// Only set in search mode, since memory-ext.ts only registers the memory tools (and
+// so only registers `remember`) when ARBITER_MEMORY_INDEX is set.
+const REMEMBER_FILE = path.join(RUN, "remember.jsonl");
 // Every selected specialist's own scope (agent:<memory>) joins the run's scopes: in
 // this slice every worker shares the union of all specialists' agent scopes rather
 // than being confined to its own, since search rows already show scope so a tester
@@ -380,6 +383,7 @@ function launch(name) {
 			ARBITER_MEMORY_WORKER_RESERVE: String(WORKER_RESERVE),
 			ARBITER_MEMORY_LEDGER: MEMORY_LEDGER,
 			ARBITER_SNAPSHOT: SNAPSHOT,
+			ARBITER_REMEMBER_FILE: MEMORY_MODE === "search" ? REMEMBER_FILE : "",
 			// Working context (slice 2): large tool results become handles archived under
 			// the run; the orchestrator can checkpoint before a supervisor-driven compaction.
 			ARBITER_RESULT_HANDLES: CONFIG.guards.result_handles ? JSON.stringify(CONFIG.guards.result_handles) : "",

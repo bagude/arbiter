@@ -6,7 +6,7 @@ import path from "node:path";
 import { makeRecord, appendLog } from "../lib/memory.mjs";
 import { resolveLedger, buildIndex } from "../lib/memory-index.mjs";
 import { spent } from "../lib/memory-budget.mjs";
-import { readToolEnv, searchTool, getTool, RETRIEVAL_HINT } from "../lib/memory-tools.mjs";
+import { readToolEnv, searchTool, getTool, rememberTool, RETRIEVAL_HINT } from "../lib/memory-tools.mjs";
 
 function env(budget = 6000) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-tools-"));
@@ -92,6 +92,73 @@ test("a get charges the number of records it delivered", () => {
 	getTool(cfg, { ids: ["m_nope"] }, "worker:x");
 	const lines = fs.readFileSync(ledger, "utf8").trim().split("\n").map((l) => JSON.parse(l));
 	assert.deepEqual(lines.map((l) => l.records), [1, 0]);
+});
+
+function remEnv(budget = 100000) {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-remember-"));
+	const rememberFile = path.join(dir, "remember.jsonl");
+	const ledger = path.join(dir, "calls.jsonl");
+	return { dir, rememberFile, ledger, cfg: { rememberFile, ledger, budget, workerReserve: 0 } };
+}
+
+test("rememberTool accepts up to 5 calls per worker role, then refuses the 6th and writes nothing more", () => {
+	const { cfg, rememberFile } = remEnv();
+	const state = new Map();
+	for (let i = 1; i <= 5; i++) {
+		const r = rememberTool(cfg, { text: `lesson number ${i} about the loader dropping null water_bbl rows`, evidence_refs: [`file:loader.py#${i}`] }, "worker:w1", state);
+		assert.equal(r.refused, false);
+		assert.match(r.text, new RegExp(`remembered as a candidate for review \\(${i} of 5 this run\\)`));
+	}
+	const sixth = rememberTool(cfg, { text: "one lesson too many for this particular worker run, entirely" }, "worker:w1", state);
+	assert.equal(sixth.refused, true);
+	assert.match(sixth.text, /remember limit reached \(5 per worker run\)/);
+	const lines = fs
+		.readFileSync(rememberFile, "utf8")
+		.trim()
+		.split("\n")
+		.map((l) => JSON.parse(l));
+	assert.equal(lines.length, 5);
+	assert.ok(lines.every((l) => l.role === "worker:w1"));
+	assert.deepEqual(lines[0].evidence_refs, ["file:loader.py#1"]);
+	assert.equal(lines[0].chars, lines[0].text.length);
+});
+
+test("rememberTool refuses text outside 20-600 chars trimmed, and writes nothing", () => {
+	const { cfg, rememberFile } = remEnv();
+	const state = new Map();
+	const short = rememberTool(cfg, { text: "   too short   " }, "worker:w1", state);
+	assert.equal(short.refused, true);
+	assert.match(short.text, /remember needs 20.?600 characters/);
+	const long = rememberTool(cfg, { text: "x".repeat(601) }, "worker:w1", state);
+	assert.equal(long.refused, true);
+	assert.equal(fs.existsSync(rememberFile), false);
+});
+
+test("rememberTool refuses a non-worker role and writes nothing", () => {
+	const { cfg, rememberFile } = remEnv();
+	const r = rememberTool(cfg, { text: "a fine lesson about the loader that is long enough to pass" }, "orchestrator", new Map());
+	assert.equal(r.refused, true);
+	assert.match(r.text, /remember is for workers/);
+	assert.equal(fs.existsSync(rememberFile), false);
+});
+
+test("rememberTool charges the ledger on success and refuses over budget with the shared budget message", () => {
+	const { cfg, ledger } = remEnv(30);
+	const state = new Map();
+	const r = rememberTool(cfg, { text: "a lesson about the loader mapping columns wrong here" }, "worker:w1", state);
+	assert.equal(r.refused, true);
+	assert.match(r.text, /memory budget: \d+ of 30 characters used/);
+	assert.equal(spent(ledger).chars, 0);
+	assert.equal(spent(ledger).refused, 1);
+});
+
+test("rememberTool charges text.length to the ledger on an accepted call within budget", () => {
+	const { cfg, ledger } = remEnv(5000);
+	const text = "a lesson about the loader mapping columns wrong in this run";
+	const r = rememberTool(cfg, { text }, "worker:w1", new Map());
+	assert.equal(r.refused, false);
+	assert.equal(r.chars, text.length);
+	assert.equal(spent(ledger).chars, text.length);
 });
 
 test("search returns five rows by default and up to ten on request", () => {
