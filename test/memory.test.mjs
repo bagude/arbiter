@@ -22,6 +22,13 @@ test("makeRecord fills id, status and defaults; auto-promotes supervisor/oracle 
 	assert.throws(() => rec({ scope: "nope" }), /scope/);
 });
 
+test("makeRecord accepts agent:<name> scopes and rejects malformed ones", () => {
+	const agentRec = rec({ scope: "agent:scout" });
+	assert.equal(agentRec.scope, "agent:scout");
+	assert.throws(() => rec({ scope: "agent:" }), /scope/);
+	assert.throws(() => rec({ scope: "agent:bad name" }), /scope/);
+});
+
 test("foldLog applies promote and tombstone ops in order and ignores unknown ids", () => {
 	const a = rec({ id: "m_a", text: "A" });
 	const b = rec({ id: "m_b", text: "B" });

@@ -82,6 +82,18 @@ test("recall reads pages in scope order (repo, task, global), Facts before Histo
 	assert.deepEqual(none, { text: "", ids: [] });
 });
 
+test("recall orders repo, task, agent, global; INDEX lists an Agents section", () => {
+	const { records, runSummaries } = fixture();
+	records.set("m_agent", rec({ id: "m_agent", status: "promoted", scope: "agent:scout", kind: "semantic", text: "scout learned to check the loader mapping first", confidence: 0.6, source: "human", ts: 90 }));
+	const pages = buildPages({ records, runSummaries, now: 100 * DAY });
+	const full = recall({ pages, scopes: ["global", "task:orbit", "repo:dw", "agent:scout"], budgetChars: 10_000 });
+	assert.match(full.text, /^# MEMORY \(wiki excerpt; scopes: repo:dw, task:orbit, agent:scout, global\)\n/);
+	assert.ok(full.text.indexOf("## task:orbit") < full.text.indexOf("## agent:scout") && full.text.indexOf("## agent:scout") < full.text.indexOf("## global"));
+	assert.match(full.text, /scout learned to check the loader mapping first/);
+	const index = pages.get("INDEX.md");
+	assert.match(index, /## Agents\n[\s\S]*\[\[scopes\/agent-scout\]\]/);
+});
+
 test("lint: unbacked promotions, missing runs, stale candidates, cross-scope duplicates, scopes without runs", () => {
 	const { records, runSummaries } = fixture();
 	records.set("m_7", rec({ id: "m_7", status: "promoted", scope: "task:orbit", kind: "semantic", text: "promoted with nothing behind it", source: "agent", ts: 70 }));

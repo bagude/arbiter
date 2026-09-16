@@ -90,6 +90,9 @@ test("memory.extraScopes are read scopes, validated", () => {
 	assert.deepEqual(c.memory.extraScopes, ["repo:data-warehousers-real"]);
 	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search" } }), env: SKIP }).memory.extraScopes, undefined);
 	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", extraScopes: ["nope"] } }), env: SKIP }), /extraScopes/);
+	const withAgent = loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", extraScopes: ["agent:scout"] } }), env: SKIP });
+	assert.deepEqual(withAgent.memory.extraScopes, ["agent:scout"]);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", extraScopes: ["agent:"] } }), env: SKIP }), /extraScopes/);
 });
 
 test("roles.<role>.thinking: absent by default, validated, the worker rejects max, env overrides", () => {

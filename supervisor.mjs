@@ -209,7 +209,11 @@ let MEMORY_INDEX = "";
 let MEMORY_REVISION = "";
 let MEMORY_SEED_CHARS = 0;
 const MEMORY_LEDGER = path.join(RUN, "memory-calls.jsonl");
-const MEMORY_SCOPES = [...new Set(["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : []), ...(CONFIG.memory?.extraScopes ?? [])])];
+// Every selected specialist's own scope (agent:<memory>) joins the run's scopes: in
+// this slice every worker shares the union of all specialists' agent scopes rather
+// than being confined to its own, since search rows already show scope so a tester
+// can tell a scout's record from its own.
+const MEMORY_SCOPES = [...new Set(["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : []), ...(CONFIG.memory?.extraScopes ?? []), ...(CONFIG.workers?.specialists ?? []).map((s) => `agent:${s.memory}`)])];
 const RETRIEVAL_BUDGET = CONFIG.memory?.retrievalChars ?? 6000;
 const WORKER_RESERVE = CONFIG.memory?.workerReserveChars ?? 0;
 if (MEMORY_MODE === "inject") {
@@ -232,7 +236,11 @@ if (MEMORY_MODE === "inject") {
 		.slice(0, 5)
 		.map((r) => r.text);
 	const specTitle = (/^#\s*(.+)$/m.exec(taskContext) ?? [])[1] ?? TASK_NAME;
-	const brief = seededBrief({ indexFile: MEMORY_INDEX, scopes: MEMORY_SCOPES, snapshot: SNAPSHOT, query: `${specTitle} ${questions.join(" ")}`, budgetChars: CONFIG.memory.budgetChars ?? 2000, revision: MEMORY_REVISION });
+	// Specialists' spawn briefs must never carry candidates (an unreviewed agent claim
+	// presented as if it were settled); a plain worker run stays unfiltered so existing
+	// runs are unchanged.
+	const briefStatus = CONFIG.workers?.specialists?.length ? "promoted" : null;
+	const brief = seededBrief({ indexFile: MEMORY_INDEX, scopes: MEMORY_SCOPES, snapshot: SNAPSHOT, query: `${specTitle} ${questions.join(" ")}`, budgetChars: CONFIG.memory.budgetChars ?? 2000, revision: MEMORY_REVISION, status: briefStatus });
 	for (const role of Object.keys(prompts)) prompts[role] = `${prompts[role]}\n\n${brief.text}`;
 	MEMORY_INJECTED.push(...brief.ids);
 	MEMORY_TEXT = brief.text;

@@ -76,6 +76,20 @@ test("search excludes incompatible snapshots unless allSnapshots, and then names
 	assert.equal(withAll.snapshot, "dw@cccccccccccc");
 });
 
+test("search with status filters to that status only; without it, every live status returns", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-index-status-"));
+	const log = path.join(dir, "records.jsonl");
+	appendLog(log, [
+		makeRecord({ id: "m_cand", scope: "agent:scout", kind: "semantic", source: "agent", confidence: 0.4, text: "scout candidate finding about the loader", status: "candidate" }),
+		makeRecord({ id: "m_promoted", scope: "agent:scout", kind: "semantic", source: "supervisor", confidence: 0.9, evidence: ["run:r1", "oracle:r1#1"], text: "scout promoted finding about the loader" }),
+	]);
+	const p = buildIndex(dir, resolveLedger(log));
+	const promotedOnly = search(p, { query: "loader", scopes: ["agent:scout"], status: "promoted" });
+	assert.deepEqual(promotedOnly.map((r) => r.id), ["m_promoted"]);
+	const both = search(p, { query: "loader", scopes: ["agent:scout"] });
+	assert.deepEqual(both.map((r) => r.id).sort(), ["m_cand", "m_promoted"]);
+});
+
 test("get returns full records inside the allowed scopes only, in request order", () => {
 	const { dir, log } = fixture();
 	const p = buildIndex(dir, resolveLedger(log));

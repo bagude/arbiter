@@ -27,3 +27,17 @@ test("seededBrief lists ranked rows within the budget and carries the retrieval 
 	assert.deepEqual(empty.ids, []);
 	assert.match(empty.text, /0 of 0 matches shown/);
 });
+
+test("seededBrief with status forwards it to search, excluding other statuses", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-brief-status-"));
+	const log = path.join(dir, "records.jsonl");
+	const S = "dw@aaaaaaaaaaaa";
+	appendLog(log, [
+		makeRecord({ id: "m_cand", scope: "agent:scout", kind: "semantic", source: "agent", confidence: 0.4, snapshot: S, text: "scout candidate finding about the loader", status: "candidate" }),
+		makeRecord({ id: "m_promoted", scope: "agent:scout", kind: "semantic", source: "supervisor", confidence: 0.9, snapshot: S, evidence: ["run:r1", "oracle:r1#1"], text: "scout promoted finding about the loader" }),
+	]);
+	const resolved = resolveLedger(log);
+	const indexFile = buildIndex(dir, resolved);
+	const b = seededBrief({ indexFile, scopes: ["agent:scout"], snapshot: S, query: "loader", budgetChars: 2000, revision: resolved.revision, status: "promoted" });
+	assert.deepEqual(b.ids, ["m_promoted"]);
+});
