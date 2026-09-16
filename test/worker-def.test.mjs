@@ -81,11 +81,11 @@ test("writeRosterDefinitions writes one .pi/agents/<name>.md per specialist and 
 	assert.deepEqual(files, [path.join(ws, ".pi", "agents", "worker.md"), path.join(ws, ".pi", "agents", "scout.md")]);
 	for (const f of files) assert.ok(fs.existsSync(f));
 	const workerMd = fs.readFileSync(files[0], "utf8");
-	assert.match(workerMd, /\nmodel: p\/m\n/);
+	assert.match(workerMd, /\nmodel: "p\/m"\n/);
 	assert.match(workerMd, /GENERIC WORKER BODY/);
 	assert.match(workerMd, /SUFFIX FOR worker\n$/);
 	const scoutMd = fs.readFileSync(files[1], "utf8");
-	assert.match(scoutMd, /\nmodel: p\/m\n/);
+	assert.match(scoutMd, /\nmodel: "p\/m"\n/);
 	assert.match(scoutMd, /SUFFIX FOR scout\n$/);
 	assert.deepEqual(JSON.parse(fs.readFileSync(path.join(ws, ".pi", "subagents.json"), "utf8")), { maxConcurrent: 2 });
 });
@@ -114,7 +114,7 @@ test("writeRosterDefinitions applies per-name overrides (provider/model/thinking
 	const workers = { default: { provider: "p", model: "m", thinking: "off" }, overrides: { tester: { provider: "q", model: "n", thinking: "low", background: true } }, max: 1 };
 	const { files } = writeRosterDefinitions(ws, { specialists, workers, extraTools: ["report"] });
 	const md = fs.readFileSync(files[0], "utf8");
-	assert.match(md, /\nmodel: q\/n\n/);
+	assert.match(md, /\nmodel: "q\/n"\n/);
 	assert.match(md, /\nthinking: low\n/);
 	assert.match(md, /\nrun_in_background: true\n/);
 	assert.match(md, /\ntools: read,bash,report\n/);

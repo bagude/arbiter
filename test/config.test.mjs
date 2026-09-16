@@ -199,6 +199,7 @@ test("workers block: selects specialists, applies overrides, resolves roles.work
 	assert.deepEqual(c.workers.specialists.map((s) => s.name), ["tester", "worker"]);
 	assert.equal(c.workers.overrides.tester.thinking, "low");
 	assert.deepEqual(c.roles.worker, { provider: "llama.cpp", model: "qwen3-27b", thinking: "off", max: 2, background: false, contextWindow: null });
+	assert.equal(c.workers.legacy, false, "a workers block is not the legacy roles.worker shape");
 });
 
 test('legacy roles.worker maps to workers.use = ["worker"]', () => {
@@ -212,6 +213,7 @@ test('legacy roles.worker maps to workers.use = ["worker"]', () => {
 	assert.equal(c.workers.default.thinking, "off");
 	assert.equal(c.workers.overrides.worker.background, true);
 	assert.equal(c.workers.max, 1);
+	assert.equal(c.workers.legacy, true, "roles.worker configs must not filter the seeded brief (existing runs stay unfiltered)");
 });
 
 test("workers.use naming an unknown specialist fails with the roster listing; both blocks at once is an error; dyad has workers null", () => {

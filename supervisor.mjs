@@ -48,7 +48,7 @@ const CONFIG = loadConfig(parseArgs(process.argv));
 // log line nor summary.json should embed a specialist's prompt text. This is
 // CONFIG.workers stripped to the run's actual selection, used wherever the config
 // is logged or persisted (the go section's console.log, buildSummary in finish()).
-const RECORDED_CONFIG = { ...CONFIG, workers: CONFIG.workers && { default: CONFIG.workers.default, use: CONFIG.workers.use, overrides: CONFIG.workers.overrides, max: CONFIG.workers.max } };
+const RECORDED_CONFIG = { ...CONFIG, workers: CONFIG.workers && { default: CONFIG.workers.default, use: CONFIG.workers.use, overrides: CONFIG.workers.overrides, max: CONFIG.workers.max, legacy: CONFIG.workers.legacy } };
 const { task: TASK_NAME, pattern: PATTERN, roles: ROLES, caps: CAPS, oracle: ORACLE_OPTS } = CONFIG;
 const PDEF = PATTERNS[PATTERN];
 // N=1 ablation: no CRITIC at all. BUILDER gets the spec in its own prompt, and the
@@ -241,9 +241,9 @@ if (MEMORY_MODE === "inject") {
 		.map((r) => r.text);
 	const specTitle = (/^#\s*(.+)$/m.exec(taskContext) ?? [])[1] ?? TASK_NAME;
 	// Specialists' spawn briefs must never carry candidates (an unreviewed agent claim
-	// presented as if it were settled); a plain worker run stays unfiltered so existing
-	// runs are unchanged.
-	const briefStatus = CONFIG.workers?.specialists?.length ? "promoted" : null;
+	// presented as if it were settled); a plain worker run (legacy roles.worker, or no
+	// workers block at all) stays unfiltered so existing runs are unchanged.
+	const briefStatus = CONFIG.workers && !CONFIG.workers.legacy ? "promoted" : null;
 	const brief = seededBrief({ indexFile: MEMORY_INDEX, scopes: MEMORY_SCOPES, snapshot: SNAPSHOT, query: `${specTitle} ${questions.join(" ")}`, budgetChars: CONFIG.memory.budgetChars ?? 2000, revision: MEMORY_REVISION, status: briefStatus });
 	for (const role of Object.keys(prompts)) prompts[role] = `${prompts[role]}\n\n${brief.text}`;
 	MEMORY_INJECTED.push(...brief.ids);

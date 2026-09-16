@@ -25,6 +25,6 @@ test("substituting {{ROSTER}} for a legacy use: [\"worker\"] selection renders t
 	assert.doesNotMatch(replaced, /\{\{ROSTER\}\}/);
 	assert.match(
 		replaced,
-		/^- `subagent` \(subagent_type "worker"\): Builds one piece of the task from the orchestrator's brief\.\n {2}Workers do not have the specification/m,
+		/^- `subagent` \(subagent_type "worker"\): Builds one piece of the task from the orchestrator's brief\.\n\nWorkers do not have the specification/m,
 	);
 });

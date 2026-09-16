@@ -3,8 +3,17 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
 import { parseRosterFile, loadRoster, selectSpecialists, renderDefinition, rosterSection, ROSTER_TOOLS } from "../lib/roster.mjs";
+
+// pi-subagents parses agent frontmatter with the real `yaml` package
+// (custom-agents.ts loadCustomAgents -> pi-coding-agent's parseFrontmatter), which
+// throws on a compact-mapping colon like scout's "before anyone edits: files,
+// exports..." when renderDefinition emits description/model as unquoted scalars.
+// lib/roster.mjs's own hand-rolled parseFrontmatter (first-colon split) does not
+// catch this class of bug, so this test drives pi's real loader instead.
+const PI = "C:/Users/user/open_harnessess/pi/pi";
 
 function tmpRoster(files) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "roster-"));
@@ -75,9 +84,9 @@ test("renderDefinition emits pi-subagents frontmatter with model from config, ov
 	const lines = md.split("\n");
 	assert.equal(lines[0], "---");
 	assert.ok(lines.includes("name: tester"));
-	assert.ok(lines.includes("description: Writes and runs tests against the spec."));
+	assert.ok(lines.includes('description: "Writes and runs tests against the spec."'));
 	assert.ok(lines.includes("tools: read,bash,write,memory_search,remember,report"));
-	assert.ok(lines.includes("model: llama.cpp/qwen3-27b"));
+	assert.ok(lines.includes('model: "llama.cpp/qwen3-27b"'));
 	assert.ok(lines.includes("thinking: low"));
 	assert.ok(lines.includes("max_turns: 40"));
 	assert.ok(lines.includes("run_in_background: true"));
@@ -104,4 +113,43 @@ test("ROSTER_TOOLS covers every tool the shipped roster files use, and the four 
 	assert.deepEqual([...roster.keys()].sort(), ["implementer", "scout", "tester", "worker"]);
 	for (const s of roster.values()) for (const t of s.tools) assert.ok(ROSTER_TOOLS.includes(t), `${s.name} uses ${t}`);
 	assert.deepEqual(roster.get("scout").tools.filter((t) => ["bash", "edit", "write"].includes(t)), [], "scout is read-only");
+});
+
+test("renderDefinition's output is YAML-safe: pi-subagents' own loadCustomAgents finds all four shipped specialists, and the yaml package parses one verbatim", async () => {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const roster = loadRoster(path.join(here, "..", "roster"));
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "roster-render-"));
+	const agentsDir = path.join(tmp, ".pi", "agents");
+	fs.mkdirSync(agentsDir, { recursive: true });
+	for (const spec of roster.values()) {
+		const md = renderDefinition(spec, { provider: "llama.cpp", model: "qwen3-27b" });
+		fs.writeFileSync(path.join(agentsDir, `${spec.name}.md`), md);
+	}
+
+	const customAgents = path.resolve(here, "..", "node_modules", "@gotgenes", "pi-subagents", "src", "config", "custom-agents.ts");
+	const driver = path.join(tmp, "driver.mjs");
+	fs.writeFileSync(
+		driver,
+		`
+		import { pathToFileURL } from "node:url";
+		const m = await import(pathToFileURL(${JSON.stringify(customAgents)}).href);
+		console.log(JSON.stringify([...m.loadCustomAgents(${JSON.stringify(tmp)}).keys()]));
+		`,
+	);
+	const r = spawnSync(process.execPath, [`${PI}/node_modules/tsx/dist/cli.mjs`, driver], {
+		encoding: "utf8",
+		env: { ...process.env, NODE_PATH: `${PI}/node_modules` },
+	});
+	assert.equal(r.status, 0, r.stderr);
+	const names = JSON.parse(r.stdout.trim());
+	for (const n of ["scout", "implementer", "tester", "worker"]) assert.ok(names.includes(n), `${n} missing from loadCustomAgents: ${names.join(", ")}`);
+
+	// Also parse one rendered file with the real yaml package directly, and check the
+	// description round-trips verbatim (this is the field whose colon broke compact
+	// mapping parsing before renderDefinition JSON.stringify'd it).
+	const scoutText = fs.readFileSync(path.join(agentsDir, "scout.md"), "utf8");
+	const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(scoutText)[1];
+	const yaml = await import(pathToFileURL(`${PI}/node_modules/yaml/dist/index.js`).href);
+	const parsed = yaml.parse(fm);
+	assert.equal(parsed.description, roster.get("scout").description);
 });

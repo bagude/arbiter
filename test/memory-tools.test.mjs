@@ -142,23 +142,39 @@ test("rememberTool refuses a non-worker role and writes nothing", () => {
 	assert.equal(fs.existsSync(rememberFile), false);
 });
 
-test("rememberTool charges the ledger on success and refuses over budget with the shared budget message", () => {
+test("rememberTool does not draw on the shared retrieval budget, even over a tiny budget", () => {
 	const { cfg, ledger } = remEnv(30);
 	const state = new Map();
-	const r = rememberTool(cfg, { text: "a lesson about the loader mapping columns wrong here" }, "worker:w1", state);
-	assert.equal(r.refused, true);
-	assert.match(r.text, /memory budget: \d+ of 30 characters used/);
-	assert.equal(spent(ledger).chars, 0);
-	assert.equal(spent(ledger).refused, 1);
+	const text = "a lesson about the loader mapping columns wrong here";
+	const r = rememberTool(cfg, { text }, "worker:w1", state);
+	assert.equal(r.refused, false, "remember's own 5x600-char caps are the bound, not the shared retrieval budget");
+	assert.equal(spent(ledger).chars, 0, "an accepted remember leaves the shared budget unchanged");
 });
 
-test("rememberTool charges text.length to the ledger on an accepted call within budget", () => {
+test("rememberTool still appends a ledger line for accounting, at zero chars", () => {
 	const { cfg, ledger } = remEnv(5000);
 	const text = "a lesson about the loader mapping columns wrong in this run";
 	const r = rememberTool(cfg, { text }, "worker:w1", new Map());
 	assert.equal(r.refused, false);
-	assert.equal(r.chars, text.length);
-	assert.equal(spent(ledger).chars, text.length);
+	assert.equal(spent(ledger).chars, 0);
+	assert.equal(spent(ledger).calls.remember, 1);
+});
+
+test("every rememberTool refusal path (short text, non-worker, 6th call) leaves the remember file absent or unchanged", () => {
+	const short = remEnv();
+	rememberTool(short.cfg, { text: "   too short   " }, "worker:w1", new Map());
+	assert.equal(fs.existsSync(short.rememberFile), false);
+
+	const nonWorker = remEnv();
+	rememberTool(nonWorker.cfg, { text: "a fine lesson about the loader that is long enough to pass" }, "orchestrator", new Map());
+	assert.equal(fs.existsSync(nonWorker.rememberFile), false);
+
+	const sixth = remEnv();
+	const state = new Map();
+	for (let i = 1; i <= 5; i++) rememberTool(sixth.cfg, { text: `lesson number ${i} about the loader dropping null water_bbl rows` }, "worker:w1", state);
+	const before = fs.readFileSync(sixth.rememberFile, "utf8");
+	rememberTool(sixth.cfg, { text: "one lesson too many for this particular worker run, entirely" }, "worker:w1", state);
+	assert.equal(fs.readFileSync(sixth.rememberFile, "utf8"), before);
 });
 
 test("search returns five rows by default and up to ten on request", () => {
