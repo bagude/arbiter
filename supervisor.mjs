@@ -800,7 +800,11 @@ function pumpLifecycle() {
 			else if (ev === "subagents:resuming") appendManifest(RUN, { ev: "resuming", wid: manifestWid });
 			else if (ev === "subagents:completed" || ev === "subagents:failed" || ev === "subagents:resumed") {
 				const status = ev.slice("subagents:".length);
-				appendManifest(RUN, { ev: status, wid: manifestWid, status });
+				// outcome is the raw pi-subagents status string (data.status) — subagents:resumed
+				// is the one channel for both a real success and an errored resume (see
+				// lib/workers.mjs's TERMINAL_ERROR_STATUS), so status alone can't tell them
+				// apart; a reader resolves that itself instead of this module importing it.
+				appendManifest(RUN, { ev: status, wid: manifestWid, status, outcome: data.status ?? null });
 			}
 		}
 		// A fresh, foreground `subagent` call was denied for size (ext/guards/pre-spawn-compact.ts):

@@ -68,6 +68,7 @@ test("manifestJoin folds created + bound + completed for one wid into one row", 
 		boundTs: 150,
 		endedTs: 400,
 		status: "completed",
+		outcome: null,
 	});
 });
 
@@ -83,6 +84,7 @@ test("manifestJoin gives a wid with only created a null sessionId and status run
 		boundTs: null,
 		endedTs: null,
 		status: "running",
+		outcome: null,
 	});
 });
 
@@ -104,4 +106,13 @@ test("manifestJoin: status becomes the last of completed/failed/resumed seen", (
 	]);
 	assert.equal(rows.get("worker:a4").status, "resumed");
 	assert.equal(rows.get("worker:a4").endedTs, 400);
+});
+
+test("manifestJoin: a resumed record with outcome error keeps status resumed but carries the real outcome", () => {
+	const rows = manifestJoin([
+		{ ts: 100, ev: "created", wid: "worker:a5", description: "errored resume", background: false },
+		{ ts: 200, ev: "resumed", wid: "worker:a5", status: "resumed", outcome: "error" },
+	]);
+	assert.equal(rows.get("worker:a5").status, "resumed");
+	assert.equal(rows.get("worker:a5").outcome, "error");
 });
