@@ -204,6 +204,85 @@ test("a guard marker whose data.role names a worker by transcript basename attac
 	assert.equal(onOrchestratorCalls.length, 0, "guard marker must not silently attach to the orchestrator");
 });
 
+test("a foreground spawn (subagents:started only, no subagents:created) still joins the worker", () => {
+	// Foreground spawns never emit subagents:created, only subagents:started, so the
+	// join must accept a lone `started` event as a valid spawn candidate.
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-fg-"));
+	const orchFile = path.join(tmp, "sessions", "orchestrator", "orch.jsonl");
+	const workerFile = path.join(tmp, "sessions", "orchestrator", "tasks", "w1.jsonl");
+	// Two orchestrator calls whose windows together straddle both lifecycle events
+	// (marker windows are (prevCall.endMs, call.endMs]), so the spawn (tMs 1000) and
+	// return (tMs 9000) markers both have an orchestrator call to attach to.
+	writeSessionFile(orchFile, "orch-session-1", [
+		{ startMs: 500, endIso: new Date(600).toISOString() },
+		{ startMs: 700, endIso: new Date(9600).toISOString() },
+	]);
+	writeSessionFile(workerFile, "worker-session-1", [{ startMs: 1500, endIso: new Date(2000).toISOString() }], { parentSession: "orch-session-1" });
+	fs.writeFileSync(
+		path.join(tmp, "lifecycle.jsonl"),
+		[
+			{ ts: 1000, ev: "subagents:started", data: { id: "sub-x", type: "worker", description: "FG task" } },
+			{ ts: 9000, ev: "subagents:completed", data: { id: "sub-x", type: "worker", description: "FG task" } },
+		]
+			.map((e) => JSON.stringify(e))
+			.join("\n") + "\n",
+	);
+
+	const trace = traceRun(tmp);
+	const orchestrator = trace.agents.find((a) => a.role === "orchestrator");
+	const worker = trace.agents.find((a) => a.role === "worker");
+	assert.ok(worker.spawn, "expected worker.spawn to be set from subagents:started alone");
+	assert.equal(worker.spawn.description, "FG task");
+	assert.equal(worker.spawn.background, null);
+	assert.equal(worker.spawn.createdMs, 1000);
+	assert.equal(worker.spawn.startedMs, 1000);
+	assert.equal(worker.spawn.completedMs, 9000);
+
+	const allOrchMarkers = orchestrator.calls.flatMap((c) => c.markers);
+	const spawnMarkers = allOrchMarkers.filter((m) => m.kind === "spawn" && m.agent === worker.id);
+	const returnMarkers = allOrchMarkers.filter((m) => m.kind === "return" && m.agent === worker.id);
+	assert.equal(spawnMarkers.length, 1, "expected exactly one spawn marker for the worker on the orchestrator lane");
+	assert.equal(returnMarkers.length, 1, "expected exactly one return marker for the worker on the orchestrator lane");
+
+	const unioned = markersFor(trace, worker.id);
+	assert.ok(
+		unioned.some((m) => m.kind === "return"),
+		"markersFor should surface the worker's return marker",
+	);
+});
+
+test("a background spawn's subagents:created and subagents:started for the same id join as one spawn, not two", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-bg-join-"));
+	const orchFile = path.join(tmp, "sessions", "orchestrator", "orch.jsonl");
+	const workerFile = path.join(tmp, "sessions", "orchestrator", "tasks", "w1.jsonl");
+	writeSessionFile(orchFile, "orch-session-1", [
+		{ startMs: 500, endIso: new Date(600).toISOString() },
+		{ startMs: 700, endIso: new Date(2000).toISOString() },
+	]);
+	writeSessionFile(workerFile, "worker-session-1", [{ startMs: 1500, endIso: new Date(2000).toISOString() }], { parentSession: "orch-session-1" });
+	fs.writeFileSync(
+		path.join(tmp, "lifecycle.jsonl"),
+		[
+			{ ts: 1000, ev: "subagents:created", data: { id: "sub-y", type: "worker", description: "BG task", isBackground: true } },
+			{ ts: 1001, ev: "subagents:started", data: { id: "sub-y", type: "worker", description: "BG task" } },
+		]
+			.map((e) => JSON.stringify(e))
+			.join("\n") + "\n",
+	);
+
+	const trace = traceRun(tmp);
+	const orchestrator = trace.agents.find((a) => a.role === "orchestrator");
+	const worker = trace.agents.find((a) => a.role === "worker");
+	assert.equal(worker.spawn.background, true);
+	assert.equal(worker.spawn.createdMs, 1000);
+	assert.equal(worker.spawn.startedMs, 1001);
+
+	const spawnMarkers = orchestrator.calls
+		.flatMap((c) => c.markers)
+		.filter((m) => m.kind === "spawn" && m.agent === worker.id);
+	assert.equal(spawnMarkers.length, 1, "created+started for the same id must produce exactly one spawn marker");
+});
+
 test("two worker sessions whose last 8 id chars collide get -2/-3 suffixes instead of merging", () => {
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-collide-"));
 	const orchFile = path.join(tmp, "sessions", "orchestrator", "orch.jsonl");
