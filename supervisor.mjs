@@ -91,6 +91,8 @@ const GUARDS = [
 	// Worker `report` tool (ext/report-ext.ts): registers nothing unless ARBITER_REPORT_FILE
 	// is set; only the worker definition's tools line names it.
 	path.join(here, "ext", "report-ext.ts"),
+	// context_usage tool (always on; a tool, not a guard — the list name is historical).
+	path.join(here, "ext", "context-usage-ext.ts"),
 ];
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
@@ -240,7 +242,7 @@ for (const role of PDEF.roles) {
 	if (role === "worker") continue; // workers are pi-subagents children, not supervisor-launched processes
 	let tools = PDEF.tools[role];
 	if (role === "builder" && fs.existsSync(toolsOverride)) tools = fs.readFileSync(toolsOverride, "utf8").trim();
-	AGENTS[role] = { tools, peer: PDEF.peer[role], provider: ROLES[role].provider, model: ROLES[role].model, thinking: ROLES[role].thinking ?? null };
+	AGENTS[role] = { tools, peer: PDEF.peer[role], provider: ROLES[role].provider, model: ROLES[role].model, thinking: ROLES[role].thinking ?? null, contextWindow: ROLES[role].contextWindow ?? null };
 }
 
 // ---------- agent processes ----------
@@ -345,6 +347,10 @@ function launch(name) {
 			ARBITER_CONTEXT_DIET: CONFIG.guards.context_diet ? JSON.stringify(CONFIG.guards.context_diet) : "",
 			ARBITER_CALL_ARGS: CONFIG.guards.call_args ? JSON.stringify(CONFIG.guards.call_args) : "",
 			ARBITER_PRE_SPAWN_COMPACT: CONFIG.guards.pre_spawn_compact ? JSON.stringify(CONFIG.guards.pre_spawn_compact) : "",
+			// context_usage tool: this role's context window from the model preflight
+			// (lib/config.mjs), "" when unknown. Workers spawned by pi-subagents inherit
+			// this process's env, so they report against the orchestrator's own window.
+			ARBITER_CONTEXT_WINDOW: cfg.contextWindow != null ? String(cfg.contextWindow) : "",
 			ARBITER_MOUNTS: MOUNTS.length ? JSON.stringify(MOUNTS) : "",
 			// Memory tools (ext/memory-ext.ts): empty index = the extension registers
 			// nothing. Scopes and budget are enforced inside the tools on every call.
