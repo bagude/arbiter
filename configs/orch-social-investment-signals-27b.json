@@ -22,9 +22,6 @@
   "guards": {
     "result_handles": true,
     "call_args": true,
-    "context_diet": {
-      "ageTools": []
-    },
     "pre_spawn_compact": {
       "thresholdChars": 25000
     }

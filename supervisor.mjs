@@ -76,8 +76,6 @@ const LIFECYCLE = path.join(RUN, "lifecycle.jsonl");
 const GUARDS = [
 	path.join(here, "ext", "path-guard.ts"),
 	path.join(here, "ext", "guards", "bash-timeout.ts"),
-	// Opt-in (registers nothing unless the run config enables it — see CONFIG.guards).
-	path.join(here, "ext", "guards", "context-diet.ts"),
 	// Memory tools for workers (registers nothing unless the run is in search mode).
 	path.join(here, "ext", "memory-ext.ts"),
 	// Result handles (registers nothing unless CONFIG.guards.result_handles is set).
@@ -342,9 +340,6 @@ function launch(name) {
 			// One number, one source: the bash-timeout guard injects this into every bash
 			// call that lacks a timeout; checkBashTimeout() below is now the fallback.
 			ARBITER_BASH_TIMEOUT_SEC: String(CAPS.bashTimeoutSec),
-			// Opt-in context diet: "" leaves the guard unregistered; a JSON object of
-			// options (possibly {}) turns it on for every role in the run.
-			ARBITER_CONTEXT_DIET: CONFIG.guards.context_diet ? JSON.stringify(CONFIG.guards.context_diet) : "",
 			ARBITER_CALL_ARGS: CONFIG.guards.call_args ? JSON.stringify(CONFIG.guards.call_args) : "",
 			ARBITER_PRE_SPAWN_COMPACT: CONFIG.guards.pre_spawn_compact ? JSON.stringify(CONFIG.guards.pre_spawn_compact) : "",
 			// context_usage tool: this role's context window from the model preflight

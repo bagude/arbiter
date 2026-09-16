@@ -41,13 +41,9 @@ test("worker role defaults: max 1, foreground", () => {
 	assert.equal(cfg.roles.worker.max, 1);
 	assert.equal(cfg.roles.worker.background, false);
 });
-test("guards: context_diet is off by default, `true` means defaults, an object passes through, junk is rejected", () => {
+test("guards: context_diet was removed 2026-09-16 (docs/batch/cache-ram-diet.md) and is now an unknown guard", () => {
 	const roles = { builder: { provider: "llama.cpp", model: "qwen3-27b" } };
-	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles }), env: SKIP }).guards.context_diet, null);
-	assert.deepEqual(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { context_diet: true } }), env: SKIP }).guards.context_diet, {});
-	assert.deepEqual(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { context_diet: { ageAfterTurns: 3 } } }), env: SKIP }).guards.context_diet, { ageAfterTurns: 3 });
-	assert.equal(loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { context_diet: false } }), env: SKIP }).guards.context_diet, null);
-	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { context_diet: "yes" } }), env: SKIP }), /guards\.context_diet/);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { context_diet: true } }), env: SKIP }), /unknown guard "context_diet"/);
 	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, guards: { nope: true } }), env: SKIP }), /unknown guard "nope"/);
 });
 test("memory: off by default, `true` means the default budget, an object passes through, junk is rejected", () => {

@@ -1,5 +1,0 @@
-{ "task": "glob", "pattern": "dyad",
-  "roles": { "builder": { "provider": "llama.cpp", "model": "qwen3-27b" }, "critic": { "provider": "llama.cpp", "model": "qwen3-27b" } },
-  "caps": { "wallSec": 1500 },
-  "guards": { "context_diet": true },
-  "_note": "Paired with configs/dyad-glob-local.json: identical except the context-diet guard (drop prior-turn thinking; age large tool results after 6 turns). Compare fresh input tokens, turns, E_excl, and summary.guards.context_diet." }

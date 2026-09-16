@@ -1,6 +1,6 @@
 { "task": "dw-paper-apply", "pattern": "orchestrator", "repo": "research-162910",
   "memory": { "mode": "search", "budgetChars": 2500, "retrievalChars": 16000, "workerReserveChars": 5000, "extraScopes": ["repo:data-warehousers-real"] },
-  "guards": { "result_handles": true, "call_args": true, "context_diet": { "ageTools": [] } },
+  "guards": { "result_handles": true, "call_args": true },
   "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1 } },
   "caps": { "toolCalls": 300, "wallSec": 2700, "usd": 5, "doneAttempts": 5, "bashTimeoutSec": 240, "compactAtTokens": 30000, "maxCompactions": 3 },
   "_note": "Research campaign phase B: SPE 162910's time-rate models fitted to real wells (warehouse + paper mounted read-only). Oracle = query reproduction + compute re-run. Reads the warehouse's findings scope as well as its own." }
