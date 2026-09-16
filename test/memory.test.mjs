@@ -373,7 +373,7 @@ test("retainSpecialists files a specialist's remember as a candidate under its a
 	assert.deepEqual(unresolvedRec.evidence, ["run:r1", "unresolved_worker:sess-unknown", "worker:sess-unknown"]);
 });
 
-test("retainSpecialists writes one procedural record per specialist type that spawned, promoted when the run passed with an oracle number, candidate when it failed", () => {
+test("retainSpecialists writes one procedural record per specialist type that spawned on a passed run, promoted when the oracle number is known; a failed run writes none", () => {
 	const manifestRows = [
 		{ wid: "w1", sessionId: "s1", type: "tester", description: "write unit tests for the parser. extra detail." },
 		{ wid: "w2", sessionId: "s2", type: "tester", description: "add regression coverage." },
@@ -389,11 +389,17 @@ test("retainSpecialists writes one procedural record per specialist type that sp
 	assert.equal(proc.status, "promoted", "a passed run with an oracle number is host-vouched and auto-promotes");
 	assert.deepEqual(proc.evidence, ["run:r2", "oracle:r2#3", "applies_to:task:orbit"]);
 	assert.equal(passedOut.filter((r) => r.kind === "procedural").length, 1, "scout never spawned, so it gets no procedural record");
-	const failedOut = retainSpecialists({ runId: "r3", task: "orbit", passed: false, oracleN: null, remembers: [], manifestRows, specialists, ts: 9 });
-	const failedProc = failedOut.find((r) => r.kind === "procedural");
-	assert.equal(failedProc.status, "candidate");
-	assert.equal(failedProc.confidence, 0.4);
-	assert.deepEqual(failedProc.evidence, ["run:r3", "applies_to:task:orbit"]);
+	// A failed run writes no procedural record at all: its near-identical text ("run
+	// failed" vs. "run passed") would clear consolidate()'s 0.75 jaccard threshold and
+	// merge into (or be merged away by) a passed run's record for the same specialist,
+	// either raising a failure into a confirmed-looking promotion or losing a passed
+	// run's oracle evidence to a later candidate. retainFromRun's episodic record
+	// already covers the failed run; remember candidates are still written regardless.
+	const remembers = [{ ts: 1, role: "worker:s1", text: "the fixture needs a reset" }];
+	const failedOut = retainSpecialists({ runId: "r3", task: "orbit", passed: false, oracleN: null, remembers, manifestRows, specialists, ts: 9 });
+	assert.equal(failedOut.filter((r) => r.kind === "procedural").length, 0, "a failed run writes no procedural records");
+	assert.equal(failedOut.filter((r) => r.kind === "semantic").length, 1, "remember candidates are still written on a failed run");
+	assert.equal(failedOut[0].scope, "agent:tester");
 });
 
 test("retainSpecialists never throws on a malformed remember line and never drops a resolvable one", () => {
