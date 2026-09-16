@@ -34,3 +34,9 @@ test("the i and t+s columns of a call row never abut: a two-digit call index (19
 	const out = run([FIXTURE]);
 	assert.match(out, / 19 +1025\.7(?:\s|$)/m);
 });
+
+test("a worker's last row shows its return marker (attached only to the parent's call, surfaced via markersFor)", () => {
+	const out = run([FIXTURE]);
+	const workerSection = out.slice(out.indexOf("## worker:"));
+	assert.match(workerSection, /\[return/);
+});

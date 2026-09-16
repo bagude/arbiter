@@ -39,7 +39,7 @@ Cache identity, verified: on a byte-stable prefix, `cacheRead` of call N equals 
 - `guard:context_diet_rewritten` `{role, thinkingDropped, resultsAged, charsSaved}`; `guard:bash_timeout_rewritten`, `guard:call_args_rewritten`, `guard:path_denied`, `guard:pre_spawn_compact_denied` `{role, …}`.
 - `handles:archived`, `handles:recalled`, `checkpoint:written`, `worker:report` `{role: "worker:<transcript basename>", status, …}`, `memory:*`.
 
-Guard `data.role` is `"orchestrator"`, `"builder"`, `"critic"`, or `"worker:<transcript basename>"` (the child session FILE basename without `.jsonl`, e.g. `worker:2026-09-15T04-22-16-260Z_01a0a34d-…`; resolve like `lib/workers.mjs` `workerIdForTranscriptName`). The lifecycle `id` of a subagent (e.g. `8eb067bb-8ebc-4b3`) is NOT the child session id (e.g. `01a0a34d-21c4-…`); join a worker session to its spawn by nearest `subagents:created` (or `subagents:resuming`) `ts` at or before the child session's first assistant `message.timestamp`, within 120 s. `lifecycle.jsonl` may be absent (older runs): everything degrades to no markers.
+Guard `data.role` is `"orchestrator"`, `"builder"`, `"critic"`, or `"worker:<transcript basename>"` (the child session FILE basename without `.jsonl`, e.g. `worker:2026-09-15T04-22-16-260Z_01a0a34d-…`; resolve like `lib/workers.mjs` `workerIdForTranscriptName`). The lifecycle `id` of a subagent (e.g. `8eb067bb-8ebc-4b3`) is NOT the child session id (e.g. `01a0a34d-21c4-…`); join a worker session to its spawn FIFO, mirroring `lib/workers.mjs`'s `bindTranscript`: process worker agents in `startMs` order and, for each, claim the EARLIEST still-unclaimed `subagents:created` (or `subagents:resuming`) event whose `ts` is at or before the worker's first assistant `message.timestamp` and within 120 s of it. Picking the latest candidate inverts descriptions when two workers are spawned in the same window. `lifecycle.jsonl` may be absent (older runs): everything degrades to no markers.
 
 `summary.json` exists only for finished runs; `runId`, `reason`, `wallSec`. The console's `extract-runs.mjs` computes run-relative seconds; the trace carries absolute epoch ms plus `t0`, and consumers convert.
 
@@ -96,7 +96,7 @@ Marker attachment: `spawn`/`return`/`resume` markers attach to the **orchestrato
 
 ```js
 export function readSessionFile(file)            // -> parsed entries (skip unparsable lines)
-export function traceRun(runDir, opts = {})      // -> trace document per the schema; opts.now (epoch ms) is only used for a still-running run (no effect on the schema)
+export function traceRun(runDir)                 // -> trace document per the schema; the still-running case needed no clock input, so there is no `opts` parameter
 export function walkSessions(sessionsDir)        // -> sorted list of .jsonl paths (recursive), like context-report's walk
 ```
 

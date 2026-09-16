@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { traceRun, walkSessions } from "../lib/context-trace.mjs";
+import { traceRun, walkSessions, markersFor } from "../lib/context-trace.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "fixtures", "run-trace");
@@ -219,6 +219,47 @@ test("two worker sessions whose last 8 id chars collide get -2/-3 suffixes inste
 	assert.equal(workers.length, 2);
 	assert.equal(workers[0].id, "worker:11111111");
 	assert.equal(workers[1].id, "worker:11111111-2");
+});
+
+test("worker spawn join is FIFO: the earliest unclaimed creation event goes to the earliest worker, not the latest", () => {
+	// Regression for the bug where two workers spawned close together got their
+	// spawn.description swapped: the join used to pick the LATEST unclaimed
+	// candidate at or before a worker's first call, so the earlier worker (by
+	// startMs) grabbed the later worker's creation event.
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-fifo-"));
+	const orchFile = path.join(tmp, "sessions", "orchestrator", "orch.jsonl");
+	const worker1File = path.join(tmp, "sessions", "orchestrator", "tasks", "w1.jsonl");
+	const worker2File = path.join(tmp, "sessions", "orchestrator", "tasks", "w2.jsonl");
+	writeSessionFile(orchFile, "orch-session-1", [{ startMs: 500, endIso: new Date(600).toISOString() }]);
+	writeSessionFile(worker1File, "worker-session-1", [{ startMs: 3000, endIso: new Date(3100).toISOString() }], { parentSession: "orch-session-1" });
+	writeSessionFile(worker2File, "worker-session-2", [{ startMs: 4000, endIso: new Date(4100).toISOString() }], { parentSession: "orch-session-1" });
+	fs.writeFileSync(
+		path.join(tmp, "lifecycle.jsonl"),
+		[
+			{ ts: 1000, ev: "subagents:created", data: { id: "sub-a", type: "worker", description: "TASK-A", isBackground: true } },
+			{ ts: 2000, ev: "subagents:created", data: { id: "sub-b", type: "worker", description: "TASK-B", isBackground: true } },
+		]
+			.map((e) => JSON.stringify(e))
+			.join("\n") + "\n",
+	);
+
+	const trace = traceRun(tmp);
+	const workers = trace.agents.filter((a) => a.role === "worker").sort((a, b) => a.startMs - b.startMs);
+	assert.equal(workers.length, 2);
+	assert.equal(workers[0].spawn.description, "TASK-A");
+	assert.equal(workers[1].spawn.description, "TASK-B");
+});
+
+test("markersFor unions a worker's own call markers with run-level markers attached to none of its calls (its return)", () => {
+	const trace = traceRun(FIXTURE);
+	const worker = trace.agents.find((a) => a.id.startsWith("worker:"));
+	const onWorkerCalls = worker.calls.flatMap((c) => c.markers);
+	assert.ok(!onWorkerCalls.some((m) => m.kind === "return"), "the return marker should not be attached to any of the worker's own calls");
+	const unioned = markersFor(trace, worker.id);
+	assert.ok(
+		unioned.some((m) => m.kind === "return"),
+		"markersFor should still surface the worker's return marker",
+	);
 });
 
 test("walkSessions returns a sorted, recursive list of .jsonl paths", () => {

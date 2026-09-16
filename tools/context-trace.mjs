@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { traceRun } from "../lib/context-trace.mjs";
+import { traceRun, markersFor } from "../lib/context-trace.mjs";
 
 const LINE_LIMIT = 140;
 const MAX_SPAWN_DESC = 60;
@@ -31,26 +31,46 @@ function markerStr(m) {
 	return `[${m.kind} ${m.detail}]`;
 }
 
-function toolsAndMarkersCell(call) {
+// `extraMarkers` carries the orphan markers (spawn/return/resume on a worker's own
+// lane, which attach only to the PARENT's call — see markersFor) onto the agent's last
+// call row, mirroring the console panel's orphan-marker tooltip rule. They are listed
+// before the call's own markers: they anchor the lane (when it was spawned, when it
+// returned) and would otherwise be the first thing the row-width truncation below
+// drops, since they usually carry the latest tMs of the row.
+function toolsAndMarkersCell(call, extraMarkers) {
+	const allMarkers = extraMarkers && extraMarkers.length ? [...extraMarkers, ...call.markers] : call.markers;
 	const parts = [call.tools.join(",")];
-	if (call.markers.length) parts.push(call.markers.map(markerStr).join(" "));
+	if (allMarkers.length) parts.push(allMarkers.map(markerStr).join(" "));
 	let cell = parts.filter(Boolean).join(" ");
 	const maxLen = LINE_LIMIT - PREFIX_LEN;
 	if (cell.length > maxLen) cell = `${cell.slice(0, Math.max(0, maxLen - 1))}…`;
 	return cell;
 }
 
-function formatRow(call, t0) {
+function formatRow(call, t0, extraMarkers) {
 	const tPlus = ((call.startMs - t0) / 1000).toFixed(1);
 	const ret = call.retained === null ? "—" : call.retained.toFixed(2);
-	const cell = toolsAndMarkersCell(call);
+	const cell = toolsAndMarkersCell(call, extraMarkers);
 	const values = [String(call.i), tPlus, String(call.context), String(call.cached), String(call.fresh), call.hitRatio.toFixed(2), ret, String(call.output)];
 	const fields = values.map((v, idx) => v.padStart(COLUMNS[idx].width));
 	return `${fields.join(" ")} ${cell}`;
 }
 
+// The schema allows a null spawn.description (e.g. a resumed worker whose creation
+// event carried none) — guard rather than throw on agentHeaderParenthetical.
 function truncateDesc(desc, max = MAX_SPAWN_DESC) {
+	desc = desc ?? "";
 	return desc.length > max ? `${desc.slice(0, max - 1)}…` : desc;
+}
+
+// Run-level markers naming this agent that are attached to none of its own calls
+// (a worker's spawn/return/resume, which attach to the PARENT's call instead).
+// Mirrors tools/console.template.html's orphanMarkers.
+function orphanMarkersFor(agent, trace) {
+	const key = (m) => `${m.tMs}|${m.kind}|${m.ev}`;
+	const attached = new Set();
+	for (const c of agent.calls) for (const m of c.markers) attached.add(key(m));
+	return markersFor(trace, agent.id).filter((m) => !attached.has(key(m)));
 }
 
 function agentHeaderParenthetical(agent, t0) {
@@ -73,7 +93,11 @@ function printText(doc) {
 	for (const agent of doc.agents) {
 		console.log(`\n${agentHeaderLine(agent, doc.t0)}`);
 		console.log(ROW_HEADER);
-		for (const call of agent.calls) console.log(formatRow(call, doc.t0));
+		const orphans = orphanMarkersFor(agent, doc);
+		agent.calls.forEach((call, idx) => {
+			const extra = idx === agent.calls.length - 1 ? orphans : null;
+			console.log(formatRow(call, doc.t0, extra));
+		});
 	}
 }
 
