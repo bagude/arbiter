@@ -1,0 +1,4 @@
+{ "task": "raid", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1, "thinking": "off", "background": true } },
+  "caps": { "toolCalls": 400, "wallSec": 10800, "usd": 5, "doneAttempts": 6, "compactAtTokens": 80000, "maxCompactions": 3 },
+  "_note": "Slot pair (2026-09-16): same as orch-raid-27b-nothink.json plus workers default to background (so orchestrator and worker requests can be in flight at once) and supervisor compaction at 80k tokens (so an orchestrator + a worker fit a 131k unified KV pool). Run A on the launcher's --parallel 1; run B on --parallel 2 --kv-unified. The trace's overlap of worker and orchestrator inference is the number to compare." }
