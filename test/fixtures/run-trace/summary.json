@@ -1,0 +1,146 @@
+{
+  "runId": "2026-09-15T04-19-12",
+  "reason": "SUCCESS: oracle passed",
+  "model": "qwen3-27b + qwen3-27b",
+  "builderModel": "llama.cpp/qwen3-27b",
+  "criticModel": "llama.cpp/qwen3-27b",
+  "config": {
+    "task": "raid-gear",
+    "pattern": "orchestrator",
+    "roles": {
+      "orchestrator": {
+        "provider": "llama.cpp",
+        "model": "qwen3-27b"
+      },
+      "worker": {
+        "provider": "llama.cpp",
+        "model": "qwen3-27b",
+        "max": 1,
+        "background": false
+      }
+    },
+    "caps": {
+      "toolCalls": 300,
+      "wallSec": 5400,
+      "usd": 5,
+      "doneAttempts": 5,
+      "idleNudgeSec": 120,
+      "maxNudges": 3,
+      "bashTimeoutSec": 90,
+      "tokens": 0,
+      "compactAtTokens": 0,
+      "maxCompactions": 3,
+      "minGapTurns": 5,
+      "checkpointWaitSec": 120
+    },
+    "oracle": {
+      "reportFailingInputs": false
+    },
+    "guards": {
+      "context_diet": null,
+      "result_handles": null,
+      "call_args": null,
+      "pre_spawn_compact": null
+    },
+    "memory": null,
+    "memoryDir": null,
+    "repo": null,
+    "report": {
+      "autoProbe": false
+    },
+    "configPath": "configs/orch-raid-gear-27b.json"
+  },
+  "wallSec": 1282.8,
+  "costUsd": 0,
+  "toolCalls": {
+    "orchestrator": 41,
+    "worker:8eb067bb-8ebc-4b3": 11
+  },
+  "costByAgent": {
+    "orchestrator": 0,
+    "worker:8eb067bb-8ebc-4b3": 0
+  },
+  "mail": 20,
+  "mailByKind": {
+    "spawn": 1,
+    "probe": 18,
+    "report": 1,
+    "memory": 1,
+    "done": 1
+  },
+  "doneAttempts": 1,
+  "nudges": 0,
+  "workers": 1,
+  "orchestratorProbedBeforeDone": true,
+  "guards": {},
+  "caps": {
+    "toolCalls": 300,
+    "wallSec": 5400,
+    "usd": 5,
+    "doneAttempts": 5,
+    "idleNudgeSec": 120,
+    "maxNudges": 3,
+    "bashTimeoutSec": 90,
+    "tokens": 0,
+    "compactAtTokens": 0,
+    "maxCompactions": 3,
+    "minGapTurns": 5,
+    "checkpointWaitSec": 120
+  },
+  "task": "raid-gear",
+  "compactions": [],
+  "handles": {
+    "archived": 0,
+    "recalled": 0,
+    "bytesArchived": 0,
+    "byRole": {},
+    "ids": []
+  },
+  "checkpoints": [
+    {
+      "n": 1,
+      "findings": 5,
+      "questions": 2,
+      "steps": 4,
+      "chars": 3032,
+      "ts": 1789446602387
+    },
+    {
+      "n": 2,
+      "findings": 4,
+      "questions": 1,
+      "steps": 4,
+      "chars": 2600,
+      "ts": 1789446861263
+    }
+  ],
+  "contextPeak": {
+    "orchestrator": 48651,
+    "worker:8eb067bb-8ebc-4b3": 51549
+  },
+  "oracleGate": "orchestrator approval (hash+quiescence)",
+  "sandbox": "none (Gondolin requires QEMU; not installed). Controls: hard…",
+  "snapshot": "seed:raid-gear@8e8c9bdde34f",
+  "tokens": 275117,
+  "memory": {
+    "mode": "off",
+    "recall": null,
+    "injected": [],
+    "revision": null,
+    "seedChars": 0,
+    "budget": null,
+    "workerReserve": null,
+    "calls": null
+  },
+  "reports": {
+    "enabled": true,
+    "autoProbe": false,
+    "total": 1,
+    "byWorker": {
+      "worker:8eb067bb-8ebc-4b3": 1
+    },
+    "unreported": [],
+    "verifyCases": 9,
+    "autoProbes": 0
+  }
+}
