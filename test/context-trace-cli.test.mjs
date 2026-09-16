@@ -29,3 +29,8 @@ test("text output prints the run header, the orchestrator agent header, and the 
 	// call 1: fresh 6007, cached 0, context 6007
 	assert.match(out, /^\s+1\s+0\.9\s+6007\s+0\s+6007/m);
 });
+
+test("the i and t+s columns of a call row never abut: a two-digit call index (19) stays separated from a four-digit t+s (1025.7)", () => {
+	const out = run([FIXTURE]);
+	assert.match(out, / 19 +1025\.7(?:\s|$)/m);
+});
