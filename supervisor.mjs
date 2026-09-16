@@ -21,8 +21,9 @@ import { loadConfig, parseArgs } from "./lib/config.mjs";
 import { PATTERNS, WORKER_TOOLS } from "./lib/patterns.mjs";
 import { writeWorkerDefinition, installWorkspaceExtension, resolveWorkerPrompt } from "./lib/worker-def.mjs";
 import { readMounts, installMounts, archiveFilter, uninstallMounts } from "./lib/mounts.mjs";
-import { childTranscriptDir, JsonlTailer } from "./lib/child-transcripts.mjs";
+import { childTranscriptDir, JsonlTailer, workerIdFromTranscript } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry, unreportedWorkers } from "./lib/workers.mjs";
+import { appendManifest } from "./lib/worker-manifest.mjs";
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
@@ -789,6 +790,19 @@ function pumpLifecycle() {
 		const { audit: lines, decision } = applyLifecycleEvent(tracker, state, timeline, { ev, data, now: Date.now() });
 		for (const line of lines) log(line);
 		if (decision) pendingDecisionFor = decision;
+		// workers.jsonl: the wid-to-transcript join, on disk (lib/worker-manifest.mjs).
+		// lib/workers.mjs keeps this only in the in-memory tracker; this is the same five
+		// lifecycle events, recorded separately so a later reader need not replay the
+		// reducer. wid is derived the same way applyLifecycleEvent derives it internally.
+		const manifestWid = data?.id ? `worker:${data.id}` : null;
+		if (manifestWid) {
+			if (ev === "subagents:created") appendManifest(RUN, { ev: "created", wid: manifestWid, description: data.description ?? null, background: Boolean(data.isBackground) });
+			else if (ev === "subagents:resuming") appendManifest(RUN, { ev: "resuming", wid: manifestWid });
+			else if (ev === "subagents:completed" || ev === "subagents:failed" || ev === "subagents:resumed") {
+				const status = ev.slice("subagents:".length);
+				appendManifest(RUN, { ev: status, wid: manifestWid, status });
+			}
+		}
 		// A fresh, foreground `subagent` call was denied for size (ext/guards/pre-spawn-compact.ts):
 		// this is the one boundary that can fire with no worker yet spawned, before the tool
 		// call that would otherwise hold the orchestrator's turn open for the child's whole run.
@@ -823,7 +837,10 @@ function pumpChildTranscripts() {
 		// (see bindTranscript for why inventing an id was worse).
 		const wid = bindTranscript(tracker, state, p);
 		if (!wid) continue;
-		if (!childTails.has(p)) childTails.set(p, new JsonlTailer(p));
+		if (!childTails.has(p)) {
+			childTails.set(p, new JsonlTailer(p));
+			appendManifest(RUN, { ev: "bound", wid, sessionId: workerIdFromTranscript(p), transcriptPath: path.relative(RUN, p).replace(/\\/g, "/") });
+		}
 		const s = state[wid];
 		// Same raw-*.jsonl record an RPC agent gets, so a worker's stream is replayable
 		// and diffable the same way. ":" is not a legal Windows filename character.
