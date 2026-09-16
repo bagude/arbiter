@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readJsonl } from "../lib/jsonl.mjs";
+import { traceRun } from "../lib/context-trace.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const RUNS_DIR = path.join(here, "..", "runs");
@@ -31,6 +32,16 @@ export function discoverRuns(runsDir = RUNS_DIR) {
 		});
 }
 
+// A run without an archived sessions/ tree (older runs, or one still in progress) has no
+// trace to build; traceRun throws in that case, and the console build must not break for it.
+function safeTrace(dir) {
+	try {
+		return traceRun(dir);
+	} catch {
+		return null;
+	}
+}
+
 export function extractRun(run) {
 	const dir = run.dir;
 	const bus = readJsonl(path.join(dir, "bus.jsonl")).map((m, i) => ({ ...m, n: i + 1 }));
@@ -54,6 +65,11 @@ export function extractRun(run) {
 		}
 	}
 	const toRelSec = (epochMs) => (anchorEpoch === null ? 0 : (epochMs - anchorEpoch) / 1000);
+
+	// Context trace: same run-relative clock as events above, so the console can place trace
+	// lanes on the scrubber's time axis without re-deriving the anchor.
+	const trace = safeTrace(dir);
+	if (trace) trace.tRel0 = Math.round(toRelSec(trace.t0) * 10) / 10;
 
 	const events = [];
 
@@ -130,6 +146,7 @@ export function extractRun(run) {
 		sourceFile: run.srcFile,
 		source,
 		roles: run.summary.config?.roles ?? null,
+		trace,
 	};
 }
 
