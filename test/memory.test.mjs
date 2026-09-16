@@ -397,11 +397,42 @@ test("retainSpecialists writes one procedural record per specialist type that sp
 });
 
 test("retainSpecialists never throws on a malformed remember line and never drops a resolvable one", () => {
-	const remembers = [null, { role: "worker:s1" }, { role: "not-a-worker-role", text: "x" }, { ts: 1, role: "worker:s1", text: "the fixture needs a reset" }];
-	const manifestRows = [{ wid: "w1", sessionId: "s1", type: "tester", description: "d." }];
+	const remembers = [
+		null,
+		{ role: "worker:s1" },
+		{ role: "not-a-worker-role", text: "x" },
+		{ ts: 1, role: "worker:s1", text: "the fixture needs a reset" },
+		{ ts: 2, role: "worker:s2", text: "a foreground worker with no specialist type" },
+		{ ts: 3, role: "worker:s3", text: "a row whose type no specialist in this run declares" },
+	];
+	const manifestRows = [
+		{ wid: "w1", sessionId: "s1", type: "tester", description: "d." },
+		{ wid: "w2", sessionId: "s2", type: null, description: "d." },
+		{ wid: "w3", sessionId: "s3", type: "unknown-specialist", description: "d." },
+	];
 	const specialists = [{ name: "tester", memory: "tester" }];
 	const out = retainSpecialists({ runId: "r4", task: "orbit", passed: true, oracleN: 1, remembers, manifestRows, specialists, ts: 1 });
 	const candidates = out.filter((r) => r.kind === "semantic");
-	assert.equal(candidates.length, 1, "only the one well-formed remember produces a record");
-	assert.equal(candidates[0].scope, "agent:tester");
+	assert.equal(candidates.length, 3, "only the two unresolved + one well-formed remember produce records; the truly malformed ones are skipped");
+	const tester = candidates.find((r) => r.scope === "agent:tester");
+	assert.equal(tester.scope, "agent:tester");
+	const nullType = candidates.find((r) => r.text.includes("no specialist type"));
+	assert.equal(nullType.scope, "task:orbit");
+	assert.ok(nullType.evidence.includes("unresolved_worker:s2"));
+	const unknownType = candidates.find((r) => r.text.includes("no specialist in this run declares"));
+	assert.equal(unknownType.scope, "task:orbit");
+	assert.ok(unknownType.evidence.includes("unresolved_worker:s3"));
+});
+
+test("retainSpecialists uses the specialist's memory field, not its name, for scope and evidence when they differ", () => {
+	const remembers = [{ ts: 1, role: "worker:s1", text: "qa notes something" }];
+	const manifestRows = [{ wid: "w1", sessionId: "s1", type: "tester", description: "write unit tests for the parser." }];
+	const specialists = [{ name: "tester", memory: "qa" }];
+	const out = retainSpecialists({ runId: "r5", task: "orbit", passed: true, oracleN: 4, remembers, manifestRows, specialists, ts: 1 });
+	const candidate = out.find((r) => r.kind === "semantic");
+	assert.equal(candidate.scope, "agent:qa");
+	assert.deepEqual(candidate.evidence, ["run:r5", "from_agent:qa", "worker:s1"]);
+	const proc = out.find((r) => r.kind === "procedural");
+	assert.equal(proc.scope, "agent:qa");
+	assert.match(proc.text, /^tester ran on orbit/);
 });
