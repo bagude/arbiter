@@ -1,0 +1,5 @@
+{ "task": "raid", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" }, "worker": { "provider": "llama.cpp", "model": "qwen3-27b", "max": 1, "thinking": "off" } },
+  "caps": { "toolCalls": 400, "wallSec": 10800, "usd": 5, "doneAttempts": 6 },
+  "guards": { "context_diet": true },
+  "_note": "Paired with orch-raid-27b-nothink.json (2026-09-16): identical except context_diet on (defaults: thinking drop + tool-result aging at 6 turns). The 2026-09-15 KV-cache audit found the diet rewrites a different old message every call, capping the server's prefix match; this pair measures hit ratio, fresh prefill and wall time on the same task, both runs with --cache-ram 24576." }
