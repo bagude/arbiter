@@ -18,8 +18,9 @@ import { decideApproval, QUIESCENCE_MS } from "./lib/gate.mjs";
 import { createAgentState, lastEditAcross, liveWorkers, EDITING_TOOLS } from "./lib/agents.mjs";
 import { routeMail } from "./lib/routing.mjs";
 import { loadConfig, parseArgs } from "./lib/config.mjs";
-import { PATTERNS, WORKER_TOOLS } from "./lib/patterns.mjs";
-import { writeWorkerDefinition, installWorkspaceExtension, resolveWorkerPrompt } from "./lib/worker-def.mjs";
+import { PATTERNS } from "./lib/patterns.mjs";
+import { installWorkspaceExtension, writeRosterDefinitions, workerPromptSuffix } from "./lib/worker-def.mjs";
+import { rosterSection } from "./lib/roster.mjs";
 import { readMounts, installMounts, archiveFilter, uninstallMounts } from "./lib/mounts.mjs";
 import { childTranscriptDir, JsonlTailer, workerIdFromTranscript } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry, unreportedWorkers } from "./lib/workers.mjs";
@@ -41,6 +42,12 @@ const TSX = path.join(REPO, "node_modules/tsx/dist/cli.mjs");
 const PI = path.join(REPO, "packages/coding-agent/src/cli.ts");
 
 const CONFIG = loadConfig(parseArgs(process.argv));
+// CONFIG.workers.specialists carries each selected specialist's full parsed roster
+// entry (prompt body included) — fine to hold in memory, but neither the startup
+// log line nor summary.json should embed a specialist's prompt text. This is
+// CONFIG.workers stripped to the run's actual selection, used wherever the config
+// is logged or persisted (the go section's console.log, buildSummary in finish()).
+const RECORDED_CONFIG = { ...CONFIG, workers: CONFIG.workers && { default: CONFIG.workers.default, use: CONFIG.workers.use, overrides: CONFIG.workers.overrides, max: CONFIG.workers.max } };
 const { task: TASK_NAME, pattern: PATTERN, roles: ROLES, caps: CAPS, oracle: ORACLE_OPTS } = CONFIG;
 const PDEF = PATTERNS[PATTERN];
 // N=1 ablation: no CRITIC at all. BUILDER gets the spec in its own prompt, and the
@@ -172,7 +179,17 @@ for (const role of PDEF.roles) {
 		role === "builder" && !SOLO && fs.existsSync(path.join(TASK, "builder.md"))
 			? path.join(TASK, "builder.md")
 			: path.join(here, "prompts", PDEF.prompt[role]);
-	const base = fs.readFileSync(promptFile, "utf8");
+	let base = fs.readFileSync(promptFile, "utf8");
+	// The orchestrator prompt's subagent-type sentence is generated per run from the
+	// selected roster (lib/roster.mjs rosterSection), not hand-written: a legacy
+	// workers.use: ["worker"] config renders the same single-worker sentence the
+	// prompt used to hard-code, but a roster run's orchestrator sees every specialist
+	// it may spawn. Computed once, here, before the orchestrator process exists --
+	// nothing is ever injected into this prompt after spawn.
+	if (role === "orchestrator") {
+		if (!base.includes("{{ROSTER}}")) throw new Error(`${promptFile}: missing {{ROSTER}} placeholder`);
+		base = base.replace("{{ROSTER}}", () => rosterSection(CONFIG.workers.specialists));
+	}
 	const needsContext = role === "critic" || role === "orchestrator" || SOLO;
 	prompts[role] = needsContext ? `${base}\n\n# ${contextHeading}\n\n${taskContext}` : base;
 }
@@ -200,7 +217,7 @@ if (MEMORY_MODE === "inject") {
 	if (text) {
 		for (const role of Object.keys(prompts)) prompts[role] = `${prompts[role]}\n\n${text}`;
 		MEMORY_INJECTED.push(...ids);
-		MEMORY_TEXT = text; // workers get the same excerpt (see writeWorkerDefinition below)
+		MEMORY_TEXT = text; // workers get the same excerpt (see writeRosterDefinitions below)
 	}
 } else if (MEMORY_MODE === "search") {
 	// Build (or reuse) the index for the current ledger revision before any agent
@@ -801,7 +818,13 @@ function pumpLifecycle() {
 			// lifecycle tracker above is already updated); a disk error here must not take
 			// down the interval pump that is mid-way through draining this tick's events.
 			try {
-				if (ev === "subagents:created") appendManifest(RUN, { ev: "created", wid: manifestWid, description: data.description ?? null, background: Boolean(data.isBackground) });
+				// pi-subagents emits onSubagentCreated only for a queued/background spawn and
+				// onSubagentStarted for every spawn (lib/workers.mjs), so a foreground worker's
+				// (the common maxConcurrent: 1 case) first — and only — event here is `started`;
+				// both carry the definition name the orchestrator passed as `subagent_type` in
+				// `type`, recorded so a roster run's manifest can tell specialists apart.
+				if (ev === "subagents:created") appendManifest(RUN, { ev: "created", wid: manifestWid, description: data.description ?? null, background: Boolean(data.isBackground), type: data.type ?? null });
+				else if (ev === "subagents:started") appendManifest(RUN, { ev: "started", wid: manifestWid, description: data.description ?? null, background: Boolean(data.isBackground), type: data.type ?? null });
 				else if (ev === "subagents:resuming") appendManifest(RUN, { ev: "resuming", wid: manifestWid });
 				else if (ev === "subagents:completed" || ev === "subagents:failed" || ev === "subagents:resumed") {
 					const status = ev.slice("subagents:".length);
@@ -1313,7 +1336,7 @@ function finish(reason) {
 		reason,
 		pattern: PATTERN,
 		roles: ROLES,
-		config: CONFIG,
+		config: RECORDED_CONFIG,
 		totals: t,
 		state,
 		timeline,
@@ -1444,7 +1467,7 @@ process.on("SIGINT", () => finish("interrupted"));
 
 // ---------- go ----------
 console.log(`run: ${RUN}`);
-console.log("config:", JSON.stringify(CONFIG));
+console.log("config:", JSON.stringify(RECORDED_CONFIG));
 // pi-subagents reads its agent definitions from <cwd>/.pi/agents/*.md at launch, and
 // the orchestrator's cwd is the shared workspace — so the worker's tools, model and
 // prompt are fixed on disk by the host before the orchestrator process exists. The
@@ -1454,20 +1477,20 @@ if (PATTERN === "orchestrator") {
 	// <cwd>/.pi/extensions. The copies resolve ext/guard-kit.ts and lib/ through
 	// ARBITER_HOME.
 	for (const g of GUARDS) installWorkspaceExtension(WS.workspace, g);
-	// The worker's prompt is the task's own worker.md when it has one (tasks/<task>/
-	// worker.md), else the generic one; the memory excerpt rides along.
-	const workerPrompt = resolveWorkerPrompt({ taskDir: TASK, home: here, memoryText: MEMORY_TEXT, report: Boolean(CONFIG.report) });
-	log({ type: "worker_prompt", msg: `worker prompt: ${path.relative(here, workerPrompt.file)}${MEMORY_TEXT ? " + memory excerpt" : ""}` });
-	writeWorkerDefinition(WS.workspace, {
-		provider: ROLES.worker.provider,
-		model: ROLES.worker.model,
-		tools: CONFIG.report ? [...WORKER_TOOLS, "report"] : WORKER_TOOLS,
-		prompt: workerPrompt.prompt,
-		maxTurns: 60,
-		thinking: ROLES.worker.thinking ?? null,
-		background: ROLES.worker.background,
-		max: ROLES.worker.max,
+	// One pi-subagents definition per selected roster specialist (lib/roster.mjs), model
+	// and provider from CONFIG.workers (default, per-name overrides); the generic
+	// `worker` specialist keeps the task's own worker.md override when the task ships
+	// one. Every definition gets the same appended suffix: the report instruction (when
+	// worker reports are on) and this run's memory excerpt — never a per-specialist one,
+	// so a roster run and its legacy control stay comparable.
+	const { files } = writeRosterDefinitions(WS.workspace, {
+		specialists: CONFIG.workers.specialists,
+		workers: CONFIG.workers,
+		extraTools: CONFIG.report ? ["report"] : [],
+		promptSuffixFor: () => workerPromptSuffix({ memoryText: MEMORY_TEXT, report: Boolean(CONFIG.report) }),
+		taskDir: TASK,
 	});
+	log({ type: "worker_prompt", msg: `roster: ${CONFIG.workers.use.join(", ")} (${files.length} definitions)${MEMORY_TEXT ? " + memory excerpt" : ""}` });
 }
 for (const role of Object.keys(AGENTS)) launch(role);
 for (const name of Object.keys(state)) send(name, { id: "hello", type: "get_state" });

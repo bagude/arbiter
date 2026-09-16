@@ -83,6 +83,7 @@ test("manifestJoin folds created + bound + completed for one wid into one row", 
 		endedTs: 400,
 		status: "completed",
 		outcome: null,
+		type: null,
 	});
 });
 
@@ -99,7 +100,43 @@ test("manifestJoin gives a wid with only created a null sessionId and status run
 		endedTs: null,
 		status: "running",
 		outcome: null,
+		type: null,
 	});
+});
+
+test("manifestJoin: a created record with a type folds to row.type; a row without one has type null", () => {
+	const withType = manifestJoin([{ ts: 100, ev: "created", wid: "worker:t1", description: "do the thing", background: false, type: "tester" }]);
+	assert.equal(withType.get("worker:t1").type, "tester");
+	const withoutType = manifestJoin([{ ts: 100, ev: "created", wid: "worker:t2", description: "do the thing", background: false }]);
+	assert.equal(withoutType.get("worker:t2").type, null);
+});
+
+test("manifestJoin: a started record (no created) sets description/background/type, same as created", () => {
+	const rows = manifestJoin([{ ts: 100, ev: "started", wid: "worker:t3", description: "foreground spawn", background: false, type: "scout" }]);
+	assert.deepEqual(rows.get("worker:t3"), {
+		wid: "worker:t3",
+		description: "foreground spawn",
+		background: false,
+		sessionId: null,
+		transcriptPath: null,
+		createdTs: 100,
+		boundTs: null,
+		endedTs: null,
+		status: "running",
+		outcome: null,
+		type: "scout",
+	});
+});
+
+test("manifestJoin: created then started (background dequeued) keeps the created description/background/createdTs, first-write-wins", () => {
+	const rows = manifestJoin([
+		{ ts: 100, ev: "created", wid: "worker:t4", description: "queued job", background: true, type: "tester" },
+		{ ts: 300, ev: "started", wid: "worker:t4", description: "queued job", background: false, type: "tester" },
+	]);
+	const row = rows.get("worker:t4");
+	assert.equal(row.background, true, "created's background wins over started's");
+	assert.equal(row.createdTs, 100, "created's ts wins over started's");
+	assert.equal(row.type, "tester");
 });
 
 test("manifestJoin: resuming after completed sets status back to running", () => {
