@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { tokenTotals, freshTokens, hitRatio } from "../lib/usage.mjs";
+import { tokenTotals, freshTokens, hitRatio, rosterLabel } from "../lib/usage.mjs";
 
 test("tokenTotals sums fresh input and output per assistant message_end across raw-*.jsonl, by role", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-usage-"));
@@ -18,4 +18,17 @@ test("tokenTotals sums fresh input and output per assistant message_end across r
 test("hitRatio is cacheRead / (input + cacheRead), 0 when both are 0", () => {
 	assert.equal(hitRatio({ input: 100, cacheRead: 300 }), 0.75);
 	assert.equal(hitRatio({ input: 0, cacheRead: 0 }), 0);
+});
+
+test("rosterLabel joins config.workers.use when present", () => {
+	assert.equal(rosterLabel({ config: { workers: { use: ["scout", "tester"] } } }), "scout,tester");
+});
+
+test("rosterLabel falls back to \"worker\" when config.roles.worker exists", () => {
+	assert.equal(rosterLabel({ config: { roles: { worker: {} } } }), "worker");
+});
+
+test("rosterLabel falls back to \"—\" when neither is present", () => {
+	assert.equal(rosterLabel({ config: {} }), "—");
+	assert.equal(rosterLabel(null), "—");
 });

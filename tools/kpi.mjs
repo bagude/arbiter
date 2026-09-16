@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { discoverRuns } from "./extract-runs.mjs";
-import { tokenTotals, hitRatio } from "../lib/usage.mjs";
+import { tokenTotals, hitRatio, rosterLabel } from "../lib/usage.mjs";
 import { traceRun, meanRetained } from "../lib/context-trace.mjs";
 
 // A run without an archived sessions/ tree (older runs, or one still in progress) has no
@@ -18,6 +18,7 @@ const RUNS = discoverRuns().map((r) => ({ dir: r.dir, label: r.label }));
 
 console.log(
 	"label".padEnd(58),
+	"roster".padEnd(20),
 	"success".padEnd(8),
 	"turns".padEnd(6),
 	"freshTok".padEnd(9),
@@ -43,6 +44,7 @@ for (const run of RUNS) {
 	const retained = safeMeanRetained(dir);
 	console.log(
 		run.label.padEnd(58),
+		rosterLabel(summary).padEnd(20),
 		String(success === null ? "running" : success).padEnd(8),
 		String(turns).padEnd(6),
 		String(totalExclCache).padEnd(9),

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(here, "..");
@@ -45,4 +47,52 @@ test("a worker's last row shows its return marker (attached only to the parent's
 	const out = run([FIXTURE]);
 	const workerSection = out.slice(out.indexOf("## worker:"));
 	assert.match(workerSection, /\[return/);
+});
+
+test("the fixture worker header carries its spawn type in brackets", () => {
+	const out = run([FIXTURE]);
+	const workerSection = out.slice(out.indexOf("## worker:"));
+	assert.match(workerSection.split("\n")[0], /^## worker:\S+ \[worker\]/);
+});
+
+test("a run whose worker was spawned with a non-worker roster type prints that type in the header", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-cli-type-"));
+	const sessionsDir = path.join(tmp, "sessions", "orchestrator");
+	const tasksDir = path.join(sessionsDir, "tasks");
+	fs.mkdirSync(tasksDir, { recursive: true });
+	const msg = (startMs, endIso) => ({
+		type: "message",
+		id: `m-${startMs}`,
+		timestamp: endIso,
+		message: { role: "assistant", content: [], usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 110 }, timestamp: startMs, stopReason: "endTurn" },
+	});
+	fs.writeFileSync(
+		path.join(sessionsDir, "orch.jsonl"),
+		[
+			{ type: "session", version: 3, id: "orch-session-1", timestamp: new Date(400).toISOString() },
+			msg(500, new Date(600).toISOString()),
+			msg(700, new Date(9600).toISOString()),
+		]
+			.map((l) => JSON.stringify(l))
+			.join("\n") + "\n",
+	);
+	fs.writeFileSync(
+		path.join(tasksDir, "w1.jsonl"),
+		[{ type: "session", version: 3, id: "worker-session-1", timestamp: new Date(1400).toISOString(), parentSession: "orch-session-1" }, msg(1500, new Date(2000).toISOString())]
+			.map((l) => JSON.stringify(l))
+			.join("\n") + "\n",
+	);
+	fs.writeFileSync(
+		path.join(tmp, "lifecycle.jsonl"),
+		[
+			{ ts: 1000, ev: "subagents:started", data: { id: "sub-x", type: "tester", description: "FG task" } },
+			{ ts: 9000, ev: "subagents:completed", data: { id: "sub-x", type: "tester", description: "FG task" } },
+		]
+			.map((e) => JSON.stringify(e))
+			.join("\n") + "\n",
+	);
+
+	const out = run([tmp]);
+	const workerSection = out.slice(out.indexOf("## worker:"));
+	assert.match(workerSection.split("\n")[0], /^## worker:\S+ \[tester\]/);
 });

@@ -42,6 +42,7 @@ test("traceRun finds the orchestrator and the worker with correct spawn info", (
 	assert.ok(worker.spawn, "expected worker.spawn to be set");
 	assert.equal(worker.spawn.description, "Implement src/gear.mjs");
 	assert.equal(worker.spawn.background, true);
+	assert.equal(worker.spawn.type, "worker");
 });
 
 test("every call satisfies context = cached + fresh, hitRatio, and retained invariants", () => {
@@ -183,6 +184,30 @@ test("a run with no lifecycle.jsonl traces without throwing: markers empty, spaw
 	assert.equal(trace.agents.length, 1);
 	assert.equal(trace.agents[0].spawn, null);
 	assert.equal(trace.agents[0].calls[0].markers.length, 0);
+});
+
+test("a worker joined via subagents:started only (no created) picks up type from the started event", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-spawn-type-"));
+	const orchFile = path.join(tmp, "sessions", "orchestrator", "orch.jsonl");
+	const workerFile = path.join(tmp, "sessions", "orchestrator", "tasks", "w1.jsonl");
+	writeSessionFile(orchFile, "orch-session-1", [
+		{ startMs: 500, endIso: new Date(600).toISOString() },
+		{ startMs: 700, endIso: new Date(9600).toISOString() },
+	]);
+	writeSessionFile(workerFile, "worker-session-1", [{ startMs: 1500, endIso: new Date(2000).toISOString() }], { parentSession: "orch-session-1" });
+	fs.writeFileSync(
+		path.join(tmp, "lifecycle.jsonl"),
+		[
+			{ ts: 1000, ev: "subagents:started", data: { id: "sub-x", type: "tester", description: "FG task" } },
+			{ ts: 9000, ev: "subagents:completed", data: { id: "sub-x", type: "tester", description: "FG task" } },
+		]
+			.map((e) => JSON.stringify(e))
+			.join("\n") + "\n",
+	);
+
+	const trace = traceRun(tmp);
+	const worker = trace.agents.find((a) => a.role === "worker");
+	assert.equal(worker.spawn.type, "tester");
 });
 
 test("traceRun throws when the run dir has no sessions/ directory", () => {

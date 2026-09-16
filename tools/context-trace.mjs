@@ -88,7 +88,8 @@ function agentHeaderLine(agent, t0) {
 	const inferenceS = (t.inferenceMs / 1000).toFixed(1);
 	const toolsS = (t.toolMs / 1000).toFixed(1);
 	const prefill = t.promptMs > 0 ? `, prefill ${(t.promptMs / 1000).toFixed(1)}s` : "";
-	return `## ${agent.id}${agentHeaderParenthetical(agent, t0)}: ${t.calls} calls, hit ${t.hitRatio.toFixed(3)}, fresh ${t.fresh}, cached ${t.cached}, peak ${t.peakContext}, inference ${inferenceS}s, tools ${toolsS}s${prefill}`;
+	const type = typeof agent.spawn?.type === "string" && agent.spawn.type ? ` [${agent.spawn.type}]` : "";
+	return `## ${agent.id}${type}${agentHeaderParenthetical(agent, t0)}: ${t.calls} calls, hit ${t.hitRatio.toFixed(3)}, fresh ${t.fresh}, cached ${t.cached}, peak ${t.peakContext}, inference ${inferenceS}s, tools ${toolsS}s${prefill}`;
 }
 
 function printText(doc) {
