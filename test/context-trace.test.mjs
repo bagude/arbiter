@@ -15,6 +15,22 @@ function agentsById(trace) {
 	return byId;
 }
 
+// Writes a minimal session jsonl: a "session" entry, then one assistant message
+// (with usage) per {startMs, endIso} pair in `calls`.
+function writeSessionFile(file, sessionId, calls, extra = {}) {
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	const lines = [{ type: "session", version: 3, id: sessionId, timestamp: new Date(calls[0].startMs - 1000).toISOString(), ...extra }];
+	for (const { startMs, endIso } of calls) {
+		lines.push({
+			type: "message",
+			id: `m-${startMs}`,
+			timestamp: endIso,
+			message: { role: "assistant", content: [], usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 110 }, timestamp: startMs, stopReason: "endTurn" },
+		});
+	}
+	fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+}
+
 test("traceRun finds the orchestrator and the worker with correct spawn info", () => {
 	const trace = traceRun(FIXTURE);
 	assert.equal(trace.agents.length, 2);
@@ -95,6 +111,22 @@ test("spawn/return markers exist on the orchestrator lane for the worker, and wo
 	assert.equal(worker.spawn.createdMs, created.ts);
 });
 
+test("worker:report marker resolves to the worker agent, not the orchestrator (data.role names the transcript basename)", () => {
+	const trace = traceRun(FIXTURE);
+	const worker = trace.agents.find((a) => a.id.startsWith("worker:"));
+	const orchestrator = trace.agents.find((a) => a.id === "orchestrator");
+
+	const reportMarkers = trace.markers.filter((m) => m.kind === "report");
+	assert.equal(reportMarkers.length, 1);
+	assert.equal(reportMarkers[0].agent, worker.id);
+
+	const onWorkerCalls = worker.calls.flatMap((c) => c.markers).filter((m) => m.kind === "report");
+	assert.equal(onWorkerCalls.length, 1, "report marker should attach to a call on the worker's own lane");
+
+	const onOrchestratorCalls = orchestrator.calls.flatMap((c) => c.markers).filter((m) => m.kind === "report");
+	assert.equal(onOrchestratorCalls.length, 0, "report marker must not silently attach to the orchestrator");
+});
+
 test("wall time: orchestrator call 1 inferenceMs is 4587ms and toolMs is the gap to call 2", () => {
 	const trace = traceRun(FIXTURE);
 	const orchestrator = trace.agents.find((a) => a.id === "orchestrator");
@@ -139,6 +171,54 @@ test("a run with no lifecycle.jsonl traces without throwing: markers empty, spaw
 test("traceRun throws when the run dir has no sessions/ directory", () => {
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-nosessions-"));
 	assert.throws(() => traceRun(tmp));
+});
+
+test("a guard marker whose data.role names a worker by transcript basename attaches to that worker, not the orchestrator", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-guard-role-"));
+	const orchFile = path.join(tmp, "sessions", "orchestrator", "orch.jsonl");
+	const workerFile = path.join(tmp, "sessions", "orchestrator", "tasks", "2026-01-01T00-05-00-000Z_workerXYZ.jsonl");
+	writeSessionFile(orchFile, "orch-session-1", [{ startMs: 1_700_000_000_000, endIso: new Date(1_700_000_004_000).toISOString() }]);
+	writeSessionFile(workerFile, "worker-session-1", [{ startMs: 1_700_000_010_000, endIso: new Date(1_700_000_020_000).toISOString() }], { parentSession: "orch-session-1" });
+
+	// The guard's role is the worker session FILE's basename (without .jsonl) per
+	// lib/workers.mjs's workerIdForTranscriptName — not the bare session id.
+	const guardTs = 1_700_000_015_000; // inside the worker's own call window
+	fs.writeFileSync(
+		path.join(tmp, "lifecycle.jsonl"),
+		JSON.stringify({ ts: guardTs, ev: "guard:context_diet_rewritten", data: { role: "worker:2026-01-01T00-05-00-000Z_workerXYZ", thinkingDropped: 1, resultsAged: 3 } }) + "\n",
+	);
+
+	const trace = traceRun(tmp);
+	const worker = trace.agents.find((a) => a.role === "worker");
+	const orchestrator = trace.agents.find((a) => a.role === "orchestrator");
+	assert.ok(worker);
+
+	const guardMarkers = trace.markers.filter((m) => m.kind === "guard");
+	assert.equal(guardMarkers.length, 1);
+	assert.equal(guardMarkers[0].agent, worker.id);
+	assert.equal(guardMarkers[0].detail, "context_diet thinkingDropped=1 resultsAged=3");
+
+	const onWorkerCalls = worker.calls.flatMap((c) => c.markers).filter((m) => m.kind === "guard");
+	assert.equal(onWorkerCalls.length, 1, "guard marker should attach to the worker's own call");
+	const onOrchestratorCalls = orchestrator.calls.flatMap((c) => c.markers).filter((m) => m.kind === "guard");
+	assert.equal(onOrchestratorCalls.length, 0, "guard marker must not silently attach to the orchestrator");
+});
+
+test("two worker sessions whose last 8 id chars collide get -2/-3 suffixes instead of merging", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-collide-"));
+	const orchFile = path.join(tmp, "sessions", "orchestrator", "orch.jsonl");
+	const worker1File = path.join(tmp, "sessions", "orchestrator", "tasks", "w1.jsonl");
+	const worker2File = path.join(tmp, "sessions", "orchestrator", "tasks", "w2.jsonl");
+	writeSessionFile(orchFile, "orch-session-1", [{ startMs: 1_700_000_000_000, endIso: new Date(1_700_000_004_000).toISOString() }]);
+	// Different full session ids, identical last 8 characters ("11111111").
+	writeSessionFile(worker1File, "aaaaaaaa-11111111", [{ startMs: 1_700_000_010_000, endIso: new Date(1_700_000_011_000).toISOString() }]);
+	writeSessionFile(worker2File, "bbbbbbbb-11111111", [{ startMs: 1_700_000_020_000, endIso: new Date(1_700_000_021_000).toISOString() }]);
+
+	const trace = traceRun(tmp);
+	const workers = trace.agents.filter((a) => a.role === "worker").sort((a, b) => a.startMs - b.startMs);
+	assert.equal(workers.length, 2);
+	assert.equal(workers[0].id, "worker:11111111");
+	assert.equal(workers[1].id, "worker:11111111-2");
 });
 
 test("walkSessions returns a sorted, recursive list of .jsonl paths", () => {
