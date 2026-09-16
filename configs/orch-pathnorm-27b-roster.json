@@ -1,0 +1,5 @@
+{ "task": "pathnorm", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" } },
+  "workers": { "default": { "provider": "llama.cpp", "model": "qwen3-27b", "thinking": "off" }, "use": ["scout", "implementer", "tester"], "max": 1 },
+  "caps": { "toolCalls": 250, "wallSec": 1800, "usd": 5, "doneAttempts": 5 },
+  "_note": "Roster arm (2026-09-16): scout → implementer → tester, no memory tools. Pair with configs/orch-pathnorm-27b.json (legacy single worker = control)." }
