@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { appendManifest, readManifest, manifestJoin } from "../lib/worker-manifest.mjs";
+import { appendManifest, readManifest, manifestJoin, transcriptManifestPath } from "../lib/worker-manifest.mjs";
 
 function tmpRunDir() {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-manifest-"));
@@ -11,12 +11,26 @@ function tmpRunDir() {
 
 test("appendManifest then readManifest round-trips records with ts numbers", () => {
 	const dir = tmpRunDir();
+	const sessionsDir = path.join("C:", "r", "runs", ".sessions-2026");
+	const transcriptPath = transcriptManifestPath(sessionsDir, path.join(sessionsDir, "orchestrator", "2026", "tasks", "sess-a1.jsonl"));
 	appendManifest(dir, { ts: 111, ev: "created", wid: "worker:a1", description: "do the thing", background: false });
-	appendManifest(dir, { ts: 222, ev: "bound", wid: "worker:a1", sessionId: "sess-a1", transcriptPath: "sessions/orchestrator/2026/tasks/sess-a1.jsonl" });
+	appendManifest(dir, { ts: 222, ev: "bound", wid: "worker:a1", sessionId: "sess-a1", transcriptPath });
 	const records = readManifest(dir);
 	assert.equal(records.length, 2);
 	assert.deepEqual(records[0], { ts: 111, ev: "created", wid: "worker:a1", description: "do the thing", background: false });
 	assert.deepEqual(records[1], { ts: 222, ev: "bound", wid: "worker:a1", sessionId: "sess-a1", transcriptPath: "sessions/orchestrator/2026/tasks/sess-a1.jsonl" });
+});
+
+test("transcriptManifestPath: prefixes the sessions-relative path with 'sessions/' (Windows separators)", () => {
+	const sessionsDir = "C:\\r\\runs\\.sessions-x";
+	const p = "C:\\r\\runs\\.sessions-x\\orchestrator\\a\\tasks\\b.jsonl";
+	assert.equal(transcriptManifestPath(sessionsDir, p), "sessions/orchestrator/a/tasks/b.jsonl");
+});
+
+test("transcriptManifestPath: POSIX-style paths", () => {
+	const sessionsDir = "/r/runs/.sessions-x";
+	const p = "/r/runs/.sessions-x/orchestrator/a/tasks/b.jsonl";
+	assert.equal(transcriptManifestPath(sessionsDir, p), "sessions/orchestrator/a/tasks/b.jsonl");
 });
 
 test("appendManifest defaults ts to Date.now() when omitted", () => {

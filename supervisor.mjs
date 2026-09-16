@@ -23,7 +23,7 @@ import { writeWorkerDefinition, installWorkspaceExtension, resolveWorkerPrompt }
 import { readMounts, installMounts, archiveFilter, uninstallMounts } from "./lib/mounts.mjs";
 import { childTranscriptDir, JsonlTailer, workerIdFromTranscript } from "./lib/child-transcripts.mjs";
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry, unreportedWorkers } from "./lib/workers.mjs";
-import { appendManifest } from "./lib/worker-manifest.mjs";
+import { appendManifest, transcriptManifestPath } from "./lib/worker-manifest.mjs";
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
@@ -802,15 +802,22 @@ function pumpLifecycle() {
 		// reducer. wid is derived the same way applyLifecycleEvent derives it internally.
 		const manifestWid = data?.id ? `worker:${data.id}` : null;
 		if (manifestWid) {
-			if (ev === "subagents:created") appendManifest(RUN, { ev: "created", wid: manifestWid, description: data.description ?? null, background: Boolean(data.isBackground) });
-			else if (ev === "subagents:resuming") appendManifest(RUN, { ev: "resuming", wid: manifestWid });
-			else if (ev === "subagents:completed" || ev === "subagents:failed" || ev === "subagents:resumed") {
-				const status = ev.slice("subagents:".length);
-				// outcome is the raw pi-subagents status string (data.status) — subagents:resumed
-				// is the one channel for both a real success and an errored resume (see
-				// lib/workers.mjs's TERMINAL_ERROR_STATUS), so status alone can't tell them
-				// apart; a reader resolves that itself instead of this module importing it.
-				appendManifest(RUN, { ev: status, wid: manifestWid, status, outcome: data.status ?? null });
+			// workers.jsonl is a nice-to-have record, not the run's source of truth (the
+			// lifecycle tracker above is already updated); a disk error here must not take
+			// down the interval pump that is mid-way through draining this tick's events.
+			try {
+				if (ev === "subagents:created") appendManifest(RUN, { ev: "created", wid: manifestWid, description: data.description ?? null, background: Boolean(data.isBackground) });
+				else if (ev === "subagents:resuming") appendManifest(RUN, { ev: "resuming", wid: manifestWid });
+				else if (ev === "subagents:completed" || ev === "subagents:failed" || ev === "subagents:resumed") {
+					const status = ev.slice("subagents:".length);
+					// outcome is the raw pi-subagents status string (data.status) — subagents:resumed
+					// is the one channel for both a real success and an errored resume (see
+					// lib/workers.mjs's TERMINAL_ERROR_STATUS), so status alone can't tell them
+					// apart; a reader resolves that itself instead of this module importing it.
+					appendManifest(RUN, { ev: status, wid: manifestWid, status, outcome: data.status ?? null });
+				}
+			} catch (err) {
+				log({ type: "warn", msg: `workers.jsonl append failed: ${err?.message ?? err}` });
 			}
 		}
 		// A fresh, foreground `subagent` call was denied for size (ext/guards/pre-spawn-compact.ts):
@@ -849,7 +856,13 @@ function pumpChildTranscripts() {
 		if (!wid) continue;
 		if (!childTails.has(p)) {
 			childTails.set(p, new JsonlTailer(p));
-			appendManifest(RUN, { ev: "bound", wid, sessionId: workerIdFromTranscript(p), transcriptPath: path.relative(RUN, p).replace(/\\/g, "/") });
+			// See the try/catch in pumpLifecycle: workers.jsonl is a nice-to-have record,
+			// not the run's source of truth, so a disk error here must not stop this pump.
+			try {
+				appendManifest(RUN, { ev: "bound", wid, sessionId: workerIdFromTranscript(p), transcriptPath: transcriptManifestPath(SESSIONS, p) });
+			} catch (err) {
+				log({ type: "warn", msg: `workers.jsonl append failed: ${err?.message ?? err}` });
+			}
 		}
 		const s = state[wid];
 		// Same raw-*.jsonl record an RPC agent gets, so a worker's stream is replayable

@@ -12,6 +12,12 @@
  *
  * Adds nothing to the system prompt or the message list: the estimate reaches the
  * agent only as this tool's own result, when it chooses to call it.
+ *
+ * The `context` handler only stores the latest `event.messages` reference — it does
+ * not run estimateContextChars on every provider request, since most of those chars
+ * are never read back. The tool's `execute` runs the (str-length) estimate once, at
+ * call time, against whatever message list is currently stored (0 chars if the tool
+ * is called before any `context` event has fired).
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,9 +31,9 @@ const { estimateContextChars } = await import(kit.homeUrl(home, "lib", "policies
 const { describeContextUsage } = await import(kit.homeUrl(home, "lib", "policies", "context-usage.mjs"));
 
 export default function (pi: ExtensionAPI) {
-	let contextChars = 0;
+	let messages: unknown[] = [];
 	pi.on("context", (event: { messages: unknown[] }) => {
-		contextChars = estimateContextChars(event.messages);
+		messages = event.messages;
 		return undefined;
 	});
 
@@ -38,7 +44,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 		async execute() {
 			const contextWindow = Number(process.env.ARBITER_CONTEXT_WINDOW) || null;
-			const { text } = describeContextUsage({ chars: contextChars, contextWindow });
+			const { text } = describeContextUsage({ chars: estimateContextChars(messages), contextWindow });
 			return { content: [{ type: "text" as const, text }], details: {}, isError: false };
 		},
 	});
