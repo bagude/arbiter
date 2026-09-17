@@ -373,33 +373,22 @@ test("retainSpecialists files a specialist's remember as a candidate under its a
 	assert.deepEqual(unresolvedRec.evidence, ["run:r1", "unresolved_worker:sess-unknown", "worker:sess-unknown"]);
 });
 
-test("retainSpecialists writes one procedural record per specialist type that spawned on a passed run, promoted when the oracle number is known; a failed run writes none", () => {
+test("retainSpecialists writes remember candidates only — never a per-specialist procedural record, passed or failed", () => {
 	const manifestRows = [
-		{ wid: "w1", sessionId: "s1", type: "tester", description: "write unit tests for the parser. extra detail." },
+		{ wid: "w1", sessionId: "s1", type: "tester", description: "write unit tests for the parser." },
 		{ wid: "w2", sessionId: "s2", type: "tester", description: "add regression coverage." },
 	];
 	const specialists = [{ name: "tester", memory: "tester" }, { name: "scout", memory: "scout" }];
-	const passedOut = retainSpecialists({ runId: "r2", task: "orbit", passed: true, oracleN: 3, remembers: [], manifestRows, specialists, ts: 9 });
-	const proc = passedOut.find((r) => r.kind === "procedural");
-	assert.ok(proc);
-	assert.equal(proc.scope, "agent:tester");
-	assert.equal(proc.text, "tester ran on orbit (2 spawn(s): write unit tests for the parser. | add regression coverage.) — run passed");
-	assert.equal(proc.source, "supervisor");
-	assert.equal(proc.confidence, 0.7);
-	assert.equal(proc.status, "promoted", "a passed run with an oracle number is host-vouched and auto-promotes");
-	assert.deepEqual(proc.evidence, ["run:r2", "oracle:r2#3", "applies_to:task:orbit"]);
-	assert.equal(passedOut.filter((r) => r.kind === "procedural").length, 1, "scout never spawned, so it gets no procedural record");
-	// A failed run writes no procedural record at all: its near-identical text ("run
-	// failed" vs. "run passed") would clear consolidate()'s 0.75 jaccard threshold and
-	// merge into (or be merged away by) a passed run's record for the same specialist,
-	// either raising a failure into a confirmed-looking promotion or losing a passed
-	// run's oracle evidence to a later candidate. retainFromRun's episodic record
-	// already covers the failed run; remember candidates are still written regardless.
-	const remembers = [{ ts: 1, role: "worker:s1", text: "the fixture needs a reset" }];
-	const failedOut = retainSpecialists({ runId: "r3", task: "orbit", passed: false, oracleN: null, remembers, manifestRows, specialists, ts: 9 });
-	assert.equal(failedOut.filter((r) => r.kind === "procedural").length, 0, "a failed run writes no procedural records");
-	assert.equal(failedOut.filter((r) => r.kind === "semantic").length, 1, "remember candidates are still written on a failed run");
-	assert.equal(failedOut[0].scope, "agent:tester");
+	const remembers = [{ ts: 1, role: "worker:s1", text: "the fixture needs a reset before each suite" }];
+	for (const passed of [true, false]) {
+		const out = retainSpecialists({ runId: "r2", task: "orbit", passed, oracleN: passed ? 3 : null, remembers, manifestRows, specialists, ts: 9 });
+		assert.equal(out.filter((r) => r.kind === "procedural").length, 0, `no procedural record when passed=${passed}`);
+		assert.equal(out.length, 1);
+		assert.equal(out[0].kind, "semantic");
+		assert.equal(out[0].scope, "agent:tester");
+		assert.equal(out[0].status, "candidate");
+	}
+	assert.deepEqual(retainSpecialists({ runId: "r2", task: "orbit", passed: true, oracleN: 3, remembers: [], manifestRows, specialists, ts: 9 }), [], "a passed run with no remembers writes nothing");
 });
 
 test("retainSpecialists never throws on a malformed remember line and never drops a resolvable one", () => {
@@ -435,12 +424,9 @@ test("retainSpecialists uses the specialist's memory field, not its name, for sc
 	const manifestRows = [{ wid: "w1", sessionId: "s1", type: "tester", description: "write unit tests for the parser." }];
 	const specialists = [{ name: "tester", memory: "qa" }];
 	const out = retainSpecialists({ runId: "r5", task: "orbit", passed: true, oracleN: 4, remembers, manifestRows, specialists, ts: 1 });
-	const candidate = out.find((r) => r.kind === "semantic");
-	assert.equal(candidate.scope, "agent:qa");
-	assert.deepEqual(candidate.evidence, ["run:r5", "from_agent:qa", "worker:s1"]);
-	const proc = out.find((r) => r.kind === "procedural");
-	assert.equal(proc.scope, "agent:qa");
-	assert.match(proc.text, /^tester ran on orbit/);
+	assert.equal(out.length, 1);
+	assert.equal(out[0].scope, "agent:qa");
+	assert.deepEqual(out[0].evidence, ["run:r5", "from_agent:qa", "worker:s1"]);
 });
 
 test("lastOracleRunNumber reads the last supervisor oracle verdict from the timeline; null when none", () => {
@@ -452,11 +438,4 @@ test("lastOracleRunNumber reads the last supervisor oracle verdict from the time
 	assert.equal(lastOracleRunNumber(timeline), 2);
 	assert.equal(lastOracleRunNumber([]), null);
 	assert.equal(lastOracleRunNumber([{ kind: "oracle", from: "supervisor", body: "Oracle run #0: 0/0 passed." }]), 0);
-});
-
-test("retainSpecialists tags oracle evidence for run number 0 as well (null-check, not truthiness)", () => {
-	const out = retainSpecialists({ runId: "r0", task: "t", passed: true, oracleN: 0, remembers: [], manifestRows: [{ sessionId: "s1", type: "tester", description: "Test it" }], specialists: [{ name: "tester", memory: "tester" }] });
-	const proc = out.find((r) => r.kind === "procedural");
-	assert.ok(proc.evidence.includes("oracle:r0#0"));
-	assert.equal(proc.status, "promoted");
 });
