@@ -419,6 +419,26 @@ test("bash: a shell expansion does not glue the dot-dot away", () => {
 	assert.equal(ev(`head -5 $q../oracle/run.mjs`).ok, false, "N4");
 	assert.equal(ev(`grep -n x $q../oracle/run.mjs`).ok, false, "N6");
 	assert.equal(ev(`cat ../oracle/run.mjs`).ok, false, "N5 the control still denies");
+	assert.equal(ev(`cat "/../oracle/run.mjs"`).ok, false, "and so does the absolute spelling, written directly");
+
+	// Review C6: the elision must not fire when it leaves a LEADING separator, because there the
+	// expansion supplied the first segment and the elided spelling is a different, absolute path.
+	// This is review R9, documented in the policy and seen live in every dw-bronze run, and the
+	// first version of the expansion check denied all of it. Both separator spellings.
+	const W = String.fromCharCode(92);
+	for (const cmd of [
+		`d=src; cat "$d/../README.md"`,
+		`d=src; cat $d/../README.md`,
+		`for d in a b; do cat $d/../x; done`,
+		`d=src; ls $d/..`,
+		`d=src; cat "$d${W}..${W}README.md"`,
+		`d=src; cat $d${W}..${W}README.md`,
+		`s=tx; ls remote/$s/../x`,
+	]) {
+		assert.equal(ev(cmd).ok, true, cmd);
+	}
+	// A bound variable that really does climb out is still denied, by the ordinary fragment rule.
+	assert.equal(ev(`d=src; cat $d/../../../secret.txt`).ok, false, "B5 still climbs out");
 
 	// And inside a double-quoted body, where a blanked literal never reaches judgeSegment.
 	assert.equal(ev(`node -e "readFileSync('$q../oracle/run.mjs')"`).ok, false, "P1");
