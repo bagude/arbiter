@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { planForks, compareFirstRequest, forkRow, renderReport, collisionMessage } from "../tools/fork.mjs";
+import { planForks, compareFirstRequest, forkRow, renderReport, collisionMessage, ownDecisions } from "../tools/fork.mjs";
 
 test("planForks: G branch carries no action, and blanks ARBITER_FORK_FORCE rather than omitting it", () => {
 	const plans = planForks({ run: "r1", call: 5, branch: "G", replicates: 2 });
@@ -253,6 +253,28 @@ test("forkRow: decisionsMissing passes through when tools/decision-points.mjs fa
 // The child-exit handler reaches finish() with "agent <name> exited unexpectedly (code n)" and
 // an ordinary summary: a --session file pi refuses to load looks like this. That is the
 // harness, not the model, so it counts as crashed exactly as a "FORK:" refusal does.
+// A fork's decisions.jsonl opens with the inherited history (the source's own points 0..call-2);
+// the fork's first inference is the point at index call-1. Observed on the first live batch:
+// every row's "first action" was the source run's opening ls, and the class matched the
+// recorded class by coincidence.
+test("forkRow reads the fork's own decisions from index call-1, not the inherited history", () => {
+	const decisions = [
+		{ i: 0, action: { cls: "inspect", tool: "ls", params: {} }, decoded: 50 },
+		{ i: 1, action: { cls: "probe", tool: "send_mail", params: {} }, decoded: 60 },
+		{ i: 2, action: { cls: "resume", tool: "subagent", params: { resume: "w" } }, decoded: 70 },
+		{ i: 3, action: { cls: "done", tool: "send_mail", params: {} }, decoded: 80 },
+	];
+	assert.deepEqual(ownDecisions(decisions, 3).map((p) => p.i), [2, 3]);
+	const row = forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: true, firstDiff: null }, sourceCls: "resume", decisions, oracle: "70/70", summary: { wallSec: 1 }, exit: 0, call: 3 });
+	assert.equal(row.firstAction.cls, "resume");
+	assert.equal(row.reproduced, true);
+	assert.equal(row.probes, 0, "the inherited probe is not the fork's");
+	assert.equal(row.resumes, 1);
+	assert.equal(row.decoded, 150);
+	// Without a call the row reads the list as given (older callers and tests).
+	assert.equal(forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: true, firstDiff: null }, sourceCls: "inspect", decisions, oracle: "", summary: { wallSec: 1 }, exit: 0 }).firstAction.cls, "inspect");
+});
+
 test("forkRow: an orchestrator that exited unexpectedly is crashed, not a non-reproduction", () => {
 	const row = forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: false, firstDiff: "no fork request" }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 2, reason: "agent orchestrator exited unexpectedly (code 1)" }, exit: 0 });
 	assert.equal(row.crashed, true);

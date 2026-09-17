@@ -172,7 +172,19 @@ function guardKinds(guards, name, kinds) {
  * Either way the row is shown, not hidden — `exit` stays a column, and a non-zero exit over a
  * complete summary is labelled `post-finish` so the reader sees it and knows why it counts.
  */
-export function forkRow({ branch, replicate, runId, compare, sourceCls, decisions = [], oracle = "", summary = null, exit = null, decisionsMissing = false }) {
+/**
+ * A fork's decisions.jsonl is extracted from its session file, which BEGINS with the inherited
+ * history: points 0..call-2 are the source run's own decisions, replayed verbatim. Only the
+ * points from index call-1 on were made in the fork. Read on every row before anything is
+ * counted, so "first action" is the fork's first inference and probes/resumes/decoded are the
+ * fork's own — the first live batch showed the source run's opening `ls` on every row.
+ */
+export function ownDecisions(decisions, call) {
+	return (decisions ?? []).filter((p) => Number.isFinite(p?.i) && p.i >= call - 1);
+}
+
+export function forkRow({ branch, replicate, runId, compare, sourceCls, decisions = [], oracle = "", summary = null, exit = null, decisionsMissing = false, call = null }) {
+	if (call !== null) decisions = ownDecisions(decisions, call);
 	const first = decisions[0] ?? null;
 	const firstAction = first ? { cls: first.action.cls, tool: first.action.tool, params: first.action.params } : null;
 	// Two harness outcomes wear an ordinary summary: the fork preflight/continue refusing the
@@ -435,7 +447,7 @@ async function main() {
 		const decisions = readJsonlSync(path.join(runDir, "decisions.jsonl"));
 		const summaryFile = path.join(runDir, "summary.json");
 		const summary = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")) : null;
-		const row = forkRow({ branch, replicate, runId, compare, sourceCls, decisions, oracle: oracleScores(runDir), summary, exit: code, decisionsMissing });
+		const row = forkRow({ branch, replicate, runId, compare, sourceCls, decisions, oracle: oracleScores(runDir), summary, exit: code, decisionsMissing, call: spec.call });
 		rows.push(row);
 		console.log(`[fork] ${branch}-${replicate} → ${runId} exit=${row.exit} crashed=${row.crashed}${row.forkAborted ? ` (${row.forkReason})` : ""} stateMatch=${row.stateMatch} reproduced=${row.reproduced} oracle=${row.oracle || "—"}`);
 	}
