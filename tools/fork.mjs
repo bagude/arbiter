@@ -458,7 +458,9 @@ async function main() {
 		report += `\n**Batch abandoned** after ${abandoned.branch} replicate ${abandoned.replicate}: ${abandoned.collision}. ${plan.length - rows.length} replicate(s) of ${plan.length} were never run — every one of them would have failed the same way.\n`;
 	}
 	fs.mkdirSync(path.join(ROOT, "docs", "batch"), { recursive: true });
-	const reportName = `fork-${spec.runId}-${spec.call}.md`;
+	// One file per (run, call, branch): the branches of one fork are separate invocations, and
+	// a name without the branch let the A-natural batch overwrite the G batch (fork 21).
+	const reportName = `fork-${spec.runId}-${spec.call}-${spec.nullMode ? "null" : spec.branch}.md`;
 	fs.writeFileSync(path.join(ROOT, "docs", "batch", reportName), report);
 	console.log(`[fork] report: docs/batch/${reportName}`);
 	if (abandoned) process.exit(2);
