@@ -207,21 +207,44 @@ test("v3 bash: only a node in command position opens a body, and an escaped lite
 	// The fake body ran to the quote in the last echo and swallowed the real cat between them.
 	assert.equal(ev(`echo "node -e '" ; cat ../oracle/run.mjs ; echo "'"`).ok, false, "a fake body must not hide a real path");
 
+	// Re-review C3: a wrapper argument may be option-like, a duration or an assignment, never
+	// a bare word. A bare word is a command NAME, and accepting one handed the body straight
+	// back to it — `cat -e` and `head -e` are real flags, so each of these printed the file.
+	assert.equal(ev(`time cat node -e "../oracle/run.mjs"`).ok, false, "time cat");
+	assert.equal(ev(`timeout 30 cat node -e "../oracle/run.mjs"`).ok, false, "timeout cat");
+	assert.equal(ev(`env cat node -e "../../../secret.txt"`).ok, false, "env cat");
+	assert.equal(ev(`nice head node -e "../../../secret.txt"`).ok, false, "nice head");
+
 	// The wrapper allowance: roster/implementer.md asks for an explicit timeout, so these
 	// bodies must still be masked or the degenerate literals are denied all over again.
 	for (const cmd of [
 		`timeout 30 node -e 'console.log(relative(".", "a"), segs("/"), segs(".."))'`,
+		`timeout 30.5 node -e 'segs("..")'`,
+		`timeout 30s node -e 'segs("..")'`,
 		`timeout -k 5 30 node -e 'segs("..")'`,
 		`env FOO=1 node -e 'segs("/")'`,
 		`nice node -e 'segs("..")'`,
+		`nice -n 10 node -e 'segs("..")'`,
+		`stdbuf -o0 node -e 'segs("..")'`,
 		`FOO=1 node -e 'segs("..")'`,
 		`cd src && timeout 30 node -e 'segs("..")'`,
+		// M6: the joined equals form and a backticked substitution are masked too.
+		`node --eval='segs("..")'`,
+		`node --print='segs("..")'`,
+		"echo `node -e 'segs(\"..\")'`",
+		`echo $(node -e 'segs("..")')`,
+		`echo x | node -e 'segs("..")'`,
 	]) {
 		assert.equal(ev(cmd).ok, true, cmd);
 	}
 	// A wrapper cannot smuggle a path of its own: everything before the opening quote is
 	// still judged normally.
 	assert.equal(ev(`timeout ../oracle/run.mjs node -e "x"`).ok, false, "the wrapper's own argument");
+	assert.equal(ev(`env FOO=../oracle node -e "x"`).ok, false, "the wrapper's own assignment");
+	// M6, documented and fail-closed: ANSI-C quoting is not masked, so its degenerate literal
+	// is judged as a raw fragment and denied. A false positive, never an escape — its
+	// shell-level escapes are a second decoding layer the policy does not model.
+	assert.equal(ev(`node -e $'segs("..")'`).ok, false, "ANSI-C quoting stays unmasked, and fails closed");
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
