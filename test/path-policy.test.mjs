@@ -149,9 +149,25 @@ test("v3 bash: a node -e literal is data unless it names an existing place out o
 	assert.equal(oracle.fragment, "../tasks/pathnorm/oracle/run.mjs");
 	assert.equal(ev(`node -e 'readdirSync("../tasks/pathnorm/oracle")'`).ok, false, "the directory too");
 	assert.equal(ev(`node -e 'readFileSync(".pi/agents/worker.md")'`).ok, false, "supervisor-owned, though inside");
-	// Existence is checked against the real disk at decision time: the same literal is data
-	// until the thing exists.
-	assert.equal(ev(`node -e 'readdirSync("../tasks/glob/oracle")'`).ok, true);
+	// Existence is checked against the real disk at decision time: a name with nothing
+	// behind it is data until something is there.
+	assert.equal(ev(`node -e 'readdirSync("../sibling")'`).ok, true);
+	fs.mkdirSync(path.join(dir, "sibling"));
+	assert.equal(ev(`node -e 'readdirSync("../sibling")'`).ok, false, "the same literal, once the directory is there");
+
+	// The hidden directory's own names are judged whatever is on disk. This closes the
+	// concatenation that a blanked ".." used to block by accident, and it is needed because
+	// a POSIX-absolute fragment that does not exist is deliberately read as path-like data.
+	assert.equal(ev(`node -e 'const p = ".." + "/tasks/pathnorm/oracle"; readdirSync(p)'`).ok, false, "assembled from two literals");
+	assert.equal(ev(`node -e 'readdirSync("/tasks/pathnorm/oracle")'`).ok, false, "absolute and non-existent");
+	assert.equal(ev(`node -e 'readFileSync("../TASKS/Pathnorm/Oracle/run.mjs")'`).ok, false, "case-insensitive");
+	assert.equal(ev(`node -e 'readdirSync("../tasks/glob/oracle")'`).ok, false, "nothing there, refused on the name alone");
+	// A workspace path that merely contains the word is still data.
+	assert.equal(ev(`node -e 'readFileSync("src/tasks/todo.json")'`).ok, true);
+	// Documented limit: full runtime assembly passes, because each literal is harmless on
+	// its own — "tasks" and "oracle" both resolve inside the workspace. Only a sandbox
+	// closes that one.
+	assert.equal(ev(`node -e 'readdirSync(["..","tasks","pathnorm","oracle"].join("/"))'`).ok, true);
 
 	// Everything outside the body is judged as before.
 	assert.equal(ev("cat ../secret").ok, false);
@@ -165,12 +181,17 @@ test("v3 bash: a node -e literal is data unless it names an existing place out o
 
 test("v3 bash: the node -e existence check is injectable and decides both branches", () => {
 	const root = path.resolve("C:/work/runs/.ws-run/ws-builder");
-	const outside = path.resolve("C:/work/runs/.ws-run/tasks/pathnorm/oracle");
-	const cmd = `node -e 'readdirSync("../tasks/pathnorm/oracle")'`;
+	const outside = path.resolve("C:/work/runs/.ws-run/secrets");
+	// A literal the name rule does not reach, so the verdict turns purely on existence.
+	const cmd = `node -e 'readdirSync("../secrets")'`;
 	assert.equal(decidePath({ root, tool: "bash", input: { command: cmd }, exists: () => false }).ok, true);
 	const denied = decidePath({ root, tool: "bash", input: { command: cmd }, exists: (p) => path.resolve(p) === outside });
 	assert.equal(denied.ok, false);
-	assert.equal(denied.fragment, "../tasks/pathnorm/oracle");
+	assert.equal(denied.fragment, "../secrets");
+	// The name rule never consults exists.
+	const byName = decidePath({ root, tool: "bash", input: { command: `node -e 'readdirSync(".." + "/tasks/pathnorm/oracle")'` }, exists: () => false });
+	assert.equal(byName.ok, false);
+	assert.equal(byName.fragment, "/tasks/pathnorm/oracle");
 	// An existence oracle that says yes to everything must still pass the degenerate
 	// literals, or the tester's command breaks again.
 	assert.equal(decidePath({ root, tool: "bash", input: { command: `node -e 'relative(".", "..")'` }, exists: () => true }).ok, true);
