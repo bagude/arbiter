@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { decidePath } from "../lib/path-policy.mjs";
 
@@ -109,29 +111,69 @@ test("v2 bash: POSIX-absolute fragments are denied only when they exist on disk;
 	assert.equal(decide("bash", { command: "cat ~/.pi/agent/auth.json" }).ok, false);
 });
 
-// Case 5 of docs/batch/harness-text-audit-2026-09-17.md: a path-string task writes
-// "..", "/" and "/c/d" as data, and judging them as filesystem targets denied the
-// tester's independent re-derivation of relative() twice, killing the one mechanical
-// check that would have caught the bug. String literals inside an -e body are data.
-test("v3 bash: a node -e script body is data, whatever path strings it contains", () => {
-	// The tester's denied command shape: semicolons inside the body (the segment splitter
-	// is not quote-aware, so the body has to be blanked before the split), "..", "/" and
-	// an msys-looking "/c/d", all as string literals.
+// Case 5 of docs/batch/harness-text-audit-2026-09-17.md: a path-string task writes "..",
+// "/" and "/c/d" as data, and judging them as filesystem targets denied the tester's
+// independent re-derivation of relative() twice, killing the one mechanical check that
+// would have caught the bug. A literal inside an -e body is data UNLESS it resolves to
+// something that really exists and really is out of bounds.
+test("v3 bash: a node -e literal is data unless it names an existing place out of bounds", () => {
+	// A real workspace with a real forbidden sibling: tasks/pathnorm/oracle is exactly what
+	// the in-band guard exists to keep out of reach.
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "path-policy-eval-"));
+	const root = path.join(dir, "ws-builder");
+	fs.mkdirSync(path.join(root, "src"), { recursive: true });
+	fs.mkdirSync(path.join(dir, "tasks", "pathnorm", "oracle"), { recursive: true });
+	fs.writeFileSync(path.join(dir, "tasks", "pathnorm", "oracle", "run.mjs"), "// hidden\n");
+	fs.mkdirSync(path.join(root, ".pi", "agents"), { recursive: true });
+	fs.writeFileSync(path.join(root, ".pi", "agents", "worker.md"), "# worker\n");
+	const ev = (command) => decidePath({ root, tool: "bash", input: { command } });
+
+	// The tester's real denied command: semicolons inside the body (the segment splitter is
+	// not quote-aware, so the body must be masked before the split), "..", "/" and "/c/d".
 	const tester = `node -e "const segs = (s) => s.split('/').filter((x) => x && x !== '.'); console.log(segs('..'), segs('/c/d'), rel('..', '/c/d'))" --timeout 20`;
-	assert.equal(decide("bash", { command: tester }).ok, true);
-	assert.equal(decide("bash", { command: `node --input-type=module -e 'console.log(relative(".", "a"), relative("/c/d", "/c"))'` }).ok, true);
-	assert.equal(decide("bash", { command: `node -p "isAbsolute('/'); dirname('../a')"` }).ok, true);
-	// Documented consequence: a body that really does read is not stopped here either.
-	// The bash guard never parsed JavaScript, and it could not have caught the same read
-	// assembled at runtime. What a spawned process reads is the sandbox's problem.
-	assert.equal(decide("bash", { command: `node -e "console.log(readFileSync('../x', 'utf8'))"` }).ok, true);
-	// Everything outside the body is judged exactly as before.
-	assert.equal(decide("bash", { command: "cat ../secret" }).ok, false);
-	assert.equal(decide("bash", { command: `node -e "segs('..')" && cat ../../tasks/glob/oracle/glob.test.mjs` }).ok, false);
-	assert.equal(decide("bash", { command: `cd ..; node -e "segs('..')"` }).ok, false);
-	assert.equal(decide("bash", { command: `node -e "segs('..')" > /c/Users/me/out.txt` }).ok, false);
+	assert.equal(ev(tester).ok, true);
+	assert.equal(ev(`node --input-type=module -e 'console.log(relative(".", "a"), relative("/c/d", "/c"))'`).ok, true);
+	assert.equal(ev(`node -p "isAbsolute('/'); dirname('../a')"`).ok, true);
+	// The six degenerate literals, each of which resolves somewhere that exists (the
+	// filesystem root, the workspace's parent) while naming nothing.
+	for (const lit of ["/", "\\\\", ".", "..", "./", "../"]) {
+		assert.equal(ev(`node -e 'normalize("${lit}")'`).ok, true, `literal ${lit}`);
+	}
+	// Nothing at "../x", so it is data — including when the body really would read it.
+	assert.equal(ev(`node -e "console.log(readFileSync('../x', 'utf8'))"`).ok, true);
+	assert.equal(ev(`node -e 'join("../a", "a/../b")'`).ok, true);
+
+	// An existing sibling outside the workspace is judged as a path, exactly as before.
+	const oracle = ev(`node -e "console.log(readFileSync('../tasks/pathnorm/oracle/run.mjs', 'utf8'))"`);
+	assert.equal(oracle.ok, false, "an existing file outside the workspace is not data");
+	assert.equal(oracle.fragment, "../tasks/pathnorm/oracle/run.mjs");
+	assert.equal(ev(`node -e 'readdirSync("../tasks/pathnorm/oracle")'`).ok, false, "the directory too");
+	assert.equal(ev(`node -e 'readFileSync(".pi/agents/worker.md")'`).ok, false, "supervisor-owned, though inside");
+	// Existence is checked against the real disk at decision time: the same literal is data
+	// until the thing exists.
+	assert.equal(ev(`node -e 'readdirSync("../tasks/glob/oracle")'`).ok, true);
+
+	// Everything outside the body is judged as before.
+	assert.equal(ev("cat ../secret").ok, false);
+	assert.equal(ev(`node -e "segs('..')" && cat ../tasks/pathnorm/oracle/run.mjs`).ok, false);
+	assert.equal(ev(`cd ..; node -e "segs('..')"`).ok, false);
+	assert.equal(ev(`node -e "segs('..')" > /c/Users/me/out.txt`).ok, false);
 	// Not an -e body: -e belonging to another command is left alone.
-	assert.equal(decide("bash", { command: `grep -e "../../tasks" src/*.mjs` }).ok, false);
+	assert.equal(ev(`grep -e "../../tasks" src/*.mjs`).ok, false);
+	fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("v3 bash: the node -e existence check is injectable and decides both branches", () => {
+	const root = path.resolve("C:/work/runs/.ws-run/ws-builder");
+	const outside = path.resolve("C:/work/runs/.ws-run/tasks/pathnorm/oracle");
+	const cmd = `node -e 'readdirSync("../tasks/pathnorm/oracle")'`;
+	assert.equal(decidePath({ root, tool: "bash", input: { command: cmd }, exists: () => false }).ok, true);
+	const denied = decidePath({ root, tool: "bash", input: { command: cmd }, exists: (p) => path.resolve(p) === outside });
+	assert.equal(denied.ok, false);
+	assert.equal(denied.fragment, "../tasks/pathnorm/oracle");
+	// An existence oracle that says yes to everything must still pass the degenerate
+	// literals, or the tester's command breaks again.
+	assert.equal(decidePath({ root, tool: "bash", input: { command: `node -e 'relative(".", "..")'` }, exists: () => true }).ok, true);
 });
 
 test("v2 bash: the protected .pi directory — case-insensitive, and globs that can name it", () => {
