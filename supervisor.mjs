@@ -36,7 +36,7 @@ import { contextTokensOf, decideCompaction, composeInstructions, ledgerLines } f
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 import { readJsonl } from "./lib/jsonl.mjs";
 import { argsKey as probeArgsKey, matchCase as matchProbeCase } from "./lib/probe-match.mjs";
-import { forkSpec, truncateSessionEntries, rewriteSessionHeader, forkCounters } from "./lib/fork.mjs";
+import { forkSpec, truncateSessionEntries, truncateEntriesAt, rewriteSessionHeader, forkCounters } from "./lib/fork.mjs";
 import { readSessionFile } from "./lib/context-trace.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -106,6 +106,11 @@ if (FORK) {
 	// and every run recorded before the snapshot feature has no snapshot field at all.
 	// Neither can be forked; say so here rather than throwing a bare TypeError on cpSync.
 	if (!FORK_REQ.snapshot) { console.error(`fork: ${FORK_SRC}/requests/${String(FORK.call).padStart(4, "0")}.json has no workspace snapshot`); process.exit(2); }
+	// The snapshot directory itself, checked here because the cpSync that reads it is the one
+	// fork-only statement forkAbort cannot clean up after: forkAbort dereferences MOUNTS, which
+	// is declared just below that copy, so a catch around it would hit a temporal dead zone.
+	// Refusing before anything is created is the same guarantee by a cheaper route.
+	if (!fs.existsSync(path.join(FORK_SRC, "requests", FORK_REQ.snapshot))) { console.error(`fork: missing ${path.join(FORK_SRC, "requests", FORK_REQ.snapshot)} (the recorded workspace snapshot)`); process.exit(2); }
 	// The fork instant. Every recorded worker and every recorded report is filtered on it, so
 	// a fork restores the world as it was when that request was sent and nothing later.
 	if (!Number.isFinite(FORK_REQ.ts)) { console.error(`fork: request ${FORK.call} carries no timestamp; nothing can be restored as of the fork instant`); process.exit(2); }
@@ -217,7 +222,14 @@ function forkAbort(msg) {
 	// Drop the read-only mount junctions before removing WSROOT, exactly as finish() does:
 	// rmSync would otherwise recurse through a junction and delete the mounted source data.
 	// Every call site is below the installMounts line, so MOUNTS is always initialised here.
-	uninstallMounts(MOUNTS);
+	// Guarded because a throw here would skip the removals below and leave both directories
+	// on disk — the exact dead end this function exists to prevent.
+	try {
+		uninstallMounts(MOUNTS);
+	} catch (err) {
+		console.error(`fork: could not drop the mount junctions (${err?.message ?? err}); leaving ${WSROOT} and ${SESSIONS} in place rather than recursing through them — remove both before retrying`);
+		process.exit(2);
+	}
 	for (const dir of [WSROOT, SESSIONS]) {
 		try {
 			fs.rmSync(dir, { recursive: true, force: true });
@@ -1044,18 +1056,28 @@ let probeCount = 0;
 // they are only ever read inside functions that run later, so assigning them here is
 // safe. lastProbeHash is the spec's ruling: the restored src is what the last probe
 // saw unless the record says otherwise (recorded in summary.json under fork.counters).
+// Fork counter re-seed. Guarded because this runs at module scope AFTER the workspace copy
+// created runs/.ws-<src>: forkCounters throws `no decision point for call N` on a `call` past
+// the end of the source run, which is the likeliest fork error there is. Unguarded, the
+// process died on an uncaught exception, the directory survived, and the collision preflight
+// then refused every retry — including the operator's corrected one. forkAbort releases both
+// directories and exits 2 instead.
 if (FORK) {
-	const c = forkCounters(readJsonl(path.join(FORK_SRC, "decisions.jsonl")), FORK.call);
-	mailCount = c.mailCount;
-	doneAttempts = c.doneAttempts;
-	probeCount = c.probeCount;
-	// A task whose workspace has no src/ (a review or analysis task) would throw in
-	// hashDir's readdirSync; leave the hash null and say so rather than taking the run down.
-	const src = path.join(WS.workspace, "src");
-	if (c.probeCount > 0 && fs.existsSync(src)) lastProbeHash = hashDir(src);
-	else if (c.probeCount > 0) log({ type: "fork", msg: `no ${src}: lastProbeHash left null, the next probe will read as a change` });
-	FORK_COUNTERS = c;
-	log({ type: "fork", msg: `counters re-seeded: mail ${c.mailCount}, doneAttempts ${c.doneAttempts}, probes ${c.probeCount}${c.pendingProbe ? " (a probe was pending)" : ""}` });
+	try {
+		const c = forkCounters(readJsonl(path.join(FORK_SRC, "decisions.jsonl")), FORK.call);
+		mailCount = c.mailCount;
+		doneAttempts = c.doneAttempts;
+		probeCount = c.probeCount;
+		// A task whose workspace has no src/ (a review or analysis task) would throw in
+		// hashDir's readdirSync; leave the hash null and say so rather than taking the run down.
+		const src = path.join(WS.workspace, "src");
+		if (c.probeCount > 0 && fs.existsSync(src)) lastProbeHash = hashDir(src);
+		else if (c.probeCount > 0) log({ type: "fork", msg: `no ${src}: lastProbeHash left null, the next probe will read as a change` });
+		FORK_COUNTERS = c;
+		log({ type: "fork", msg: `counters re-seeded: mail ${c.mailCount}, doneAttempts ${c.doneAttempts}, probes ${c.probeCount}${c.pendingProbe ? " (a probe was pending)" : ""}` });
+	} catch (err) {
+		forkAbort(err?.message ?? String(err));
+	}
 }
 let ownProbeCount = 0; // probes the orchestrator asked for itself — the behaviour the pattern measures; auto-probes are excluded
 // Snapshotted the first time the oracle runs, so summary.json can answer a question
@@ -1684,109 +1706,123 @@ if (FORK) {
 	// file truncated to the forked call. Written back in pi's own JSONL shape — one JSON
 	// object per line, header first — with the header's cwd pointed at this run's
 	// workspace.
-	const srcDir = path.join(FORK_SRC, "sessions", "orchestrator");
-	const dstDir = path.join(SESSIONS, "orchestrator");
-	fs.cpSync(srcDir, dstDir, { recursive: true });
-	const own = fs.readdirSync(dstDir).filter((f) => f.endsWith(".jsonl")); // the orchestrator's file(s); workers live under <id>/tasks/
-	if (own.length !== 1) forkAbort(`expected one orchestrator session file in ${dstDir}, found ${own.length}`);
-	FORK_SESSION_FILE = path.join(dstDir, own[0]);
-	// The copy brought the source run's worker transcripts with it, under <stem>/tasks/.
-	// They are not ignorable: three of the planned forks resume a source worker, and
-	// pi-subagents resumes by session id and APPENDS to the very file that was copied —
-	// so a fork that skipped these files would lose the tool calls, tokens and binding of
-	// exactly the worker whose resume it is measuring. Instead each source worker is
-	// restored: its agent state recreated, its terminal status replayed, its transcript
-	// pre-bound to its own lifecycle id, and its tail started at end-of-file so nothing
-	// recorded before the fork is counted again. Pre-binding is also what keeps these
-	// files out of FIFO binding — bindTranscript returns early on a path it already holds,
-	// so the fork's own first spawn cannot be paired with an inherited transcript.
-	// The manifest is folded over records at or before the fork instant ONLY, which is what
-	// makes every field below as-of that instant rather than as-of the end of the source run:
-	// a worker spawned later has no row at all, and one that failed before the fork and was
-	// resumed after it reads `failed`, as it did then.
-	const tasksDir = childTranscriptDir(dstDir);
-	const kept = new Set();
-	for (const row of manifestJoin(readManifest(FORK_SRC).filter((r) => r.ts <= FORK_REQ.ts)).values()) {
-		// A worker whose `bound` record had not arrived by the fork instant has no transcript
-		// to attribute; its file is dropped below with the rest of what did not exist yet.
-		if (!row.sessionId || !tasksDir) continue;
-		const p = path.join(tasksDir, `${row.sessionId}.jsonl`); // the basename IS the session id
-		if (!fs.existsSync(p)) continue;
-		// The manifest's last-one-wins `status` says "resumed" for a worker that was
-		// resumed, whatever the outcome; `outcome` carries the raw pi-subagents status.
-		// Same rule lib/workers.mjs applies to a live terminal event (TERMINAL_ERROR_STATUS
-		// there, kept in step with this list).
-		const failed = row.status === "failed" || ["error", "aborted", "stopped"].includes(row.outcome);
-		// No terminal record by the fork instant: this worker was still running then. It is
-		// still restored as completed, because no such process exists in the fork and a
-		// status of "running" would make liveWorkers() block the quiescence oracle for the
-		// rest of the run (lib/workers.mjs). summary.fork records which ones these were.
-		const liveAtFork = row.endedTs == null;
-		const w = ensureWorker(state, row.wid);
-		w.status = failed ? "failed" : "completed";
-		w.busy = false;
-		tracker.bound.set(p, row.wid);
-		kept.add(p);
-		const tail = new JsonlTailer(p);
-		tail.offset = fs.statSync(p).size; // everything already in the file is the source run's
-		childTails.set(p, tail);
-		// pumpChildTranscripts only appends a manifest record on a first bind it performs
-		// itself, which this pre-bind skips — so the fork's own workers.jsonl gets the
-		// inherited worker's rows here, `inheritedFrom` marking what a normal spawn lacks.
-		appendManifest(RUN, { ev: "started", wid: row.wid, description: row.description, background: row.background, type: row.type, inheritedFrom: FORK.run });
-		appendManifest(RUN, { ev: "bound", wid: row.wid, sessionId: row.sessionId, transcriptPath: transcriptManifestPath(SESSIONS, p) });
-		appendManifest(RUN, { ev: failed ? "failed" : "completed", wid: row.wid, status: row.status, outcome: row.outcome, liveAtFork });
-		FORK_SOURCE_WORKERS.push({ wid: row.wid, type: row.type, description: row.description, sessionId: row.sessionId, liveAtFork });
-	}
-	// Every other transcript under tasks/ belongs to a worker the source run only spawned
-	// after the fork instant. It did not exist then, so it is deleted from the fork's copied
-	// tree rather than left there: unbound, it would fall into FIFO binding and the fork's
-	// own first spawn would adopt it.
-	let dropped = 0;
-	if (tasksDir && fs.existsSync(tasksDir)) {
-		for (const f of fs.readdirSync(tasksDir).filter((f) => f.endsWith(".jsonl"))) {
-			const p = path.join(tasksDir, f);
-			if (kept.has(p)) continue;
-			fs.rmSync(p, { force: true });
-			dropped++;
-		}
-	}
-	// Reports filed at or before the fork instant, replayed through the same lifecycle path a
-	// live `report` tool call takes (ext/report-ext.ts emits the counts, not the arrays, and
-	// reports.jsonl stores the full entry — so the emit payload is rebuilt from the row).
-	// Without this the restored workers are all `unreportedWorkers`, and the fork's first
-	// done would be refused with "approval without worker report" naming a worker it never
-	// spawned. Going through applyLifecycleEvent also gives each report a tracker.seq above
-	// the restored workers' lastStartedSeq, with no sentinel anywhere.
-	const reportsFile = path.join(FORK_SRC, "reports.jsonl");
-	let restoredReports = 0;
-	if (fs.existsSync(reportsFile)) {
-		for (const row of readJsonl(reportsFile).filter((r) => r.ts <= FORK_REQ.ts)) {
-			const data = { role: row.role, status: row.status, findings: (row.findings ?? []).length, verify: (row.verify ?? []).length, changed: (row.changed ?? []).length, chars: JSON.stringify(row).length, verifyCases: row.verify ?? [] };
-			// Deliberately not through pumpLifecycle: that would also re-fire the autoProbe
-			// branch and re-run probes the source run already ran before the fork.
-			const { audit: lines } = applyLifecycleEvent(tracker, state, timeline, { ev: "worker:report", data, now: row.ts });
-			for (const line of lines) log(line);
-			restoredReports++;
-		}
-	}
-	// truncateSessionEntries throws when the recorded session has fewer assistant entries
-	// than `call`, and rewriteSessionHeader when the file does not start with a header;
-	// both are a bad fork spec, not a crash worth a stack trace.
+	// Everything below runs after the workspace copy created runs/.ws-<src>, so a throw
+	// anywhere in it would leave that directory and .sessions-<src> on disk, and the
+	// collision preflight would then refuse every retry, including the operator's corrected
+	// one. forkAbort releases both directories and exits 2 with the thrower's message.
 	try {
+		const srcDir = path.join(FORK_SRC, "sessions", "orchestrator");
+		const dstDir = path.join(SESSIONS, "orchestrator");
+		fs.cpSync(srcDir, dstDir, { recursive: true });
+		const own = fs.readdirSync(dstDir).filter((f) => f.endsWith(".jsonl")); // the orchestrator's file(s); workers live under <id>/tasks/
+		if (own.length !== 1) forkAbort(`expected one orchestrator session file in ${dstDir}, found ${own.length}`);
+		FORK_SESSION_FILE = path.join(dstDir, own[0]);
+		// The copy brought the source run's worker transcripts with it, under <stem>/tasks/.
+		// They are not ignorable: three of the planned forks resume a source worker, and
+		// pi-subagents resumes by session id and APPENDS to the very file that was copied —
+		// so a fork that skipped these files would lose the tool calls, tokens and binding of
+		// exactly the worker whose resume it is measuring. Instead each source worker is
+		// restored: its agent state recreated, its terminal status replayed, its transcript
+		// pre-bound to its own lifecycle id, and its tail started at end-of-file so nothing
+		// recorded before the fork is counted again. Pre-binding is also what keeps these
+		// files out of FIFO binding — bindTranscript returns early on a path it already holds,
+		// so the fork's own first spawn cannot be paired with an inherited transcript.
+		// The manifest is folded over records at or before the fork instant ONLY, which is what
+		// makes every field below as-of that instant rather than as-of the end of the source run:
+		// a worker spawned later has no row at all, and one that failed before the fork and was
+		// resumed after it reads `failed`, as it did then.
+		const tasksDir = childTranscriptDir(dstDir);
+		const kept = new Set();
+		for (const row of manifestJoin(readManifest(FORK_SRC).filter((r) => r.ts <= FORK_REQ.ts)).values()) {
+			// A worker whose `bound` record had not arrived by the fork instant has no transcript
+			// to attribute; its file is dropped below with the rest of what did not exist yet.
+			if (!row.sessionId || !tasksDir) continue;
+			const p = path.join(tasksDir, `${row.sessionId}.jsonl`); // the basename IS the session id
+			if (!fs.existsSync(p)) continue;
+			// The manifest's last-one-wins `status` says "resumed" for a worker that was
+			// resumed, whatever the outcome; `outcome` carries the raw pi-subagents status.
+			// Same rule lib/workers.mjs applies to a live terminal event (TERMINAL_ERROR_STATUS
+			// there, kept in step with this list).
+			const failed = row.status === "failed" || ["error", "aborted", "stopped"].includes(row.outcome);
+			// Still running at the fork instant. Two shapes mean that, and both must be read:
+			// no terminal record at all, and a worker mid-resume — manifestJoin's `resuming` case
+			// sets status "running" without clearing the endedTs its earlier terminal record left
+			// (lib/worker-manifest.mjs), so endedTs alone would call a resuming worker finished.
+			// It is still restored as completed, because no such process exists in the fork and a
+			// status of "running" would make liveWorkers() block the quiescence oracle for the
+			// rest of the run (lib/workers.mjs). summary.fork records which ones these were.
+			const liveAtFork = row.endedTs == null || row.status === "running";
+			const w = ensureWorker(state, row.wid);
+			w.status = failed ? "failed" : "completed";
+			w.busy = false;
+			tracker.bound.set(p, row.wid);
+			kept.add(p);
+			// Cut the inherited transcript at the fork instant BEFORE the tail is positioned. The
+			// source run kept appending to this file after the instant, and pi-subagents resumes a
+			// worker by appending to the very file that was copied — so leaving it whole would
+			// resume from the source run's FINAL state rather than its state at the fork. The tail
+			// offset is then the truncated size, which is also why the order matters here.
+			const atFork = truncateEntriesAt(readSessionFile(p), FORK_REQ.ts);
+			fs.writeFileSync(p, atFork.length ? atFork.map((e) => JSON.stringify(e)).join("\n") + "\n" : "");
+			const tail = new JsonlTailer(p);
+			tail.offset = fs.statSync(p).size; // everything left in the file is the source run's, up to the fork instant
+			childTails.set(p, tail);
+			// pumpChildTranscripts only appends a manifest record on a first bind it performs
+			// itself, which this pre-bind skips — so the fork's own workers.jsonl gets the
+			// inherited worker's rows here, `inheritedFrom` marking what a normal spawn lacks.
+			appendManifest(RUN, { ev: "started", wid: row.wid, description: row.description, background: row.background, type: row.type, inheritedFrom: FORK.run });
+			appendManifest(RUN, { ev: "bound", wid: row.wid, sessionId: row.sessionId, transcriptPath: transcriptManifestPath(SESSIONS, p) });
+			appendManifest(RUN, { ev: failed ? "failed" : "completed", wid: row.wid, status: row.status, outcome: row.outcome, liveAtFork });
+			FORK_SOURCE_WORKERS.push({ wid: row.wid, type: row.type, description: row.description, sessionId: row.sessionId, liveAtFork });
+		}
+		// Every other transcript under tasks/ belongs to a worker the source run only spawned
+		// after the fork instant. It did not exist then, so it is deleted from the fork's copied
+		// tree rather than left there: unbound, it would fall into FIFO binding and the fork's
+		// own first spawn would adopt it.
+		let dropped = 0;
+		if (tasksDir && fs.existsSync(tasksDir)) {
+			for (const f of fs.readdirSync(tasksDir).filter((f) => f.endsWith(".jsonl"))) {
+				const p = path.join(tasksDir, f);
+				if (kept.has(p)) continue;
+				fs.rmSync(p, { force: true });
+				dropped++;
+			}
+		}
+		// Reports filed at or before the fork instant, replayed through the same lifecycle path a
+		// live `report` tool call takes (ext/report-ext.ts emits the counts, not the arrays, and
+		// reports.jsonl stores the full entry — so the emit payload is rebuilt from the row).
+		// Without this the restored workers are all `unreportedWorkers`, and the fork's first
+		// done would be refused with "approval without worker report" naming a worker it never
+		// spawned. Going through applyLifecycleEvent also gives each report a tracker.seq above
+		// the restored workers' lastStartedSeq, with no sentinel anywhere.
+		const reportsFile = path.join(FORK_SRC, "reports.jsonl");
+		let restoredReports = 0;
+		if (fs.existsSync(reportsFile)) {
+			for (const row of readJsonl(reportsFile).filter((r) => r.ts <= FORK_REQ.ts)) {
+				const data = { role: row.role, status: row.status, findings: (row.findings ?? []).length, verify: (row.verify ?? []).length, changed: (row.changed ?? []).length, chars: JSON.stringify(row).length, verifyCases: row.verify ?? [] };
+				// Deliberately not through pumpLifecycle: that would also re-fire the autoProbe
+				// branch and re-run probes the source run already ran before the fork.
+				const { audit: lines } = applyLifecycleEvent(tracker, state, timeline, { ev: "worker:report", data, now: row.ts });
+				for (const line of lines) log(line);
+				restoredReports++;
+			}
+		}
+		// truncateSessionEntries throws when the recorded session has fewer assistant entries
+		// than `call`, and rewriteSessionHeader when the file does not start with a header;
+		// both are a bad fork spec, and the block's own catch turns either into forkAbort.
 		const { entries, cut } = truncateSessionEntries(readSessionFile(FORK_SESSION_FILE), FORK.call);
 		FORK_CUT = cut;
 		// The header's cwd is already WS.workspace now that a fork reuses the source run's
 		// paths; the call is idempotent and kept so the invariant does not depend on that.
 		fs.writeFileSync(FORK_SESSION_FILE, rewriteSessionHeader(entries, { cwd: WS.workspace }).map((e) => JSON.stringify(e)).join("\n") + "\n");
+		// The recorded system prompt, verbatim — memory brief and roster section included, so
+		// the forked inference sees the same prefix the recorded one did. This deliberately
+		// overrides the fresh prompt assembled above, including a fresh memory seed.
+		prompts.orchestrator = fs.readFileSync(path.join(FORK_SRC, "prompts", "orchestrator.md"), "utf8");
+		log({ type: "fork", msg: `session truncated at entry ${FORK_CUT} of ${FORK.run}; ${FORK_SOURCE_WORKERS.length} source worker(s) restored${FORK_SOURCE_WORKERS.length ? ` (${FORK_SOURCE_WORKERS.map((w) => `${w.wid} ${w.type ?? "?"}${w.liveAtFork ? " live-at-fork" : ""}`).join(", ")})` : ""}, ${restoredReports} report(s) replayed, ${dropped} post-fork transcript(s) dropped; recorded system prompt restored` });
 	} catch (err) {
 		forkAbort(err?.message ?? String(err));
 	}
-	// The recorded system prompt, verbatim — memory brief and roster section included, so
-	// the forked inference sees the same prefix the recorded one did. This deliberately
-	// overrides the fresh prompt assembled above, including a fresh memory seed.
-	prompts.orchestrator = fs.readFileSync(path.join(FORK_SRC, "prompts", "orchestrator.md"), "utf8");
-	log({ type: "fork", msg: `session truncated at entry ${FORK_CUT} of ${FORK.run}; ${FORK_SOURCE_WORKERS.length} source worker(s) restored${FORK_SOURCE_WORKERS.length ? ` (${FORK_SOURCE_WORKERS.map((w) => `${w.wid} ${w.type ?? "?"}${w.liveAtFork ? " live-at-fork" : ""}`).join(", ")})` : ""}, ${restoredReports} report(s) replayed, ${dropped} post-fork transcript(s) dropped; recorded system prompt restored` });
 }
 for (const role of Object.keys(AGENTS)) launch(role);
 for (const name of Object.keys(state)) send(name, { id: "hello", type: "get_state" });

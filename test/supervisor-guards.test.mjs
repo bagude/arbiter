@@ -4,13 +4,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// supervisor.mjs's source, with line endings normalised. The repo is committed LF but
+// core.autocrlf checks it out CRLF on Windows, so every multi-line assertion below would
+// otherwise pass or fail depending on which machine ran it.
+function supervisorSource() {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	return fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8").replace(/\r\n/g, "\n");
+}
+
 // pi's extension runner returns the FIRST blocking tool_call result, so a guard
 // that denies `subagent` must precede pre-spawn-compact in supervisor.mjs's GUARDS
 // list or its reason never reaches the model. Read the source rather than import
 // supervisor.mjs (importing it starts a run).
 test("GUARDS lists topology.ts immediately before pre-spawn-compact.ts", () => {
-	const here = path.dirname(fileURLToPath(import.meta.url));
-	const src = fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8");
+	const src = supervisorSource();
 	const names = [...src.matchAll(/path\.join\(here, "ext", (?:"guards", )?"([^"]+)"\)/g)].map((m) => m[1]);
 	const t = names.indexOf("topology.ts");
 	assert.ok(t >= 0, `topology.ts missing from GUARDS: ${names.join(", ")}`);
@@ -20,8 +27,7 @@ test("GUARDS lists topology.ts immediately before pre-spawn-compact.ts", () => {
 // pi's extension runner returns the FIRST blocking tool_call result, so the fork's
 // forcing must be seen before the topology nudge on the same spawn.
 test("GUARDS lists fork-force.ts immediately before topology.ts", () => {
-	const here = path.dirname(fileURLToPath(import.meta.url));
-	const src = fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8");
+	const src = supervisorSource();
 	const names = [...src.matchAll(/path\.join\(here, "ext", (?:"guards", )?"([^"]+)"\)/g)].map((m) => m[1]);
 	const f = names.indexOf("fork-force.ts");
 	assert.ok(f >= 0, `fork-force.ts missing from GUARDS: ${names.join(", ")}`);
@@ -34,8 +40,7 @@ test("GUARDS lists fork-force.ts immediately before topology.ts", () => {
 // the fork spec is read, the orchestrator is resumed from a session FILE, the
 // lifecycle records the continue, and the kickoff is skipped when forking.
 test("supervisor carries fork mode: forkSpec, --session, fork:continue, guarded kickoff", () => {
-	const here = path.dirname(fileURLToPath(import.meta.url));
-	const src = fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8");
+	const src = supervisorSource();
 	assert.match(src, /import \{[^}]*\bforkSpec\b[^}]*\} from "\.\/lib\/fork\.mjs"/, "supervisor must import forkSpec from ./lib/fork.mjs");
 	// The quotes matter: bare --session also matches the existing "--session-dir".
 	assert.ok(src.includes('"--session"'), 'supervisor must pass "--session" (the truncated file) to the forked orchestrator');
@@ -55,8 +60,7 @@ test("supervisor carries fork mode: forkSpec, --session, fork:continue, guarded 
 // counters and the recorded prompt must actually be restored, and the summary must record
 // what was forked.
 test("supervisor's fork mode preflights, re-seeds and records what it forked", () => {
-	const here = path.dirname(fileURLToPath(import.meta.url));
-	const src = fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8");
+	const src = supervisorSource();
 	for (const [needle, why] of [
 		["process.exit(2)", "a rejected fork spec must exit(2), not throw or start a run"],
 		["forkCounters(", "the harness counters must be re-seeded from the recorded decision points"],
@@ -66,7 +70,32 @@ test("supervisor's fork mode preflights, re-seeds and records what it forked", (
 	]) {
 		assert.ok(src.includes(needle), `${why} (missing: ${needle})`);
 	}
+	// The counter re-seed runs at module scope AFTER the workspace copy has created
+	// runs/.ws-<src>, and forkCounters throws on a `call` past the end of the source run —
+	// the likeliest fork error there is. Unguarded, the process died on an uncaught
+	// exception, the directory survived, and the collision preflight then refused every
+	// retry. So the call must sit in a try whose catch reaches forkAbort, which releases
+	// both directories. Sliced to that block: a try elsewhere in the file cannot satisfy it.
+	const seed = forkBlockAfter(src, "// Fork counter re-seed.");
+	const call = seed.indexOf("forkCounters(");
+	assert.ok(call >= 0, `the counter re-seed block must call forkCounters; found:\n${seed}`);
+	const tryAt = seed.indexOf("try {");
+	assert.ok(tryAt >= 0 && tryAt < call, `forkCounters must run inside a try; found:\n${seed}`);
+	assert.ok(seed.indexOf("forkAbort(", call) > call, `the counter re-seed's catch must reach forkAbort so an abort releases both directories; found:\n${seed}`);
 });
+
+// The body of the next top-level `if (FORK) {` block below `marker`, so an assertion about
+// fork mode cannot be satisfied by a string that merely appears somewhere else in the file.
+function forkBlockAfter(src, marker) {
+	const at = src.indexOf(marker);
+	assert.ok(at >= 0, `could not locate ${marker} in supervisor.mjs`);
+	const open = src.indexOf("\nif (FORK) {\n", at);
+	assert.ok(open >= 0, `no fork block below ${marker} in supervisor.mjs`);
+	const body = src.slice(open + 1);
+	const close = body.indexOf("\n}\n"); // the block's own closing brace, at column 0
+	assert.ok(close >= 0, `unterminated fork block below ${marker} in supervisor.mjs`);
+	return body.slice(0, close);
+}
 
 // Three of the planned forks resume a source worker, and pi-subagents resumes by session
 // id, appending to the transcript the session copy brought in. So the source run's workers
@@ -75,8 +104,7 @@ test("supervisor's fork mode preflights, re-seeds and records what it forked", (
 // returns early on a path tracker.bound already holds — so if the pre-bind went missing the
 // fork's own first spawn would silently adopt an inherited transcript.
 test("supervisor's fork mode restores the source run's workers", () => {
-	const here = path.dirname(fileURLToPath(import.meta.url));
-	const src = fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8");
+	const src = supervisorSource();
 	// Everything below must be in the fork block, not merely somewhere in the file.
 	const start = src.indexOf("\nif (FORK) {\n\t// Sessions:");
 	assert.ok(start >= 0, "could not locate the fork block in supervisor.mjs");
@@ -95,9 +123,24 @@ test("supervisor's fork mode restores the source run's workers", () => {
 		['ev: "worker:report"', "recorded reports must be replayed through the live lifecycle path so unreportedWorkers sees them"],
 		["readJsonl(reportsFile).filter((r) => r.ts <= FORK_REQ.ts)", "only reports filed at or before the fork instant may be replayed"],
 		["liveAtFork", "each restored worker must record whether it was still running at the fork instant"],
+		// manifestJoin's `resuming` case sets status "running" without clearing the endedTs an
+		// earlier terminal record left, so endedTs alone calls a worker mid-resume finished.
+		['const liveAtFork = row.endedTs == null || row.status === "running"', "a worker mid-resume at the fork instant must count as live, not finished"],
+		// The source run kept appending to an inherited transcript after the fork instant, and
+		// pi-subagents resumes a worker by appending to that same file — so an untruncated one
+		// resumes from the source run's FINAL state rather than its state at the instant.
+		["truncateEntriesAt(readSessionFile(p), FORK_REQ.ts)", "each inherited transcript must be cut at the fork instant"],
 	]) {
 		assert.ok(fork.includes(needle), `${why} (missing from the fork block: ${needle})`);
 	}
+	assert.match(src, /import \{[^}]*\btruncateEntriesAt\b[^}]*\} from "\.\/lib\/fork\.mjs"/, "truncateEntriesAt must come from ./lib/fork.mjs, where it is unit-tested");
+	// Order is load-bearing: the tail offset must be the TRUNCATED size, so the cut has to
+	// happen before the tailer is positioned or everything after the instant is skipped
+	// rather than dropped.
+	assert.ok(
+		fork.indexOf("truncateEntriesAt(readSessionFile(p), FORK_REQ.ts)") < fork.indexOf("tail.offset = fs.statSync(p).size"),
+		"an inherited transcript must be truncated at the fork instant BEFORE its tail offset is taken",
+	);
 	const summaryLine = src.split("\n").find((l) => l.includes("summary.fork ="));
 	assert.ok(summaryLine, "summary.fork assignment missing");
 	assert.ok(summaryLine.includes("sourceWorkers:"), `summary.fork must carry sourceWorkers; found:\n${summaryLine}`);
