@@ -109,6 +109,31 @@ test("v2 bash: POSIX-absolute fragments are denied only when they exist on disk;
 	assert.equal(decide("bash", { command: "cat ~/.pi/agent/auth.json" }).ok, false);
 });
 
+// Case 5 of docs/batch/harness-text-audit-2026-09-17.md: a path-string task writes
+// "..", "/" and "/c/d" as data, and judging them as filesystem targets denied the
+// tester's independent re-derivation of relative() twice, killing the one mechanical
+// check that would have caught the bug. String literals inside an -e body are data.
+test("v3 bash: a node -e script body is data, whatever path strings it contains", () => {
+	// The tester's denied command shape: semicolons inside the body (the segment splitter
+	// is not quote-aware, so the body has to be blanked before the split), "..", "/" and
+	// an msys-looking "/c/d", all as string literals.
+	const tester = `node -e "const segs = (s) => s.split('/').filter((x) => x && x !== '.'); console.log(segs('..'), segs('/c/d'), rel('..', '/c/d'))" --timeout 20`;
+	assert.equal(decide("bash", { command: tester }).ok, true);
+	assert.equal(decide("bash", { command: `node --input-type=module -e 'console.log(relative(".", "a"), relative("/c/d", "/c"))'` }).ok, true);
+	assert.equal(decide("bash", { command: `node -p "isAbsolute('/'); dirname('../a')"` }).ok, true);
+	// Documented consequence: a body that really does read is not stopped here either.
+	// The bash guard never parsed JavaScript, and it could not have caught the same read
+	// assembled at runtime. What a spawned process reads is the sandbox's problem.
+	assert.equal(decide("bash", { command: `node -e "console.log(readFileSync('../x', 'utf8'))"` }).ok, true);
+	// Everything outside the body is judged exactly as before.
+	assert.equal(decide("bash", { command: "cat ../secret" }).ok, false);
+	assert.equal(decide("bash", { command: `node -e "segs('..')" && cat ../../tasks/glob/oracle/glob.test.mjs` }).ok, false);
+	assert.equal(decide("bash", { command: `cd ..; node -e "segs('..')"` }).ok, false);
+	assert.equal(decide("bash", { command: `node -e "segs('..')" > /c/Users/me/out.txt` }).ok, false);
+	// Not an -e body: -e belonging to another command is left alone.
+	assert.equal(decide("bash", { command: `grep -e "../../tasks" src/*.mjs` }).ok, false);
+});
+
 test("v2 bash: the protected .pi directory — case-insensitive, and globs that can name it", () => {
 	assert.equal(decide("bash", { command: "cat .PI/agents/worker.md" }).ok, false, "R1");
 	assert.equal(decide("bash", { command: "ls .pi*" }).ok, false, "R7");
