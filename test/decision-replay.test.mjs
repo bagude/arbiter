@@ -1,0 +1,74 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { headRequest, distributionFrom, scorePoint, summarize } from "../tools/decision-replay.mjs";
+
+const VALID_EARLY = { spawn: true, resume: false, collect: false, probe: false, done: false, inspect: true, memory: true, checkpoint: true, answer: true };
+
+test("headRequest keeps the captured state, disables thinking, asks one token, lists only valid actions with their fixed letters", () => {
+	const payload = { model: "qwen3-27b", stream: true, max_tokens: 100000, messages: [{ role: "system", content: "S" }, { role: "user", content: "U" }], tools: [{ type: "function", function: { name: "read" } }], chat_template_kwargs: { enable_thinking: true } };
+	const req = headRequest(payload, VALID_EARLY);
+	assert.equal(req.stream, false);
+	assert.equal(req.max_tokens, 1);
+	assert.equal(req.temperature, 0);
+	assert.equal(req.logprobs, true);
+	assert.deepEqual(req.chat_template_kwargs, { enable_thinking: false });
+	assert.deepEqual(req.tools, payload.tools);
+	assert.equal(req.messages.length, 3);
+	assert.deepEqual(req.messages.slice(0, 2), payload.messages, "the captured messages are untouched");
+	const q = req.messages[2];
+	assert.equal(q.role, "user");
+	assert.match(q.content, /^\[ROUTER\]/);
+	assert.match(q.content, /\nA\. spawn/);
+	assert.doesNotMatch(q.content, /\nB\. resume/, "resume is not valid at this point, so it is not offered");
+	assert.match(q.content, /\nF\. inspect/);
+	assert.match(q.content, /\nI\. answer/);
+});
+
+test("distributionFrom reads the nine letters out of top_logprobs and pools everything else", () => {
+	const choice = { message: { content: "D" }, logprobs: { content: [{ token: "D", logprob: Math.log(0.5), top_logprobs: [
+		{ token: "D", logprob: Math.log(0.5) }, { token: "A", logprob: Math.log(0.3) }, { token: " F", logprob: Math.log(0.1) }, { token: "<tool_call>", logprob: Math.log(0.05) }, { token: "The", logprob: Math.log(0.05) },
+	] }] } };
+	const d = distributionFrom(choice);
+	assert.equal(d.sampled, "D");
+	assert.ok(Math.abs(d.raw.D - 0.5) < 1e-9 && Math.abs(d.raw.A - 0.3) < 1e-9 && Math.abs(d.raw.F - 0.1) < 1e-9, "a leading space on a letter token is tolerated");
+	assert.equal(d.raw.B, 0);
+	assert.ok(Math.abs(d.other - 0.1) < 1e-9);
+});
+
+test("scorePoint renormalises over the valid set, agrees when the top valid letter is the chosen action, and reports log loss and entropy", () => {
+	const point = { action: { cls: "spawn", symbol: "A" }, valid: VALID_EARLY };
+	const raw = { A: 0.4, B: 0.3, C: 0, D: 0, E: 0, F: 0.1, G: 0.05, H: 0.05, I: 0 };
+	const s = scorePoint(point, { raw, other: 0.1 });
+	// B is not valid, so the valid mass is A+F+G+H+I = 0.6 and A renormalises to 0.667
+	assert.equal(s.pick, "A");
+	assert.equal(s.pickClass, "spawn");
+	assert.ok(Math.abs(s.confidence - 0.4 / 0.6) < 1e-9);
+	assert.equal(s.agree, true);
+	assert.equal(s.agreeTop2, true);
+	assert.deepEqual(s.top2, ["A", "F"]);
+	assert.ok(Math.abs(s.logLoss + Math.log(0.4 / 0.6)) < 1e-9);
+	assert.ok(s.entropy > 0 && s.entropy < Math.log(5));
+	assert.ok(Math.abs(s.validMass - 0.6) < 1e-9);
+	const disagree = scorePoint({ action: { cls: "inspect", symbol: "F" }, valid: VALID_EARLY }, { raw, other: 0.1 });
+	assert.equal(disagree.agree, false);
+	assert.equal(disagree.agreeTop2, true);
+	const invalidChoice = scorePoint({ action: { cls: "resume", symbol: "B" }, valid: VALID_EARLY }, { raw, other: 0.1 });
+	assert.equal(invalidChoice.chosenValid, false, "the orchestrator did something the mask calls invalid: recorded, scored as p=0");
+	assert.equal(invalidChoice.pChosen, 0);
+});
+
+test("summarize builds the threshold curve with coverage, agreement, and the generative cost avoided", () => {
+	const mk = (cls, symbol, conf, pick, decoded, inferenceMs) => ({ run: "r", i: 0, action: { cls, symbol }, decoded, inferenceMs, outcome: { runOk: true }, head: { agree: pick === symbol, agreeTop2: true, confidence: conf, pickClass: pick === "A" ? "spawn" : "probe", pChosen: pick === symbol ? conf : 1 - conf, logLoss: -Math.log(pick === symbol ? conf : 1 - conf), wallMs: 100 } });
+	const rows = [mk("spawn", "A", 0.97, "A", 1000, 10000), mk("probe", "D", 0.96, "A", 3000, 30000), mk("inspect", "F", 0.6, "A", 500, 5000)];
+	const s = summarize(rows);
+	assert.equal(s.n, 3);
+	assert.ok(Math.abs(s.agreement - 1 / 3) < 1e-9);
+	const at95 = s.curve.find((c) => c.tau === 0.95);
+	assert.ok(Math.abs(at95.coverage - 2 / 3) < 1e-9);
+	assert.equal(at95.agreement, 0.5);
+	assert.ok(Math.abs(at95.decodedAvoided - 4000 / 4500) < 1e-9);
+	assert.equal(at95.inferAvoidedS, 40);
+	assert.equal(at95.falseConfident.length, 1);
+	assert.equal(at95.falseConfident[0].actual, "probe");
+	assert.equal(s.byClass.probe.agreement, 0);
+});
