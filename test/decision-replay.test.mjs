@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { headRequest, distributionFrom, scorePoint, summarize } from "../tools/decision-replay.mjs";
+import { headRequest, distributionFrom, scorePoint, summarize, matrix } from "../tools/decision-replay.mjs";
 
 const VALID_EARLY = { spawn: true, resume: false, collect: false, probe: false, done: false, inspect: true, memory: true, checkpoint: true, answer: true };
 
@@ -99,4 +99,38 @@ test("scorePoint scores the substantive horizon and the gather-vs-act binary alo
 	assert.ok(Math.abs(s.pAct - 0.7) < 1e-9);
 	assert.equal(s.modePick, "act");
 	assert.equal(s.agreeMode, false);
+	// a probe is gather for the binary: P(act) excludes it
+	const later = { spawn: true, resume: true, collect: false, probe: true, done: true, inspect: true, memory: true, checkpoint: true, answer: true };
+	const p2 = scorePoint({ action: { cls: "probe", symbol: "D", mode: "gather" }, substantive: { cls: "probe", symbol: "D", gatherSteps: 0 }, valid: later }, { raw: { A: 0.1, B: 0.1, C: 0, D: 0.6, E: 0.1, F: 0.1, G: 0, H: 0, I: 0 }, other: 0 });
+	assert.ok(Math.abs(p2.pAct - 0.3) < 1e-9);
+	assert.equal(p2.modePick, "gather");
+	assert.equal(p2.agreeMode, true);
+	assert.equal(p2.agreeSubstantive, true);
+});
+
+test("matrix reads both replay files per run and reports three horizons × two modes with the reasoning cost", async () => {
+	const fs = await import("node:fs");
+	const os = await import("node:os");
+	const path = await import("node:path");
+	const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..");
+	const id = `_matrix-test-${process.pid}`;
+	const dir = path.join(root, "runs", id);
+	fs.mkdirSync(dir, { recursive: true });
+	const row = (i, head) => JSON.stringify({ run: id, i, action: { cls: "inspect", symbol: "F", mode: "gather" }, head: { agree: false, agreeSubstantive: true, agreeMode: false, modePick: "act", confidence: 0.6, wallMs: 100, thinkTokens: 0, ...head } });
+	try {
+		fs.writeFileSync(path.join(dir, "decisions-replay.jsonl"), [row(0, {}), row(1, { agree: true, agreeMode: true, modePick: "gather" })].join("\n") + "\n");
+		fs.writeFileSync(path.join(dir, "decisions-replay-thinking.jsonl"), [row(0, { agreeMode: true, modePick: "gather", confidence: 0.95, thinkTokens: 300, wallMs: 4000 }), row(1, { agree: true, agreeMode: true, modePick: "gather", thinkTokens: 100, wallMs: 2000 })].join("\n") + "\n");
+		const m = matrix([id]);
+		assert.deepEqual(m.n, { A: 2, B: 2 });
+		assert.equal(m.cells["literal next action"].A, 0.5);
+		assert.equal(m.cells["next substantive action"].B, 1);
+		assert.equal(m.cells["gather vs act"].A, 0.5);
+		assert.equal(m.cells["gather vs act"].B, 1);
+		assert.equal(m.thinkTokensPerPoint, 200);
+		assert.equal(m.paired, 2);
+		assert.equal(m.modeFlipped, 1);
+		assert.equal(m.flippedToCorrect, 1);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
 });

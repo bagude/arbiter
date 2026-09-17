@@ -28,7 +28,12 @@ export const SYMBOLS = Object.fromEntries(ACTION_CLASSES.map((c, i) => [c, Strin
 // resume, collect, probe or done. A head that says "spawn" where the orchestrator
 // read two files first may be right about the trajectory and wrong about the horizon.
 export const SUBSTANTIVE = new Set(["spawn", "resume", "collect", "probe", "done"]);
-export const modeOf = (cls) => (SUBSTANTIVE.has(cls) ? "act" : "gather");
+// The binary epistemic decision: "do I know enough to commit?" Committing actions
+// change what the run will do next; everything else, including a probe (asking the
+// supervisor for evidence), is uncertainty reduction. P(gather) = Σ over the gather
+// set of the same nine-way distribution — no second classifier.
+export const ACT = new Set(["spawn", "resume", "collect", "done"]);
+export const modeOf = (cls) => (ACT.has(cls) ? "act" : "gather");
 
 /** For each point, the next substantive action at or after it, and how many gather steps precede it. */
 export function substantiveHorizon(classes) {

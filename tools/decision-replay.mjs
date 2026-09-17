@@ -22,7 +22,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ACTION_CLASSES, SYMBOLS, SUBSTANTIVE, modeOf } from "./decision-points.mjs";
+import { ACTION_CLASSES, SYMBOLS, ACT, modeOf } from "./decision-points.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(here, "..");
@@ -95,7 +95,7 @@ export function scorePoint(point, dist) {
 	const entropy = -validLetters.reduce((s, l) => (pValid[l] > 0 ? s + pValid[l] * Math.log(pValid[l]) : s), 0);
 	// the two coarser horizons: next substantive action, and gather-vs-act as a binary
 	const substantive = point.substantive?.symbol ?? null;
-	const pAct = validLetters.filter((l) => SUBSTANTIVE.has(BY_LETTER[l])).reduce((s, l) => s + pValid[l], 0);
+	const pAct = validLetters.filter((l) => ACT.has(BY_LETTER[l])).reduce((s, l) => s + pValid[l], 0);
 	const modePick = pAct >= 0.5 ? "act" : "gather";
 	return {
 		pick: ranked[0], pickClass: BY_LETTER[ranked[0]], confidence: pValid[ranked[0]],
@@ -170,6 +170,38 @@ export function summarize(rows) {
 	return { n, agreement: agree / Math.max(1, n), top2: top2 / Math.max(1, n), agreementSubstantive: agreeSub / Math.max(1, n), agreementMode: agreeMode / Math.max(1, n), gatherPoints: gatherPts.length, gatherHeadSaysAct, thinkTokens, meanLogLoss: logLoss, meanHeadMs: scored.reduce((s, r) => s + r.head.wallMs, 0) / Math.max(1, n), totalDecoded, totalInferS: Math.round(totalInfer / 1000), buckets, curve, byClass };
 }
 
+/** Three horizons × the modes present: the matrix. Rows read from replay files already on disk. */
+export function matrix(runIds) {
+	const load = (id, f) => { const p = path.join(ROOT, "runs", id, f); return fs.existsSync(p) ? fs.readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.head) : []; };
+	const modes = { A: runIds.flatMap((id) => load(id, "decisions-replay.jsonl")), B: runIds.flatMap((id) => load(id, "decisions-replay-thinking.jsonl")) };
+	const cell = (rows, f) => (rows.length ? rows.filter(f).length / rows.length : null);
+	const rows = [
+		["literal next action", (r) => r.head.agree],
+		["next substantive action", (r) => r.head.agreeSubstantive],
+		["gather vs act", (r) => r.head.agreeMode],
+	];
+	const out = { n: { A: modes.A.length, B: modes.B.length }, cells: {}, thinkTokensPerPoint: modes.B.length ? modes.B.reduce((s, r) => s + (r.head.thinkTokens ?? 0), 0) / modes.B.length : null, msPerPoint: { A: modes.A.length ? modes.A.reduce((s, r) => s + r.head.wallMs, 0) / modes.A.length : null, B: modes.B.length ? modes.B.reduce((s, r) => s + r.head.wallMs, 0) / modes.B.length : null } };
+	for (const [name, f] of rows) out.cells[name] = { A: cell(modes.A, f), B: cell(modes.B, f) };
+	// where did reasoning move the binary? points whose gather-vs-act pick differs between modes
+	if (modes.A.length && modes.B.length) {
+		const byKey = new Map(modes.A.map((r) => [`${r.run}:${r.i}`, r]));
+		const paired = modes.B.map((b) => [byKey.get(`${b.run}:${b.i}`), b]).filter(([a]) => a);
+		out.paired = paired.length;
+		out.modeFlipped = paired.filter(([a, b]) => a.head.modePick !== b.head.modePick).length;
+		out.flippedToCorrect = paired.filter(([a, b]) => a.head.modePick !== b.head.modePick && b.head.agreeMode).length;
+		out.meanConfidence = { A: paired.reduce((s, [a]) => s + a.head.confidence, 0) / paired.length, B: paired.reduce((s, [, b]) => s + b.head.confidence, 0) / paired.length };
+	}
+	return out;
+}
+
+function printMatrix(m) {
+	const pct = (x) => (x == null ? "    —" : (x * 100).toFixed(0).padStart(4) + "%");
+	console.log(`\nagreement matrix · A: P(action | state), n=${m.n.A} · B: P(action | state, reasoning), n=${m.n.B}${m.thinkTokensPerPoint != null ? ` · B thought ${Math.round(m.thinkTokensPerPoint)} tokens/point` : ""} · ${Math.round(m.msPerPoint.A ?? 0)} ms vs ${Math.round(m.msPerPoint.B ?? 0)} ms per point`);
+	console.log("horizon                    A       B");
+	for (const [name, c] of Object.entries(m.cells)) console.log(`${name.padEnd(24)} ${pct(c.A)}   ${pct(c.B)}`);
+	if (m.paired) console.log(`paired points ${m.paired}: reasoning flipped gather-vs-act on ${m.modeFlipped} (${m.flippedToCorrect} to the orchestrator's choice) · mean confidence A ${m.meanConfidence.A.toFixed(2)} → B ${m.meanConfidence.B.toFixed(2)}`);
+}
+
 function printSummary(s) {
 	console.log(`\n${s.n} decision points · literal agreement ${(s.agreement * 100).toFixed(1)}% · top-2 ${(s.top2 * 100).toFixed(1)}% · next-substantive agreement ${(s.agreementSubstantive * 100).toFixed(1)}% · gather-vs-act agreement ${(s.agreementMode * 100).toFixed(1)}% (${s.gatherHeadSaysAct} of ${s.gatherPoints} gather points: head says act) · mean log loss ${s.meanLogLoss.toFixed(3)} · head ${Math.round(s.meanHeadMs)} ms/point${s.thinkTokens ? ` · head thought ${s.thinkTokens} tokens` : ""} · generative path: ${s.totalDecoded} decoded tokens, ${s.totalInferS} s inference`);
 	console.log("by actual class:", Object.entries(s.byClass).map(([k, v]) => `${k} n=${v.n} agree=${(v.agreement * 100).toFixed(0)}% p̄=${v.meanP.toFixed(2)}`).join("  "));
@@ -187,7 +219,8 @@ async function main() {
 	const thinking = args.includes("--thinking");
 	const key = fs.existsSync(keyFile) ? fs.readFileSync(keyFile, "utf8").trim() : "";
 	const ids = args.filter((a, i) => !a.startsWith("--") && !["--server", "--key", "--limit"].includes(args[i - 1]));
-	if (!ids.length) { console.error("usage: node tools/decision-replay.mjs <runId> [...] [--server url] [--key file] [--limit N] [--thinking]"); process.exit(1); }
+	if (!ids.length) { console.error("usage: node tools/decision-replay.mjs <runId> [...] [--server url] [--key file] [--limit N] [--thinking] [--matrix]"); process.exit(1); }
+	if (args.includes("--matrix")) { printMatrix(matrix(ids)); return; }
 	const all = [];
 	for (const id of ids) all.push(...(await replayRun(id, { server, key, limit, thinking, log: console.log })));
 	printSummary(summarize(all));

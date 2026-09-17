@@ -64,5 +64,6 @@ test("substantiveHorizon skips gather steps to the next state-changing action an
 	const h = substantiveHorizon(["inspect", "memory", "spawn", "inspect", "probe", "answer"]);
 	assert.deepEqual(h.map((x) => [x.cls, x.gatherSteps]), [["spawn", 2], ["spawn", 1], ["spawn", 0], ["probe", 1], ["probe", 0], [null, null]]);
 	assert.equal(modeOf("inspect"), "gather");
-	assert.equal(modeOf("probe"), "act");
+	assert.equal(modeOf("probe"), "gather", "a probe asks for evidence: uncertainty reduction, not commitment");
+	assert.equal(modeOf("spawn"), "act");
 });
