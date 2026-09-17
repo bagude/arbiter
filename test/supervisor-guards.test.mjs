@@ -40,9 +40,36 @@ test("supervisor carries fork mode: forkSpec, --session, fork:continue, guarded 
 	// The quotes matter: bare --session also matches the existing "--session-dir".
 	assert.ok(src.includes('"--session"'), 'supervisor must pass "--session" (the truncated file) to the forked orchestrator');
 	assert.ok(src.includes('ev: "fork:continue"'), "supervisor must append a fork:continue lifecycle event");
+	// The kickoff must be the `else` arm of the fork branch, and there must be only one
+	// of it — an unguarded second copy would deliver a prompt into the restored prefix.
 	const lines = src.split("\n");
-	const k = lines.findIndex((l) => l.includes("M.kickoff.orchestrator()"));
-	assert.ok(k >= 0, "M.kickoff.orchestrator() missing from supervisor.mjs");
-	const window = lines.slice(Math.max(0, k - 3), k + 4).join("\n");
-	assert.ok(window.includes("FORK"), `the orchestrator kickoff must sit in a branch guarded by FORK; found:\n${window}`);
+	const hits = lines.map((l, i) => [l, i]).filter(([l]) => l.includes("M.kickoff.orchestrator()"));
+	assert.equal(hits.length, 1, `M.kickoff.orchestrator() must appear exactly once, found ${hits.length}`);
+	const [line, k] = hits[0];
+	const guarded = /(^|\s)else(\s|$)/.test(line.slice(0, line.indexOf("M.kickoff.orchestrator()"))) || /(^|\s)else(\s|\{|$)/.test(lines[k - 1] ?? "");
+	assert.ok(guarded, `the orchestrator kickoff must be the else arm of the FORK branch; found:\n${lines[k - 1]}\n${line}`);
+});
+
+// The fork's failure modes are the part a live run is least likely to exercise and most
+// likely to be silently broken by: a bad spec must exit rather than start a half-run, the
+// counters and the recorded prompt must actually be restored, the summary must record
+// what was forked, and the source run's worker transcripts must never be tailed.
+test("supervisor's fork mode preflights, re-seeds, records and skips stale transcripts", () => {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const src = fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8");
+	for (const [needle, why] of [
+		["process.exit(2)", "a rejected fork spec must exit(2), not throw or start a run"],
+		["forkCounters(", "the harness counters must be re-seeded from the recorded decision points"],
+		["prompts.orchestrator = fs.readFileSync", "the recorded system prompt must be restored verbatim"],
+		["summary.fork =", "summary.json must record what this run was forked from"],
+		["FORK_REQ.snapshot", "the workspace snapshot must be preflighted and restored"],
+		// Bound FIFO with no matching: a stale transcript would attach to this run's first
+		// spawn and replay a dead run's tool calls into the totals and the caps.
+		["FORK_STALE_TRANSCRIPTS", "the source run's worker transcripts must be skipped, never tailed or bound"],
+	]) {
+		assert.ok(src.includes(needle), `${why} (missing: ${needle})`);
+	}
+	// The skip must be in the transcript pump itself, not merely collected somewhere.
+	const pump = src.slice(src.indexOf("function pumpChildTranscripts()"));
+	assert.ok(pump.slice(0, pump.indexOf("\n}\n")).includes("FORK_STALE_TRANSCRIPTS.has("), "pumpChildTranscripts must skip the stale transcript paths");
 });

@@ -69,6 +69,45 @@ const VERIFIER = PDEF.verifier;
 // test/messages.test.mjs, dyad and solo to their exact historical literals.
 const M = messages(PATTERN);
 
+// ---------- fork mode ----------
+// Fork mode (docs/superpowers/specs/2026-09-17-fork-runner-design.md): restart a recorded
+// run at orchestrator inference `call` with its workspace snapshot, its session truncated
+// there, its counters re-seeded, and `continue` instead of the kickoff. Entirely
+// env-driven — with ARBITER_FORK unset every path below is the ordinary one.
+//
+// The whole preflight sits ABOVE the run directory so a rejected fork leaves no empty
+// runs/<id>/ behind; it needs only `here`, PATTERN and the environment.
+const FORK = forkSpec(process.env);
+const FORK_SRC = FORK ? path.join(here, "runs", FORK.run) : null;
+// Assigned by the fork blocks further down, declared here: the counter re-seed runs at
+// module level well before the session copy in the go section, so a `let` down there
+// would be a temporal-dead-zone ReferenceError.
+let FORK_SESSION_FILE = null;
+let FORK_CUT = null;
+let FORK_COUNTERS = null;
+let FORK_REQ = null;
+// The source run's worker transcripts, copied in with its session tree. pumpChildTranscripts
+// must never tail or bind these — see the comment at the skip, and the fork block that
+// fills this set.
+const FORK_STALE_TRANSCRIPTS = new Set();
+if (FORK) {
+	if (PATTERN !== "orchestrator") { console.error("fork: only orchestrator runs can be forked"); process.exit(2); }
+	for (const p of [path.join(FORK_SRC, "requests", `${String(FORK.call).padStart(4, "0")}.json`), path.join(FORK_SRC, "sessions", "orchestrator"), path.join(FORK_SRC, "decisions.jsonl"), path.join(FORK_SRC, "prompts", "orchestrator.md")]) {
+		if (!fs.existsSync(p)) { console.error(`fork: missing ${p}`); process.exit(2); }
+	}
+	// A fork reuses the SOURCE run's out-of-tree paths (see WSROOT/SESSIONS below), so
+	// only one run may hold them at a time. finish() removes both after archiving, which
+	// is what lets the runner start the next replicate.
+	for (const p of [path.join(here, "runs", `.ws-${FORK.run}`), path.join(here, "runs", `.sessions-${FORK.run}`)]) {
+		if (fs.existsSync(p)) { console.error(`fork: ${p} already exists — a live run or another fork holds it; replicates must be serialised`); process.exit(2); }
+	}
+	FORK_REQ = JSON.parse(fs.readFileSync(path.join(FORK_SRC, "requests", `${String(FORK.call).padStart(4, "0")}.json`), "utf8"));
+	// ext/replay-capture.ts writes snapshot: null when it could not read the agent's cwd,
+	// and every run recorded before the snapshot feature has no snapshot field at all.
+	// Neither can be forked; say so here rather than throwing a bare TypeError on cpSync.
+	if (!FORK_REQ.snapshot) { console.error(`fork: ${FORK_SRC}/requests/${String(FORK.call).padStart(4, "0")}.json has no workspace snapshot`); process.exit(2); }
+}
+
 // ---------- run directory ----------
 const runId = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const RUN = path.join(here, "runs", runId);
@@ -136,30 +175,6 @@ const TASK = path.join(here, "tasks", TASK_NAME);
 const TASK_CONTEXT_FILE = ["spec.md", "critic-context.md"].find((f) => fs.existsSync(path.join(TASK, f)));
 if (!TASK_CONTEXT_FILE) throw new Error(`no such task: ${TASK} (needs spec.md or critic-context.md)`);
 
-// Fork mode (docs/superpowers/specs/2026-09-17-fork-runner-design.md): restart a recorded
-// run at orchestrator inference `call` with its workspace snapshot, its session truncated
-// there, its counters re-seeded, and `continue` instead of the kickoff. Entirely
-// env-driven — with ARBITER_FORK unset every path below is the ordinary one.
-const FORK = forkSpec(process.env);
-const FORK_SRC = FORK ? path.join(here, "runs", FORK.run) : null;
-// Assigned by the fork blocks further down, declared here: the counter re-seed runs at
-// module level well before the session copy in the go section, so a `let` down there
-// would be a temporal-dead-zone ReferenceError.
-let FORK_SESSION_FILE = null;
-let FORK_CUT = null;
-let FORK_COUNTERS = null;
-let FORK_REQ = null;
-if (FORK) {
-	for (const p of [path.join(FORK_SRC, "requests", `${String(FORK.call).padStart(4, "0")}.json`), path.join(FORK_SRC, "sessions", "orchestrator"), path.join(FORK_SRC, "decisions.jsonl"), path.join(FORK_SRC, "prompts", "orchestrator.md")]) {
-		if (!fs.existsSync(p)) { console.error(`fork: missing ${p}`); process.exit(2); }
-	}
-	if (PATTERN !== "orchestrator") { console.error("fork: only orchestrator runs can be forked"); process.exit(2); }
-	FORK_REQ = JSON.parse(fs.readFileSync(path.join(FORK_SRC, "requests", `${String(FORK.call).padStart(4, "0")}.json`), "utf8"));
-	// ext/replay-capture.ts writes snapshot: null when it could not read the agent's cwd,
-	// and every run recorded before the snapshot feature has no snapshot field at all.
-	// Neither can be forked; say so here rather than throwing a bare TypeError on cpSync.
-	if (!FORK_REQ.snapshot) { console.error(`fork: ${FORK_SRC}/requests/${String(FORK.call).padStart(4, "0")}.json has no workspace snapshot`); process.exit(2); }
-}
 // The workspace lives OUTSIDE RUN, not under it. The writing agent's bash cwd is
 // WS.workspace; a single `cd ..` from a workspace nested directly in RUN reaches
 // bus.jsonl, probe-N/, oracle-N/ and audit.jsonl — confirmed as a real leak in a
@@ -179,8 +194,15 @@ if (FORK) {
 // finish() copies SESSIONS into RUN/sessions once every agent is dead, so the
 // archived run is unchanged for extract-runs.mjs and the console; it just is not
 // readable while agents are alive to read it.
-const WSROOT = path.join(here, "runs", `.ws-${runId}`);
-const SESSIONS = path.join(here, "runs", `.sessions-${runId}`);
+// A fork reuses the SOURCE run's directory names rather than its own runId. The restored
+// session's entry bodies are full of absolute paths the recorded agent saw (tool results
+// naming .ws-<source>/ws-builder/...), and rewriting them would destroy the byte-level
+// prefix fidelity the fork exists to reproduce — so the fork moves to the paths instead.
+// The preflight above refuses to start when either directory still exists, and finish()
+// removes both after archiving, so replicates simply have to be serialised.
+const PATHS_ID = FORK ? FORK.run : runId;
+const WSROOT = path.join(here, "runs", `.ws-${PATHS_ID}`);
+const SESSIONS = path.join(here, "runs", `.sessions-${PATHS_ID}`);
 const WS = { workspace: path.join(WSROOT, "ws-builder") };
 // A fork starts from the workspace as the model saw it at that inference (the
 // snapshot ext/replay-capture.ts copied beside the request, .pi/ excluded), not from
@@ -583,6 +605,15 @@ function handleEvent(name, ev) {
 			if (ev.id === "hello") s.ready = true;
 			if (typeof ev.id === "string" && ev.id.startsWith("compact-")) onCompactResponse(name, ev);
 			if (ev.success === false) log({ agent: name, type: "rpc_error", msg: `rpc error: ${ev.error ?? JSON.stringify(ev).slice(0, 200)}` });
+			// A fork whose `continue` was refused has no way forward: nothing was delivered, so
+			// the orchestrator sits settled and checkIdle would inject a nudge into the restored
+			// prefix — turning a failed fork into a run that looks like it started, with a
+			// corrupted first inference. End it instead, with the reason on the summary.
+			if (ev.id === "fork-continue" && ev.success === false) {
+				const why = ev.error ?? JSON.stringify(ev).slice(0, 200);
+				log({ type: "fork", msg: `continue rejected: ${why}` });
+				return finish(`FORK: continue rejected — ${why}`);
+			}
 			break;
 		case "agent_start":
 			s.busy = true;
@@ -948,6 +979,11 @@ function pumpChildTranscripts() {
 	if (!dir || !fs.existsSync(dir)) return;
 	for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"))) {
 		const p = path.join(dir, f);
+		// Fork: the source run's worker transcripts arrived with the copied session tree and
+		// are not this run's work. bindTranscript matches nothing — it hands the next file to
+		// the next unbound worker id — so tailing them would bind a dead run's transcript to
+		// this run's first spawn. Never tailed, never bound (the set is empty off fork).
+		if (FORK_STALE_TRANSCRIPTS.has(p)) continue;
 		// A file with no lifecycle worker waiting for it is left alone until there is one
 		// (see bindTranscript for why inventing an id was worse).
 		const wid = bindTranscript(tracker, state, p);
@@ -992,7 +1028,11 @@ if (FORK) {
 	mailCount = c.mailCount;
 	doneAttempts = c.doneAttempts;
 	probeCount = c.probeCount;
-	if (c.probeCount > 0) lastProbeHash = hashDir(path.join(WS.workspace, "src"));
+	// A task whose workspace has no src/ (a review or analysis task) would throw in
+	// hashDir's readdirSync; leave the hash null and say so rather than taking the run down.
+	const src = path.join(WS.workspace, "src");
+	if (c.probeCount > 0 && fs.existsSync(src)) lastProbeHash = hashDir(src);
+	else if (c.probeCount > 0) log({ type: "fork", msg: `no ${src}: lastProbeHash left null, the next probe will read as a change` });
 	FORK_COUNTERS = c;
 	log({ type: "fork", msg: `counters re-seeded: mail ${c.mailCount}, doneAttempts ${c.doneAttempts}, probes ${c.probeCount}${c.pendingProbe ? " (a probe was pending)" : ""}` });
 }
@@ -1629,14 +1669,34 @@ if (FORK) {
 	const own = fs.readdirSync(dstDir).filter((f) => f.endsWith(".jsonl")); // the orchestrator's file(s); workers live under <id>/tasks/
 	if (own.length !== 1) { console.error(`fork: expected one orchestrator session file, found ${own.length}`); process.exit(2); }
 	FORK_SESSION_FILE = path.join(dstDir, own[0]);
-	const { entries, cut } = truncateSessionEntries(readSessionFile(FORK_SESSION_FILE), FORK.call);
-	FORK_CUT = cut;
-	fs.writeFileSync(FORK_SESSION_FILE, rewriteSessionHeader(entries, { cwd: WS.workspace }).map((e) => JSON.stringify(e)).join("\n") + "\n");
+	// The copy brought the source run's worker transcripts with it, under <stem>/tasks/.
+	// bindTranscript pairs files to lifecycle worker ids FIFO with no matching at all
+	// (lib/workers.mjs), so left in place they would bind to THIS run's first spawns and
+	// replay a dead run's tool calls into toolCalls, totals(), checkCaps() and the
+	// transcript. Recorded here and skipped outright by pumpChildTranscripts — not
+	// pre-bound to sentinel ids, which would invent workers that never terminate.
+	const staleDir = childTranscriptDir(dstDir);
+	if (staleDir && fs.existsSync(staleDir)) {
+		for (const f of fs.readdirSync(staleDir).filter((f) => f.endsWith(".jsonl"))) FORK_STALE_TRANSCRIPTS.add(path.join(staleDir, f));
+	}
+	// truncateSessionEntries throws when the recorded session has fewer assistant entries
+	// than `call`, and rewriteSessionHeader when the file does not start with a header;
+	// both are a bad fork spec, not a crash worth a stack trace.
+	try {
+		const { entries, cut } = truncateSessionEntries(readSessionFile(FORK_SESSION_FILE), FORK.call);
+		FORK_CUT = cut;
+		// The header's cwd is already WS.workspace now that a fork reuses the source run's
+		// paths; the call is idempotent and kept so the invariant does not depend on that.
+		fs.writeFileSync(FORK_SESSION_FILE, rewriteSessionHeader(entries, { cwd: WS.workspace }).map((e) => JSON.stringify(e)).join("\n") + "\n");
+	} catch (err) {
+		console.error(`fork: ${err?.message ?? err}`);
+		process.exit(2);
+	}
 	// The recorded system prompt, verbatim — memory brief and roster section included, so
 	// the forked inference sees the same prefix the recorded one did. This deliberately
 	// overrides the fresh prompt assembled above, including a fresh memory seed.
 	prompts.orchestrator = fs.readFileSync(path.join(FORK_SRC, "prompts", "orchestrator.md"), "utf8");
-	log({ type: "fork", msg: `session truncated at entry ${cut} of ${FORK.run}; recorded system prompt restored` });
+	log({ type: "fork", msg: `session truncated at entry ${FORK_CUT} of ${FORK.run}; ${FORK_STALE_TRANSCRIPTS.size} stale worker transcript(s) ignored; recorded system prompt restored` });
 }
 for (const role of Object.keys(AGENTS)) launch(role);
 for (const name of Object.keys(state)) send(name, { id: "hello", type: "get_state" });
