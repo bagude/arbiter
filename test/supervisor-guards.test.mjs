@@ -27,3 +27,22 @@ test("GUARDS lists fork-force.ts immediately before topology.ts", () => {
 	assert.ok(f >= 0, `fork-force.ts missing from GUARDS: ${names.join(", ")}`);
 	assert.equal(names[f + 1], "topology.ts");
 });
+
+// Fork mode is env-driven and lives entirely inside supervisor.mjs, which no test
+// can import (importing it starts a run). Task 6 is the real verification; this
+// pins the shape so the four load-bearing pieces cannot quietly go missing:
+// the fork spec is read, the orchestrator is resumed from a session FILE, the
+// lifecycle records the continue, and the kickoff is skipped when forking.
+test("supervisor carries fork mode: forkSpec, --session, fork:continue, guarded kickoff", () => {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const src = fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8");
+	assert.match(src, /import \{[^}]*\bforkSpec\b[^}]*\} from "\.\/lib\/fork\.mjs"/, "supervisor must import forkSpec from ./lib/fork.mjs");
+	// The quotes matter: bare --session also matches the existing "--session-dir".
+	assert.ok(src.includes('"--session"'), 'supervisor must pass "--session" (the truncated file) to the forked orchestrator');
+	assert.ok(src.includes('ev: "fork:continue"'), "supervisor must append a fork:continue lifecycle event");
+	const lines = src.split("\n");
+	const k = lines.findIndex((l) => l.includes("M.kickoff.orchestrator()"));
+	assert.ok(k >= 0, "M.kickoff.orchestrator() missing from supervisor.mjs");
+	const window = lines.slice(Math.max(0, k - 3), k + 4).join("\n");
+	assert.ok(window.includes("FORK"), `the orchestrator kickoff must sit in a branch guarded by FORK; found:\n${window}`);
+});

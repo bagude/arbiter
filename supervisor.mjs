@@ -36,6 +36,8 @@ import { contextTokensOf, decideCompaction, composeInstructions, ledgerLines } f
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 import { readJsonl } from "./lib/jsonl.mjs";
 import { argsKey as probeArgsKey, matchCase as matchProbeCase } from "./lib/probe-match.mjs";
+import { forkSpec, truncateSessionEntries, rewriteSessionHeader, forkCounters } from "./lib/fork.mjs";
+import { readSessionFile } from "./lib/context-trace.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const REPO = "C:/Users/user/open_harnessess/pi/pi";
@@ -133,6 +135,31 @@ const TASK = path.join(here, "tasks", TASK_NAME);
 // that aren't implement-to-spec — heading "CONTEXT"). Exactly one must exist.
 const TASK_CONTEXT_FILE = ["spec.md", "critic-context.md"].find((f) => fs.existsSync(path.join(TASK, f)));
 if (!TASK_CONTEXT_FILE) throw new Error(`no such task: ${TASK} (needs spec.md or critic-context.md)`);
+
+// Fork mode (docs/superpowers/specs/2026-09-17-fork-runner-design.md): restart a recorded
+// run at orchestrator inference `call` with its workspace snapshot, its session truncated
+// there, its counters re-seeded, and `continue` instead of the kickoff. Entirely
+// env-driven — with ARBITER_FORK unset every path below is the ordinary one.
+const FORK = forkSpec(process.env);
+const FORK_SRC = FORK ? path.join(here, "runs", FORK.run) : null;
+// Assigned by the fork blocks further down, declared here: the counter re-seed runs at
+// module level well before the session copy in the go section, so a `let` down there
+// would be a temporal-dead-zone ReferenceError.
+let FORK_SESSION_FILE = null;
+let FORK_CUT = null;
+let FORK_COUNTERS = null;
+let FORK_REQ = null;
+if (FORK) {
+	for (const p of [path.join(FORK_SRC, "requests", `${String(FORK.call).padStart(4, "0")}.json`), path.join(FORK_SRC, "sessions", "orchestrator"), path.join(FORK_SRC, "decisions.jsonl"), path.join(FORK_SRC, "prompts", "orchestrator.md")]) {
+		if (!fs.existsSync(p)) { console.error(`fork: missing ${p}`); process.exit(2); }
+	}
+	if (PATTERN !== "orchestrator") { console.error("fork: only orchestrator runs can be forked"); process.exit(2); }
+	FORK_REQ = JSON.parse(fs.readFileSync(path.join(FORK_SRC, "requests", `${String(FORK.call).padStart(4, "0")}.json`), "utf8"));
+	// ext/replay-capture.ts writes snapshot: null when it could not read the agent's cwd,
+	// and every run recorded before the snapshot feature has no snapshot field at all.
+	// Neither can be forked; say so here rather than throwing a bare TypeError on cpSync.
+	if (!FORK_REQ.snapshot) { console.error(`fork: ${FORK_SRC}/requests/${String(FORK.call).padStart(4, "0")}.json has no workspace snapshot`); process.exit(2); }
+}
 // The workspace lives OUTSIDE RUN, not under it. The writing agent's bash cwd is
 // WS.workspace; a single `cd ..` from a workspace nested directly in RUN reaches
 // bus.jsonl, probe-N/, oracle-N/ and audit.jsonl — confirmed as a real leak in a
@@ -155,7 +182,12 @@ if (!TASK_CONTEXT_FILE) throw new Error(`no such task: ${TASK} (needs spec.md or
 const WSROOT = path.join(here, "runs", `.ws-${runId}`);
 const SESSIONS = path.join(here, "runs", `.sessions-${runId}`);
 const WS = { workspace: path.join(WSROOT, "ws-builder") };
-fs.cpSync(path.join(TASK, "ws-builder"), WS.workspace, { recursive: true });
+// A fork starts from the workspace as the model saw it at that inference (the
+// snapshot ext/replay-capture.ts copied beside the request, .pi/ excluded), not from
+// the task's seed; installWorkspaceExtension / writeRosterDefinitions below rebuild
+// .pi/ unchanged either way.
+if (FORK) fs.cpSync(path.join(FORK_SRC, "requests", FORK_REQ.snapshot), WS.workspace, { recursive: true });
+else fs.cpSync(path.join(TASK, "ws-builder"), WS.workspace, { recursive: true });
 // Read-only mounts (tasks/<task>/mounts.json): junctions into the copied workspace,
 // created after the copy (cpSync would dereference them) and skipped at archive
 // time. Agents learn the mount roots through ARBITER_MOUNTS; the path guard lets
@@ -336,6 +368,10 @@ function launch(name) {
 		...(cfg.thinking ? ["--thinking", cfg.thinking] : []),
 		"--session-dir",
 		path.join(SESSIONS, name),
+		// Fork: the orchestrator resumes the recorded session, truncated to the call being
+		// forked (see the session block in the go section). --session names the file inside
+		// the session dir; every other role, and every non-fork run, is unaffected.
+		...(FORK && name === "orchestrator" ? ["--session", FORK_SESSION_FILE] : []),
 		"--name",
 		name,
 		// Hardened launch: no discovery of extensions/skills/templates/context files
@@ -945,6 +981,21 @@ function pumpChildTranscripts() {
 // Silently no-ops (with a clear error reply) on tasks that have no probe.mjs —
 // e.g. intercom-review, which isn't a call-a-function task.
 let probeCount = 0;
+// Fork: re-seed the harness counters to what they were at the forked inference, from
+// the source run's decisions.jsonl. Placed here because probeCount is declared on the
+// line above while mailCount/doneAttempts/lastProbeHash are declared far earlier —
+// they are only ever read inside functions that run later, so assigning them here is
+// safe. lastProbeHash is the spec's ruling: the restored src is what the last probe
+// saw unless the record says otherwise (recorded in summary.json under fork.counters).
+if (FORK) {
+	const c = forkCounters(readJsonl(path.join(FORK_SRC, "decisions.jsonl")), FORK.call);
+	mailCount = c.mailCount;
+	doneAttempts = c.doneAttempts;
+	probeCount = c.probeCount;
+	if (c.probeCount > 0) lastProbeHash = hashDir(path.join(WS.workspace, "src"));
+	FORK_COUNTERS = c;
+	log({ type: "fork", msg: `counters re-seeded: mail ${c.mailCount}, doneAttempts ${c.doneAttempts}, probes ${c.probeCount}${c.pendingProbe ? " (a probe was pending)" : ""}` });
+}
 let ownProbeCount = 0; // probes the orchestrator asked for itself — the behaviour the pattern measures; auto-probes are excluded
 // Snapshotted the first time the oracle runs, so summary.json can answer a question
 // the orchestrator pattern exists to test: did the orchestrator verify the workspace
@@ -1398,6 +1449,10 @@ function finish(reason) {
 	});
 	summary.snapshot = SNAPSHOT;
 	summary.tokens = t.tokens;
+	// What this run was forked from, null for an ordinary run. Assigned here rather than
+	// passed to buildSummary: that function destructures a fixed key set and returns a
+	// literal, so an unknown input key would be silently dropped.
+	summary.fork = FORK ? { ...FORK, sessionCut: FORK_CUT, counters: FORK_COUNTERS, sourceRequestHash: FORK_REQ.hash ?? null } : null;
 	summary.memory = {
 		mode: MEMORY_MODE,
 		recall: CONFIG.memory ? CONFIG.memory : null,
@@ -1562,6 +1617,27 @@ if (PATTERN === "orchestrator") {
 	});
 	log({ type: "worker_prompt", msg: `roster: ${CONFIG.workers.use.join(", ")} (${files.length} definitions)${MEMORY_TEXT ? " + memory excerpt" : ""}` });
 }
+if (FORK) {
+	// Sessions: the recorded orchestrator tree, copied whole so its workers' transcripts
+	// (under <orchestrator-session-id>/tasks/) come with it, and the orchestrator's own
+	// file truncated to the forked call. Written back in pi's own JSONL shape — one JSON
+	// object per line, header first — with the header's cwd pointed at this run's
+	// workspace.
+	const srcDir = path.join(FORK_SRC, "sessions", "orchestrator");
+	const dstDir = path.join(SESSIONS, "orchestrator");
+	fs.cpSync(srcDir, dstDir, { recursive: true });
+	const own = fs.readdirSync(dstDir).filter((f) => f.endsWith(".jsonl")); // the orchestrator's file(s); workers live under <id>/tasks/
+	if (own.length !== 1) { console.error(`fork: expected one orchestrator session file, found ${own.length}`); process.exit(2); }
+	FORK_SESSION_FILE = path.join(dstDir, own[0]);
+	const { entries, cut } = truncateSessionEntries(readSessionFile(FORK_SESSION_FILE), FORK.call);
+	FORK_CUT = cut;
+	fs.writeFileSync(FORK_SESSION_FILE, rewriteSessionHeader(entries, { cwd: WS.workspace }).map((e) => JSON.stringify(e)).join("\n") + "\n");
+	// The recorded system prompt, verbatim — memory brief and roster section included, so
+	// the forked inference sees the same prefix the recorded one did. This deliberately
+	// overrides the fresh prompt assembled above, including a fresh memory seed.
+	prompts.orchestrator = fs.readFileSync(path.join(FORK_SRC, "prompts", "orchestrator.md"), "utf8");
+	log({ type: "fork", msg: `session truncated at entry ${cut} of ${FORK.run}; recorded system prompt restored` });
+}
 for (const role of Object.keys(AGENTS)) launch(role);
 for (const name of Object.keys(state)) send(name, { id: "hello", type: "get_state" });
 
@@ -1579,8 +1655,16 @@ const readyTimer = setInterval(() => {
 		deliver("builder", M.kickoff.builder(), "kickoff");
 		return;
 	}
-	log({ type: "ready", msg: "orchestrator ready; kicking off" });
-	deliver("orchestrator", M.kickoff.orchestrator(), "kickoff");
+	log({ type: "ready", msg: FORK ? `orchestrator ready; continuing ${FORK.run}` : "orchestrator ready; kicking off" });
+	// A fork has no kickoff: the restored session already ends at a tool-result leaf, and
+	// pi's `continue` command resumes the agent from there with no new user message — so
+	// the first provider request this run makes is the recorded one, which is the whole
+	// point of the branch comparison.
+	if (FORK) {
+		fs.appendFileSync(LIFECYCLE, JSON.stringify({ ts: Date.now(), ev: "fork:continue", data: { ...FORK } }) + "\n");
+		log({ type: "lifecycle", msg: `fork: continuing ${FORK.run} at call ${FORK.call} (${FORK.branch})` });
+		send("orchestrator", { id: "fork-continue", type: "continue" });
+	} else deliver("orchestrator", M.kickoff.orchestrator(), "kickoff");
 }, 250);
 
 setInterval(pumpBus, 200);
