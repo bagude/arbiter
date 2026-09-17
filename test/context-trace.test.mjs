@@ -276,6 +276,27 @@ test("a guard marker whose data.role names a worker by transcript basename attac
 	assert.equal(onOrchestratorCalls.length, 0, "guard marker must not silently attach to the orchestrator");
 });
 
+test("a guard:topology_waived marker's detail is 'topology ...', not 'topology_waived ...'", () => {
+	// guardDetail() strips the kind suffix from the event name; it must know about
+	// _waived and _skipped the same as it already knows about _rewritten and _denied
+	// (see lib/workers.mjs's sibling regex, widened for the same two kinds).
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-topology-"));
+	const orchFile = path.join(tmp, "sessions", "orchestrator", "orch.jsonl");
+	writeSessionFile(orchFile, "orch-session-1", [{ startMs: 1_700_000_000_000, endIso: new Date(1_700_000_004_000).toISOString() }]);
+
+	const guardTs = 1_700_000_002_000; // inside the orchestrator's own call window
+	fs.writeFileSync(
+		path.join(tmp, "lifecycle.jsonl"),
+		JSON.stringify({ ts: guardTs, ev: "guard:topology_waived", data: { role: "orchestrator", specialist: "implementer", failed: "tests:missing" } }) + "\n",
+	);
+
+	const trace = traceRun(tmp);
+	const guardMarkers = trace.markers.filter((m) => m.kind === "guard");
+	assert.equal(guardMarkers.length, 1);
+	assert.match(guardMarkers[0].detail, /^topology specialist=implementer/);
+	assert.ok(!guardMarkers[0].detail.includes("topology_waived"), `detail should not contain the raw event kind: ${guardMarkers[0].detail}`);
+});
+
 test("a foreground spawn (subagents:started only, no subagents:created) still joins the worker", () => {
 	// Foreground spawns never emit subagents:created, only subagents:started, so the
 	// join must accept a lone `started` event as a valid spawn candidate.

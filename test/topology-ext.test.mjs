@@ -85,3 +85,14 @@ test("skip line passes and is reported with the reason", () => {
 	assert.equal(lines[0].ev, "guard:topology_skipped");
 	assert.equal(lines[0].data.reason, "nothing to test");
 });
+
+test("src/__tests__ existing as a file, not a directory, denies as tests:missing instead of crashing", () => {
+	// A worker could be mid-edit (replacing the directory) when the orchestrator spawns;
+	// testsFiles() must never let an fs error escape the tool_call handler.
+	const ws = fs.mkdtempSync(path.join(os.tmpdir(), "topology-ws-"));
+	fs.mkdirSync(path.join(ws, "src"), { recursive: true });
+	fs.writeFileSync(path.join(ws, "src", "__tests__"), "not a directory");
+	const { out } = run({ calls: [SPAWN("implementer")], env: ENV, workspace: ws });
+	assert.equal(out[0].block, true);
+	assert.match(out[0].reason, /has none/);
+});

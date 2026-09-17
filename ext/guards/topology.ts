@@ -40,11 +40,27 @@ function testsFiles(cwd: string): { mtimeMs: number }[] {
 	const dir = path.join(cwd, "src", "__tests__");
 	if (!fs.existsSync(dir)) return [];
 	const out: { mtimeMs: number }[] = [];
+	// A worker may be mid-edit (replacing the directory, or a file inside it) between
+	// this existsSync check and the reads below. Any fs error here means "nothing
+	// usable yet" — decideSpawn treats an empty list as tests:missing, never letting
+	// the exception escape the tool_call handler.
 	const walk = (d: string) => {
-		for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+		let entries;
+		try {
+			entries = fs.readdirSync(d, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const e of entries) {
 			const p = path.join(d, e.name);
 			if (e.isDirectory()) walk(p);
-			else if (e.isFile()) out.push({ mtimeMs: fs.statSync(p).mtimeMs });
+			else if (e.isFile()) {
+				try {
+					out.push({ mtimeMs: fs.statSync(p).mtimeMs });
+				} catch {
+					// vanished between readdir and stat; skip it.
+				}
+			}
 		}
 	};
 	walk(dir);
