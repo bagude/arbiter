@@ -1,0 +1,8 @@
+{ "task": "pathnorm", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" } },
+  "workers": { "default": { "provider": "llama.cpp", "model": "qwen3-27b", "thinking": "off" }, "use": ["tester", "implementer"], "max": 1 },
+  "caps": { "toolCalls": 250, "wallSec": 1800, "usd": 5, "doneAttempts": 5 },
+  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 9000, "workerReserveChars": 4000 },
+  "guards": { "topology": "nudge" },
+  "jev": { "enabled": true, "doneGuard": "nudge", "transcriptEgress": true, "redactSecrets": true, "threshold": 0.5, "maxHolds": 1 },
+  "_note": "orch-pathnorm-27b-topology.json plus the Jev shadow head and the done-claim check in nudge mode (docs/batch/jev-3.md): every orchestrator inference is shadowed to runs/<id>/jev/, and a done claim Jev rates as failing on an unverified input is held once per attempt with a nudge naming the inputs. transcriptEgress is the boundary: false sends nothing. Experiment 5 = the lifecycle events jev:done_claimed / done_check / nudge_issued / done_reclaimed / oracle_verdict." }

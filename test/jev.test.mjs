@@ -133,3 +133,72 @@ test("comparisonTable joins the local head's substantive rows by index and total
 	assert.match(t, /\| 1 \| inspect \| spawn \| spawn \(0\.99\) \| spawn \(0\.90, 0\.95\) \| = \| = \| yes \|/);
 	assert.match(t, /27B agrees with the record 1\/2, jev 1\/2, heads agree with each other 2\/2; confident-and-wrong: 27B \(p≥\.95\) 1, jev \(conf≥\.9\) 1/);
 });
+
+// ---------- the done-claim check (docs/batch/jev-3.md) ----------
+import { redact, decideDoneNudge, nudgeText, doneCheckQuestions, DONE_TARGETS } from "../lib/jev.mjs";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+
+test("redact scrubs bearer tokens, key-shaped strings, KEY=/TOKEN= assignments and private keys, and leaves ordinary text alone", () => {
+	const s = redact("Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789 then TYPESAFE_API_KEY=apikey_29abcdef_00112233445566778899aabbccddeeff and sk-ant-api03-Tw813j3anPW4PW and normal/path/here.txt");
+	assert.ok(!s.includes("abcdefghijklmnopqrstuvwxyz0123456789"));
+	assert.ok(!s.includes("00112233445566778899aabbccddeeff"));
+	assert.ok(!s.includes("Tw813j3anPW4PW"));
+	assert.match(s, /Bearer \[REDACTED\]/);
+	assert.match(s, /TYPESAFE_API_KEY=\[REDACTED\]/);
+	assert.ok(s.includes("normal/path/here.txt"));
+	assert.match(redact("-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----"), /\[REDACTED PRIVATE KEY\]/);
+	assert.equal(redact('eq(relative("/a/b", "/c/d"), "../../c/d");'), 'eq(relative("/a/b", "/c/d"), "../../c/d");', "test data is not a secret");
+});
+
+const edgeAnswers = { passes: { noul: 0.3 }, verdict: { choice: "edge", confidence: 0.6, probabilities: { pass: 0.2, edge: 0.7, other: 0.1 } }, target_dot: { noul: 0.8 }, target_root: { noul: 0.55 }, target_empty: { noul: 0.2 } };
+
+test("decideDoneNudge holds once per attempt on an edge verdict over the threshold, never in shadow, and carries the raw probabilities", () => {
+	const hold = decideDoneNudge(edgeAnswers, { mode: "nudge" });
+	assert.equal(hold.act, "hold");
+	assert.deepEqual(hold.targets, ["dot", "root"], "families clearing 0.5, strongest first");
+	assert.equal(hold.raw.pPass, 0.3);
+	assert.equal(hold.raw.pVerdict.edge, 0.7);
+	assert.equal(hold.raw.targets.dot, 0.8);
+	// Single-use per lineage: the second claim in the same attempt passes whatever Jev says.
+	const second = decideDoneNudge(edgeAnswers, { mode: "nudge", holdsUsed: 1 });
+	assert.equal(second.act, "pass");
+	assert.equal(second.wouldHold, true, "the record still says it would have held");
+	assert.match(second.reason, /hold already used/);
+	// Shadow records the same decision and never holds.
+	const shadow = decideDoneNudge(edgeAnswers, { mode: "shadow" });
+	assert.equal(shadow.act, "pass");
+	assert.equal(shadow.wouldHold, true);
+	// Below the threshold, or a pass verdict, passes.
+	assert.equal(decideDoneNudge(edgeAnswers, { mode: "nudge", threshold: 0.8 }).act, "pass");
+	assert.equal(decideDoneNudge({ verdict: { choice: "pass", probabilities: { pass: 0.9, edge: 0.1 } } }, { mode: "nudge" }).act, "pass");
+	// No family clears 0.5: the two strongest are still named so the nudge is actionable.
+	const weak = decideDoneNudge({ verdict: { choice: "edge", probabilities: { edge: 0.6 } }, target_trailing: { noul: 0.4 }, target_examples: { noul: 0.3 } }, { mode: "nudge" });
+	assert.deepEqual(weak.targets, ["trailing", "examples"]);
+});
+
+test("nudgeText names the targets, says the hold is single-use and states the attempts left", () => {
+	const t = nudgeText(decideDoneNudge(edgeAnswers, { mode: "nudge" }), { attemptsLeft: 4 });
+	assert.match(t, /^\[SUPERVISOR\] Your done claim is on hold, once/);
+	assert.ok(t.includes(DONE_TARGETS.dot) && t.includes(DONE_TARGETS.root));
+	assert.match(t, /at most once per attempt/);
+	assert.match(t, /4 attempts left/);
+	assert.equal(Object.keys(doneCheckQuestions()).length, 2 + Object.keys(DONE_TARGETS).length);
+});
+
+// Source assertions on the supervisor (it cannot be imported: importing starts a run).
+test("supervisor wires the Jev done check between the approval gate and the oracle, single-use per attempt, with the causal events", () => {
+	const src = fs.readFileSync(new URL("../supervisor.mjs", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+	assert.ok(src.includes("if (verdict.ok) return jevDoneGate(msg);"), "the approval gate hands an accepted claim to the Jev check");
+	assert.ok(!src.includes("if (verdict.ok) return runOracle();"), "…and no longer straight to the oracle");
+	const gate = src.slice(src.indexOf("function jevDoneGate("), src.indexOf("// ---------- oracle (host-side"));
+	assert.ok(gate.includes('if (!JEV.active || !JEV_KEY || PATTERN !== "orchestrator") return runOracle();'), "off → exactly the old path");
+	for (const ev of ["jev:done_claimed", "jev:done_check", "jev:nudge_issued", "jev:done_reclaimed"]) assert.ok(gate.includes(`jevEvent("${ev}"`), ev);
+	assert.ok(src.includes('jevEvent("jev:oracle_verdict"'), "the verdict closes the chain");
+	assert.ok(gate.includes("jevHoldsThisAttempt += 1;"), "a hold is counted");
+	assert.ok(src.includes("jevHoldsThisAttempt = 0; // a verdict starts a new claim lineage"), "…and the count resets when the oracle runs");
+	assert.ok(gate.indexOf("jev.redact(r.state)") > 0, "the rendered state is redacted before egress when configured");
+	assert.ok(src.includes("cfg.active = cfg.enabled && cfg.transcriptEgress !== false;"), "transcriptEgress: false turns everything off");
+	// The key never reaches a worker or the launch args: it is set only for the orchestrator's env entry.
+	assert.match(src, /TYPESAFE_API_KEY: JEV_ON && JEV_KEY && PATTERN === "orchestrator" && name === "orchestrator" \? JEV_KEY : ""/);
+});

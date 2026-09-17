@@ -26,6 +26,7 @@ const jev = await import(fileUrl(path.join(home, "lib", "jev.mjs")));
 const DIR = (process.env.ARBITER_JEV_DIR ?? "").trim();
 const KEY = (process.env.TYPESAFE_API_KEY ?? "").trim();
 const MAX_CHARS = Number(process.env.ARBITER_JEV_MAX_CHARS) || undefined;
+const REDACT = process.env.ARBITER_JEV_REDACT === "1";
 
 export default function (pi: ExtensionAPI) {
 	if (!DIR || !KEY) return;
@@ -41,7 +42,7 @@ export default function (pi: ExtensionAPI) {
 			try {
 				fs.mkdirSync(DIR, { recursive: true });
 				const ts = Date.now();
-				const r = await jev.askWithRetry({ payload, key: KEY, maxChars: MAX_CHARS });
+				const r = await jev.askWithRetry({ payload, key: KEY, maxChars: MAX_CHARS, redactSecrets: REDACT });
 				fs.writeFileSync(path.join(DIR, `${String(mySeq).padStart(4, "0")}.json`), JSON.stringify({ seq: mySeq, ts, ...r }));
 			} catch {
 				// observability only

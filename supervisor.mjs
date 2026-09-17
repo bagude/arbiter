@@ -29,6 +29,7 @@ import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, retainSpecialists, lastOracleRunNumber, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { resolveLedger, buildIndex } from "./lib/memory-index.mjs";
+import * as jev from "./lib/jev.mjs";
 import { charge, spent } from "./lib/memory-budget.mjs";
 import { seededBrief } from "./lib/memory-brief.mjs";
 import { snapshotId } from "./lib/snapshot.mjs";
@@ -204,10 +205,25 @@ const GUARDS = [
 	// Observability only — see lib/jev.mjs and tools/jev-replay.mjs.
 	path.join(here, "ext", "jev-shadow.ts"),
 ];
-// The shadow is on when the config says `jev: true` or ARBITER_JEV=1, and off otherwise; the
-// key comes from the environment or from .env in the repo root and is passed only to the
-// orchestrator's process (workers run inside it), never written anywhere.
-const JEV_ON = CONFIG.jev === true || process.env.ARBITER_JEV === "1";
+// Jev config — the one boundary that decides whether any transcript leaves the box:
+//   jev: true                      → shadow on (legacy short form)
+//   jev: { enabled, doneGuard: "shadow" | "nudge" | "enforce", transcriptEgress, redactSecrets,
+//          threshold, maxHolds }
+// transcriptEgress: false turns EVERYTHING off whatever else says (nothing is sent);
+// redactSecrets (default true) scrubs keys/tokens from the rendered state before it leaves.
+// ARBITER_JEV=1 enables the shadow from the environment. The key comes from the environment
+// or from .env in the repo root and is passed only to the orchestrator's process (workers
+// run inside it), never written anywhere.
+const JEV = (() => {
+	const raw = CONFIG.jev;
+	const base = { enabled: false, doneGuard: "shadow", transcriptEgress: true, redactSecrets: true, threshold: 0.5, maxHolds: 1 };
+	const cfg = raw === true ? { ...base, enabled: true } : raw && typeof raw === "object" ? { ...base, ...raw, enabled: raw.enabled !== false } : { ...base };
+	if (process.env.ARBITER_JEV === "1") cfg.enabled = true;
+	if (!["shadow", "nudge", "enforce"].includes(cfg.doneGuard)) cfg.doneGuard = "shadow";
+	cfg.active = cfg.enabled && cfg.transcriptEgress !== false;
+	return cfg;
+})();
+const JEV_ON = JEV.active;
 const JEV_KEY = (() => {
 	const env = (process.env.TYPESAFE_API_KEY ?? "").trim();
 	if (env || !JEV_ON) return env;
@@ -571,6 +587,7 @@ function launch(name) {
 			ARBITER_REQUESTS_DIR: PATTERN === "orchestrator" && name === "orchestrator" ? path.join(RUN, "requests") : "",
 			ARBITER_JEV_DIR: JEV_ON && JEV_KEY && PATTERN === "orchestrator" && name === "orchestrator" ? path.join(RUN, "jev") : "",
 			TYPESAFE_API_KEY: JEV_ON && JEV_KEY && PATTERN === "orchestrator" && name === "orchestrator" ? JEV_KEY : "",
+			ARBITER_JEV_REDACT: JEV.redactSecrets ? "1" : "",
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -760,6 +777,7 @@ function handleEvent(name, ev) {
 			const a = ev.args ?? {};
 			const summary = ev.toolName === "send_mail" ? `send_mail(${a.kind}) -> ${a.to}` : `${ev.toolName} ${JSON.stringify(a).slice(0, 120)}`;
 			log({ agent: name, type: "tool", msg: summary });
+			if (jevHold && name === VERIFIER) jevHold.toolsSince.push(summary.slice(0, 100));
 			if (ev.toolName === "bash" && ev.toolCallId) s.pendingBash.set(ev.toolCallId, { startedAt: Date.now(), command: a.command });
 			// bash can also change files, so it counts toward quiescence too, alongside write/edit.
 			if (EDITING_TOOLS.has(ev.toolName) && (s.role === "builder" || s.role === "worker")) s.lastEditTs = Date.now();
@@ -874,7 +892,7 @@ function pumpBus() {
 		const route = routeMail(PATTERN, msg);
 		switch (route.action) {
 			case "probe": runProbe(msg); break;
-			case "approval": handleApproval(); break;
+			case "approval": handleApproval(msg); break;
 			case "bounce_probe":
 				deliver(route.to, M.probeBounced(), "probe bounced");
 				break;
@@ -1305,7 +1323,7 @@ function runProbe(msg, { auto = null } = {}) {
 // The accept/reject invariant lives in lib/gate.mjs's decideApproval(); this just
 // supplies the current hashes/timestamp, then formats the rejection for the
 // verifying role's kind="done".
-function handleApproval() {
+function handleApproval(msg = null) {
 	const srcDir = path.join(WS.workspace, "src");
 	const srcExists = fs.existsSync(srcDir);
 	const verdict = decideApproval({
@@ -1316,11 +1334,83 @@ function handleApproval() {
 		now: Date.now(),
 		unreported: CONFIG.report ? unreportedWorkers(tracker, state) : [],
 	});
-	if (verdict.ok) return runOracle();
+	if (verdict.ok) return jevDoneGate(msg);
 	const why = verdict.reason === "unreported" ? M.gate.unreported(verdict.unreported) : M.gate[verdict.reason](verdict.sinceEditMs);
 	const label = { no_probe: "approval without probe", no_src: "approval error", unreported: "approval without worker report", stale: "approval stale (src changed since probe)", too_soon: "approval too soon after edit" }[verdict.reason];
 	deliver(VERIFIER, why, label);
 	boundaryPending = `approval rejected (${verdict.reason})`;
+}
+
+// ---------- Jev done-claim check (docs/batch/jev-3.md) ----------
+// A pre-commit critic at the boundary where a wrong claim costs an attempt. Between the
+// deterministic approval gate and the oracle: the orchestrator's latest captured provider
+// request (its state at the claim) plus the claim itself go to Jev; if the verdict is `edge`
+// (fails on an input never verified) the claim is held ONCE per oracle attempt and a nudge
+// names the input families to verify; the next claim goes through whatever Jev says, unless
+// a deterministic gate refuses it on its own. Shadow mode records the same decision without
+// holding. Every step is a lifecycle event so each live use is an experiment:
+//   jev:done_claimed → jev:done_check (raw probabilities) → jev:nudge_issued (targets) →
+//   jev:done_reclaimed (the orchestrator's tool calls since the nudge) → jev:oracle_verdict.
+let jevChecks = 0;
+let jevHoldsIssued = 0;
+let jevHoldsThisAttempt = 0;
+const countJevHolds = () => jevHoldsIssued;
+let jevHold = null; // { id, issuedAt, toolsSince } while a nudge is outstanding
+function jevEvent(ev, data) {
+	try { fs.appendFileSync(LIFECYCLE, JSON.stringify({ ts: Date.now(), ev, data }) + "\n"); } catch { /* observability */ }
+}
+function latestOrchestratorRequest() {
+	const dir = path.join(RUN, "requests");
+	if (!fs.existsSync(dir)) return null;
+	const files = fs.readdirSync(dir).filter((f) => /^\d{4}\.json$/.test(f)).sort();
+	if (!files.length) return null;
+	try { return JSON.parse(fs.readFileSync(path.join(dir, files[files.length - 1]), "utf8")); } catch { return null; }
+}
+function jevDoneGate(msg) {
+	if (!JEV.active || !JEV_KEY || PATTERN !== "orchestrator") return runOracle();
+	const req = latestOrchestratorRequest();
+	if (!req?.payload?.messages) { log({ type: "jev", msg: "done check skipped: no captured orchestrator request" }); return runOracle(); }
+	const id = ++jevChecks;
+	if (jevHold) {
+		jevEvent("jev:done_reclaimed", { id, afterHold: jevHold.id, sinceMs: Date.now() - jevHold.issuedAt, postNudgeActions: jevHold.toolsSince });
+		log({ type: "jev", msg: `done reclaimed after hold #${jevHold.id}: ${jevHold.toolsSince.length} tool call(s) in between` });
+		jevHold = null;
+	}
+	jevEvent("jev:done_claimed", { id, mail: msg?.n ?? null, attempt: doneAttempts + 1, holdsUsed: jevHoldsThisAttempt, mode: JEV.doneGuard });
+	const claim = { role: "assistant", content: `TOOL_CALL send_mail ${JSON.stringify({ kind: "done", body: String(msg?.body ?? "") })}` };
+	const render = (maxChars) => {
+		const r = jev.renderState({ messages: [...req.payload.messages, claim] }, { maxChars });
+		return { ...r, state: JEV.redactSecrets ? jev.redact(r.state) : r.state };
+	};
+	let rendered = render(100_000);
+	const questions = jev.doneCheckQuestions();
+	boundaryPending = "jev done check";
+	(async () => {
+		let r = await jev.askJev({ state: rendered.state, questions, key: JEV_KEY });
+		if (!r.ok && r.errorType === "max_tokens_exceeded") {
+			rendered = render(Math.floor(rendered.state.length * 0.8));
+			r = await jev.askJev({ state: rendered.state, questions, key: JEV_KEY });
+		}
+		if (finished) return;
+		if (!r.ok) {
+			jevEvent("jev:done_check", { id, ok: false, status: r.status, error: r.errorType, ms: r.ms });
+			log({ type: "jev", msg: `done check #${id} failed (${r.status} ${r.errorType}); claim passes` });
+			return runOracle();
+		}
+		const decision = jev.decideDoneNudge(r.answers, { mode: JEV.doneGuard === "shadow" ? "shadow" : "nudge", threshold: JEV.threshold, holdsUsed: jevHoldsThisAttempt, maxHolds: JEV.maxHolds });
+		jevEvent("jev:done_check", { id, ok: true, ms: r.ms, usage: r.usage, truncated: rendered.truncated, kept: rendered.kept, act: decision.act, reason: decision.reason, wouldHold: decision.wouldHold, pEdge: decision.pEdge, targets: decision.targets, raw: decision.raw });
+		log({ type: "jev", msg: `done check #${id}: ${decision.act} (${decision.reason}); p(pass)=${decision.raw.pPass == null ? "—" : decision.raw.pPass.toFixed(2)} verdict ${decision.raw.verdict} targets ${decision.targets.join(", ")} · ${r.ms} ms` });
+		if (decision.act !== "hold") return runOracle();
+		jevHoldsThisAttempt += 1;
+		jevHoldsIssued += 1;
+		jevHold = { id, issuedAt: Date.now(), toolsSince: [] };
+		jevEvent("jev:nudge_issued", { id, targets: decision.targets, pEdge: decision.pEdge, attempt: doneAttempts + 1 });
+		deliver(VERIFIER, jev.nudgeText(decision, { attemptsLeft: CAPS.doneAttempts - doneAttempts }), "jev done hold");
+		boundaryPending = "jev hold (claim held once, not sent to the oracle)";
+	})().catch((err) => {
+		log({ type: "jev", msg: `done check #${id} threw (${err?.message ?? err}); claim passes` });
+		if (!finished) runOracle();
+	});
 }
 
 // ---------- oracle (host-side; agents cannot touch it) ----------
@@ -1339,6 +1429,7 @@ function runOracle() {
 	// passes never returns here.
 	if (probeCountAtFirstOracle === null) probeCountAtFirstOracle = ownProbeCount;
 	doneAttempts++;
+	jevHoldsThisAttempt = 0; // a verdict starts a new claim lineage
 	const dir = path.join(RUN, `oracle-${doneAttempts}`);
 	try {
 		fs.mkdirSync(dir, { recursive: true });
@@ -1408,6 +1499,7 @@ function runOracle() {
 		}
 		fs.writeFileSync(path.join(dir, "result.txt"), out);
 		const verdict = `Oracle run #${doneAttempts}: ${pass}/${total} passed.${note}`;
+		if (jevChecks) jevEvent("jev:oracle_verdict", { afterCheck: jevChecks, attempt: doneAttempts, pass, total });
 		log({ type: "oracle", msg: verdict });
 		timeline.push({ ts: Date.now(), from: "supervisor", to: "both", kind: "oracle", body: verdict });
 		if (total > 0 && pass === total) return finish("SUCCESS: oracle passed");
@@ -1587,6 +1679,7 @@ function finish(reason) {
 		timeline,
 		mailCount,
 		doneAttempts,
+		jev: JEV.active ? { mode: JEV.doneGuard, checks: jevChecks, holds: jevChecks ? countJevHolds() : 0 } : null,
 		nudges,
 		probeCountAtFirstOracle,
 		guards: tracker.guards,
