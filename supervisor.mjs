@@ -1431,7 +1431,14 @@ function runOracle() {
 		// process. The score goes into the finish reason instead, which is summary.reason,
 		// the transcript's Outcome line and the FINISH row in the audit.
 		if (doneAttempts >= CAPS.doneAttempts) {
-			log({ type: "oracle", msg: `${verdict} Not delivered to any agent: the attempt cap (${CAPS.doneAttempts}) ends the run here.` });
+			// Deliberately NOT the verdict string again: tools/batch.mjs and tools/fork.mjs both
+			// scan audit.jsonl globally for /Oracle run #\d+: (\d+\/\d+)/, so repeating that
+			// prefix put the final score in the oracle column twice — six scores for five
+			// oracles, on exactly the capped runs case (f) is about, in exactly the
+			// docs/batch/*.md reports this audit came out of. The entry logged above already
+			// carries the score. (tools/decision-points.mjs takes the first oracle entry, and
+			// lib/memory.mjs reads the timeline, pushed once; both are unaffected either way.)
+			log({ type: "oracle", msg: `Run #${doneAttempts}'s verdict was not delivered to any agent: the attempt cap (${CAPS.doneAttempts}) ends the run here.` });
 			return finish(`done attempts exhausted (${doneAttempts}); final oracle ${pass}/${total} passed`);
 		}
 		if (SOLO) {

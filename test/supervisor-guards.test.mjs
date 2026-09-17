@@ -200,3 +200,21 @@ test("supervisor's fork mode restores the source run's workers", () => {
 	// The old skip set is gone: an inherited transcript is now tailed, not ignored.
 	assert.ok(!src.includes("FORK_STALE_TRANSCRIPTS"), "the stale-transcript skip must be gone, replaced by the restoration");
 });
+
+// Case (f)'s not-delivered audit line must not repeat the verdict's own prefix.
+// tools/batch.mjs and tools/fork.mjs both scan audit.jsonl GLOBALLY for
+// /Oracle run #\d+: (\d+\/\d+)/, so a second entry carrying that prefix put the final score
+// in the batch and fork oracle columns twice — six scores for five oracles, on exactly the
+// capped runs case (f) is about. The verdict is already logged as its own entry just above.
+test("the attempt-cap audit line does not add a second Oracle run # score", () => {
+	const src = supervisorSource();
+	const line = src.split("\n").find((l) => l.includes("was not delivered to any agent"));
+	assert.ok(line, "the attempt-cap audit line is missing");
+	assert.doesNotMatch(line, /Oracle run #/, `the line must not repeat the verdict prefix; found:\n${line}`);
+	assert.ok(!line.includes("${verdict}"), "the line must not interpolate the verdict string");
+	// The pattern both tools scan with, against what this line renders to.
+	const rendered = line.replace(/^.*msg: `/, "").replace(/`.*$/, "").replace("${doneAttempts}", "5").replace("${CAPS.doneAttempts}", "5");
+	assert.doesNotMatch(rendered, /Oracle run #\d+: (\d+\/\d+)/);
+	// And the verdict itself is still logged exactly once, before it.
+	assert.ok(src.includes("log({ type: \"oracle\", msg: verdict });"), "the verdict must still be its own audit entry");
+});
