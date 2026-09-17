@@ -39,6 +39,23 @@ test("missing tests: nudge denies once per specialist, then waives", () => {
 	assert.deepEqual(second, { ok: true, event: "waived", failed: "tests:missing" });
 });
 
+test("nudge: a tests:missing denial does not spend the tests:unread nudge", () => {
+	const state = initialState();
+	const missing = decideSpawn({ mode: "nudge", needsFor: NEEDS, input: spawn("implementer"), state, testsFiles: [] });
+	assert.equal(missing.event, "denied");
+	assert.equal(missing.failed, "tests:missing");
+	const missingWaived = decideSpawn({ mode: "nudge", needsFor: NEEDS, input: spawn("implementer"), state, testsFiles: [] });
+	assert.equal(missingWaived.event, "waived");
+	const testsFiles = [{ mtimeMs: 5000 }];
+	const unread = decideSpawn({ mode: "nudge", needsFor: NEEDS, input: spawn("implementer"), state, testsFiles });
+	assert.equal(unread.ok, false);
+	assert.equal(unread.event, "denied");
+	assert.equal(unread.failed, "tests:unread");
+	const unreadWaived = decideSpawn({ mode: "nudge", needsFor: NEEDS, input: spawn("implementer"), state, testsFiles });
+	assert.equal(unreadWaived.event, "waived");
+	assert.equal(unreadWaived.failed, "tests:unread");
+});
+
 test("tests exist but were not read since written: denied with the read reason; a later read satisfies it", () => {
 	const state = initialState();
 	const testsFiles = [{ mtimeMs: 1000 }, { mtimeMs: 5000 }];

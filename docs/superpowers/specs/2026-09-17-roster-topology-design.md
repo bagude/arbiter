@@ -62,7 +62,7 @@ The sentence templates per artifact live in one table in `roster.mjs` (artifact 
 
 **Configuration.** `guards.topology` in the run config: `"nudge"` | `"enforce"` | `{ mode }`; absent means off. `lib/config.mjs` adds it to the known guard names. The supervisor passes `ARBITER_TOPOLOGY` (JSON: `{ mode, needs: { <specialist>: [artifacts] } }`, built from `CONFIG.workers.specialists`) to every role; the guard returns early when unset. Only the orchestrator emits `subagent` calls, so only it is affected.
 
-**State** (in-process, per orchestrator session): `lastTestsRead` (ms, the latest `read` whose `path` is under `src/__tests__/`, or a `bash` whose `command` mentions `src/__tests__`), and `denied: Set<specialist>`.
+**State** (in-process, per orchestrator session): `lastTestsRead` (ms, the latest `read` whose `path` is under `src/__tests__/`, or a `bash` whose `command` mentions `src/__tests__`), and `denied: Set<"<specialist>:<failed>">`.
 
 **On `tool_call` for tool `subagent`** with `input.subagent_type = S` and no `input.resume`:
 
@@ -74,7 +74,7 @@ The sentence templates per artifact live in one table in `roster.mjs` (artifact 
    `topology: implementer needs tests, and src/__tests__/ has none. Spawn the tester first with the API (exports and signatures) from the specification, then read src/__tests__/*.test.mjs against the specification, resume the tester for anything missing, and retry this spawn. To proceed without tests, make the first line of the prompt "topology: skip — <reason>".`
    For the read check: `... tests exist but you have not read them since they were written. Read src/__tests__/ against the specification, then retry.`
    - mode `enforce`: deny; emit `guard:topology_denied`.
-   - mode `nudge`: if `S` is not in `denied`: add it, deny, emit `guard:topology_denied`. Else pass and emit `guard:topology_waived` (the second attempt goes through; the record shows the orchestrator was told and chose to proceed).
+   - mode `nudge`: `denied` is keyed by `<S>:<failed check>`; if that key is absent: add it, deny, emit `guard:topology_denied`. Else pass and emit `guard:topology_waived` (a repeat of the same failure goes through; a different failure gets its own single nudge, so an implementer-first orchestrator is nudged once for missing tests and once more for unread tests — amended 2026-09-17 after the final review found the single per-specialist nudge was spent on `tests:missing` and the review nudge waived).
 
 The pure policy takes `{ mode, needsFor, input, state, fs: { testsFiles: [{ mtimeMs }] } }` and returns `{ ok, reason?, event?, state' }` so the unit tests never touch a filesystem; the adapter supplies `fs` and the timestamps.
 

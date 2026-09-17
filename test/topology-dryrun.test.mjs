@@ -32,7 +32,9 @@ test("orch-pathnorm-27b-topology.json: the intended sequence passes and the wron
 	assert.deepEqual(spawn("tester"), { ok: true, event: null }, "tester is never judged");
 	fs.mkdirSync(path.join(ws, "src", "__tests__"), { recursive: true });
 	fs.writeFileSync(path.join(ws, "src", "__tests__", "pathnorm.test.mjs"), "// tests\n");
-	assert.equal(spawn("implementer").failed, "tests:unread", "written but not reviewed");
+	const written = spawn("implementer");
+	assert.equal(written.event, "denied", "written but not reviewed");
+	assert.equal(written.failed, "tests:unread", "written but not reviewed");
 	noteToolCall({ toolName: "read", input: { path: "src/__tests__/pathnorm.test.mjs" } }, state, Date.now() + 1000);
 	assert.deepEqual(spawn("implementer"), { ok: true, event: null }, "reviewed tests let the implementer through");
 	assert.deepEqual(spawn("implementer", { resume: "abc" }), { ok: true, event: null }, "a resume is never judged");
