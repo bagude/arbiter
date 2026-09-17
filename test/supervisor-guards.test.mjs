@@ -67,6 +67,12 @@ test("supervisor's fork mode preflights, re-seeds and records what it forked", (
 		["prompts.orchestrator = fs.readFileSync", "the recorded system prompt must be restored verbatim"],
 		["summary.fork =", "summary.json must record what this run was forked from"],
 		["FORK_REQ.snapshot", "the workspace snapshot must be preflighted and restored"],
+		// Nothing in the record carries the task or the model — the --config does, and it drives
+		// installMounts, readMounts, the probe harness and the oracle. Forked with a different
+		// task, the orchestrator is restored with the source run's history and then scored
+		// against a harness that has nothing to do with it, and nothing else would say so.
+		["FORK_SRC_SUMMARY.task !== TASK_NAME", "a fork must refuse a config whose task is not the source run's"],
+		["FORK_SRC_MODEL !== ROLES.orchestrator.model", "a fork must refuse a config whose orchestrator model is not the one the recorded request was sent to"],
 	]) {
 		assert.ok(src.includes(needle), `${why} (missing: ${needle})`);
 	}

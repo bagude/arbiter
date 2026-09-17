@@ -113,11 +113,22 @@ export function planForks(spec, recorded = null, { forceDir = null } = {}) {
 	return plans;
 }
 
+// The generation settings payloadEquals deliberately does not look at. `model` and
+// `chat_template_kwargs` are the two the spec pins ("same server, same quant, same sampler
+// settings as recorded") — the thinking level lives in chat_template_kwargs — and without
+// them the report could say "state match: yes" for a fork run against a different model or
+// with thinking off. Kept out of `equal` so that number keeps meaning "the restored
+// conversation is the recorded one"; surfaced as its own column instead.
+const SETTINGS_FIELDS = ["model", "chat_template_kwargs"];
+
 /** Is the fork's first captured request the recorded one? sourceReq/forkReq are the raw
- * requests/NNNN.json bodies ({ payload, ... }); forkReq may be null (fork captured nothing). */
+ * requests/NNNN.json bodies ({ payload, ... }); forkReq may be null (fork captured nothing).
+ * `equal`/`firstDiff` cover the conversation (messages and tool names); `settings` covers the
+ * generation settings above, separately, and is null when there is no fork request to read. */
 export function compareFirstRequest(sourceReq, forkReq) {
-	if (!forkReq) return { equal: false, firstDiff: "no fork request captured" };
-	return payloadEquals(sourceReq?.payload, forkReq.payload);
+	if (!forkReq) return { equal: false, firstDiff: "no fork request captured", settings: null };
+	const mismatched = SETTINGS_FIELDS.filter((f) => JSON.stringify(sourceReq?.payload?.[f]) !== JSON.stringify(forkReq.payload?.[f]));
+	return { ...payloadEquals(sourceReq?.payload, forkReq.payload), settings: { equal: mismatched.length === 0, mismatched } };
 }
 
 /** summary.guards is guard name -> kind -> role -> count; this totals `kinds` across roles.
@@ -161,6 +172,7 @@ export function forkRow({ branch, replicate, runId, compare, sourceCls, decision
 		forkReason: forkAborted ? String(summary.reason) : null,
 		stateMatch: compare?.equal ?? false,
 		firstDiff: compare?.firstDiff ?? null,
+		settings: compare?.settings ?? null,
 		firstAction,
 		reproduced: firstAction ? firstAction.cls === sourceCls : null,
 		oracle,
@@ -195,18 +207,22 @@ export function renderReport(source, rows, { nullMode = false } = {}) {
 	const subst = source.substantive?.cls ? `${source.substantive.cls} (${source.substantive.gatherSteps} gather step${source.substantive.gatherSteps === 1 ? "" : "s"})` : "none recorded";
 	const head = source.headPick ? `${source.headPick.pickClass} (p=${source.headPick.confidence.toFixed(2)})` : "not replayed";
 	lines.push(`Source point: recorded class **${source.recordedCls}**, next substantive action **${subst}**, head pick ${head}.`, "");
-	lines.push("| branch | replicate | run | exit | crashed | state match | first action | reproduced | forced (denied/rewritten) | topology (denied/waived) | oracle | probes | resumes | decoded | wall s |");
-	lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+	lines.push("| branch | replicate | run | exit | crashed | state match | settings | first action | reproduced | forced (denied/rewritten) | topology (denied/waived) | oracle | probes | resumes | decoded | wall s |");
+	lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
 	for (const r of rows) {
 		const fa = r.firstAction ? `${r.firstAction.cls} · ${r.firstAction.tool ?? "—"} · ${paramsHead(r.firstAction.params)}` : r.decisionsMissing ? "— (decision-points failed)" : "—";
 		const sm = r.stateMatch ? "yes" : `no (${JSON.stringify(r.firstDiff)})`;
+		// The settings the state match deliberately ignores: model and chat_template_kwargs
+		// (where the thinking level lives). A mismatch here makes every other number in the row
+		// a comparison against something the source run never was.
+		const settings = !r.settings ? "—" : r.settings.equal ? "match" : `mismatch: ${r.settings.mismatched.join(", ")}`;
 		const rep = r.reproduced === null ? "—" : r.reproduced ? "yes" : "no";
 		const forced = `${r.guards.forkForce.denied}/${r.guards.forkForce.rewritten}`;
 		const topo = `${r.guards.topology.denied}/${r.guards.topology.waived}`;
 		// A fork the harness refused exits 0 with an ordinary summary, so the reason is the
 		// only thing that separates it from a run the model simply lost. Say which it was.
 		const crashed = r.crashed ? (r.forkAborted ? `yes — ${r.forkReason.replace(/\s+/g, " ").slice(0, 80)}` : "yes") : "no";
-		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${r.exit ?? "—"} | ${crashed} | ${sm} | ${fa} | ${rep} | ${forced} | ${topo} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
+		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${r.exit ?? "—"} | ${crashed} | ${sm} | ${settings} | ${fa} | ${rep} | ${forced} | ${topo} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
 	}
 	lines.push("");
 	if (nullMode) {

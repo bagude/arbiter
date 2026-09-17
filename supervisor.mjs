@@ -92,9 +92,16 @@ let FORK_REQ = null;
 const FORK_SOURCE_WORKERS = [];
 if (FORK) {
 	if (PATTERN !== "orchestrator") { console.error("fork: only orchestrator runs can be forked"); process.exit(2); }
-	for (const p of [path.join(FORK_SRC, "requests", `${String(FORK.call).padStart(4, "0")}.json`), path.join(FORK_SRC, "sessions", "orchestrator"), path.join(FORK_SRC, "decisions.jsonl"), path.join(FORK_SRC, "prompts", "orchestrator.md")]) {
+	for (const p of [path.join(FORK_SRC, "requests", `${String(FORK.call).padStart(4, "0")}.json`), path.join(FORK_SRC, "sessions", "orchestrator"), path.join(FORK_SRC, "decisions.jsonl"), path.join(FORK_SRC, "prompts", "orchestrator.md"), path.join(FORK_SRC, "summary.json")]) {
 		if (!fs.existsSync(p)) { console.error(`fork: missing ${p}`); process.exit(2); }
 	}
+	// Nothing in the record carries the task or the model — the --config the operator passed
+	// does, and it drives installMounts, readMounts, the probe harness and the oracle. Forked
+	// with a different task, the orchestrator is restored with the source run's history and
+	// workspace and then probed and scored against a harness that has nothing to do with it:
+	// every number in the report is meaningless and nothing else would say so.
+	const FORK_SRC_SUMMARY = JSON.parse(fs.readFileSync(path.join(FORK_SRC, "summary.json"), "utf8"));
+	if (FORK_SRC_SUMMARY.task !== TASK_NAME) { console.error(`fork: ${FORK.run} ran task "${FORK_SRC_SUMMARY.task}", this config's task is "${TASK_NAME}" — a fork must run the task it was recorded on`); process.exit(2); }
 	// A fork reuses the SOURCE run's out-of-tree paths (see WSROOT/SESSIONS below), so
 	// only one run may hold them at a time. finish() removes both after archiving, which
 	// is what lets the runner start the next replicate.
@@ -114,6 +121,15 @@ if (FORK) {
 	// The fork instant. Every recorded worker and every recorded report is filtered on it, so
 	// a fork restores the world as it was when that request was sent and nothing later.
 	if (!Number.isFinite(FORK_REQ.ts)) { console.error(`fork: request ${FORK.call} carries no timestamp; nothing can be restored as of the fork instant`); process.exit(2); }
+	// The spec wants "same server, same quant, same sampler settings as recorded", and the
+	// recorded request names the model it was sent to. The config's orchestrator model is the
+	// same string pi puts in payload.model (checked against runs/2026-09-17T16-47-16's
+	// requests/0007.json, "qwen3-27b" on both sides), so a literal comparison is the check.
+	const FORK_SRC_MODEL = FORK_REQ.payload?.model ?? null;
+	if (FORK_SRC_MODEL && ROLES.orchestrator?.model && FORK_SRC_MODEL !== ROLES.orchestrator.model) {
+		console.error(`fork: request ${FORK.call} of ${FORK.run} was sent to model "${FORK_SRC_MODEL}", this config's orchestrator is "${ROLES.orchestrator.model}" — a fork must run against the model it was recorded on`);
+		process.exit(2);
+	}
 }
 
 // ---------- run directory ----------

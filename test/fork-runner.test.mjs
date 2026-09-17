@@ -92,11 +92,26 @@ test("planForks: replicates each get their own env and force file with the match
 });
 
 test("compareFirstRequest wraps payloadEquals over the .payload field", () => {
-	const source = { seq: 1, payload: { messages: [{ role: "system", content: "S" }], tools: [] } };
+	const source = { seq: 1, payload: { model: "qwen3-27b", messages: [{ role: "system", content: "S" }], tools: [] } };
 	const same = { seq: 1, payload: JSON.parse(JSON.stringify(source.payload)) };
-	assert.deepEqual(compareFirstRequest(source, same), { equal: true, firstDiff: null });
-	const diff = { seq: 1, payload: { messages: [{ role: "system", content: "S2" }], tools: [] } };
-	assert.deepEqual(compareFirstRequest(source, diff), { equal: false, firstDiff: { index: 0, field: "content" } });
+	assert.deepEqual(compareFirstRequest(source, same), { equal: true, firstDiff: null, settings: { equal: true, mismatched: [] } });
+	const diff = { seq: 1, payload: { model: "qwen3-27b", messages: [{ role: "system", content: "S2" }], tools: [] } };
+	assert.deepEqual(compareFirstRequest(source, diff), { equal: false, firstDiff: { index: 0, field: "content" }, settings: { equal: true, mismatched: [] } });
+});
+
+// payloadEquals deliberately ignores the generation settings, so without this a fork run
+// against a different model, or with thinking off, reported "state match: yes".
+test("compareFirstRequest names a model or thinking-level mismatch, separately from the conversation", () => {
+	const source = { payload: { model: "qwen3-27b", chat_template_kwargs: { enable_thinking: true }, messages: [{ role: "user", content: "U" }], tools: [] } };
+	const otherModel = { payload: { ...source.payload, model: "qwen3-9b" } };
+	const noThinking = { payload: { ...source.payload, chat_template_kwargs: { enable_thinking: false } } };
+	const both = { payload: { ...source.payload, model: "qwen3-9b", chat_template_kwargs: {} } };
+	for (const [req, expected] of [[otherModel, ["model"]], [noThinking, ["chat_template_kwargs"]], [both, ["model", "chat_template_kwargs"]]]) {
+		const r = compareFirstRequest(source, req);
+		assert.equal(r.equal, true, "the conversation itself is unchanged — that is the point");
+		assert.equal(r.settings.equal, false);
+		assert.deepEqual(r.settings.mismatched, expected);
+	}
 });
 
 test("compareFirstRequest handles a fork that never captured a first request", () => {
@@ -104,6 +119,21 @@ test("compareFirstRequest handles a fork that never captured a first request", (
 	const result = compareFirstRequest(source, null);
 	assert.equal(result.equal, false);
 	assert.ok(result.firstDiff);
+	assert.equal(result.settings, null, "nothing to compare settings against");
+});
+
+test("renderReport shows the settings column, and says which setting differs", () => {
+	const source = { runId: "r1", call: 3, recordedCls: "probe", substantive: null, headPick: null };
+	const rows = [
+		forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: true, firstDiff: null, settings: { equal: true, mismatched: [] } }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 1 }, exit: 0 }),
+		forkRow({ branch: "G", replicate: 2, runId: "run-2", compare: { equal: true, firstDiff: null, settings: { equal: false, mismatched: ["chat_template_kwargs"] } }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 1 }, exit: 0 }),
+		forkRow({ branch: "G", replicate: 3, runId: null, compare: { equal: false, firstDiff: "no fork request captured", settings: null }, sourceCls: "probe", decisions: [], oracle: "", summary: null, exit: 2 }),
+	];
+	const report = renderReport(source, rows, { nullMode: false });
+	assert.match(report, /\| settings \|/);
+	assert.match(report, /\| run-1 \|.*\| match \|/);
+	assert.match(report, /\| run-2 \|.*\| mismatch: chat_template_kwargs \|/);
+	assert.match(report, /\| G \| 3 \| — \|.*\| — \|/, "a replicate with no captured request has nothing to compare");
 });
 
 test("forkRow builds the row fields from a summary/decisions/audit-derived input, not crashed", () => {
