@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig, parseArgs } from "../lib/config.mjs";
 import { PATTERNS } from "../lib/patterns.mjs";
 
@@ -271,4 +272,13 @@ test("guards.topology: string mode, true, or { mode }; validated; off by default
 	assert.deepEqual(loadConfig({ configPath: tmpConfig({ ...base, guards: { topology: true } }), env: SKIP }).guards.topology, { mode: "nudge" });
 	assert.deepEqual(loadConfig({ configPath: tmpConfig({ ...base, guards: { topology: { mode: "enforce" } } }), env: SKIP }).guards.topology, { mode: "enforce" });
 	assert.throws(() => loadConfig({ configPath: tmpConfig({ ...base, guards: { topology: "loud" } }), env: SKIP }), /guards\.topology mode must be "nudge" or "enforce"/);
+});
+
+test("configs/orch-pathnorm-27b-topology.json loads: tester then implementer, nudge, memory search", () => {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const c = loadConfig({ configPath: path.join(here, "..", "configs", "orch-pathnorm-27b-topology.json"), env: SKIP });
+	assert.deepEqual(c.workers.use, ["tester", "implementer"]);
+	assert.deepEqual(c.guards.topology, { mode: "nudge" });
+	assert.equal(c.memory.mode, "search");
+	assert.equal(c.memory.retrievalChars, 9000);
 });

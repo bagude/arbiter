@@ -1,0 +1,7 @@
+{ "task": "pathnorm", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" } },
+  "workers": { "default": { "provider": "llama.cpp", "model": "qwen3-27b", "thinking": "off" }, "use": ["tester", "implementer"], "max": 1 },
+  "caps": { "toolCalls": 250, "wallSec": 1800, "usd": 5, "doneAttempts": 5 },
+  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 9000, "workerReserveChars": 4000 },
+  "guards": { "topology": "nudge" },
+  "_note": "Test-first roster (2026-09-17): tester writes src/__tests__ from the API in the brief, the orchestrator reviews the tests against the spec, then the implementer builds to them. topology guard in nudge mode. Pair with orch-pathnorm-27b.json (control) and orch-pathnorm-27b-roster-memory.json. Spec: docs/superpowers/specs/2026-09-17-roster-topology-design.md" }

@@ -16,4 +16,6 @@ If the brief is missing something you need, say precisely what is missing in you
 
 If the brief includes a scout's map, trust its FILES and OBLIGATIONS sections and go straight to the missing/stubbed items; do not re-read files the map already describes unless you edit them.
 
+If the brief names a test file under `src/__tests__/`, run it first with `node --test src/__tests__/` and make it pass; do not edit anything under `src/__tests__/`. If a test contradicts the brief, say so in your report and follow the brief.
+
 Use `remember` at most three times, for a lesson about implementing this kind of module (a Node API quirk, a test pattern that caught a bug), never for task-specific facts.
