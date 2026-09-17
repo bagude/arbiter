@@ -394,6 +394,63 @@ test("v3 bash: a template substitution does not hide a path", () => {
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// Review C5, pre-existing and wider than the mask: a shell parameter expansion vanishes
+// before the command runs, so the guard reads text the runtime never sees and the leftover
+// glues onto the following "..". `cat "$q../oracle/run.mjs"` read the oracle with no eval at
+// all, and did so at d02524e too. The same mistake as a template substitution, one layer
+// down: JavaScript punctuation absorbing the "..", now shell punctuation doing it.
+test("bash: a shell expansion does not glue the dot-dot away", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "path-policy-expand-"));
+	const taskDir = path.join(dir, "tasks", "pathnorm");
+	const root = path.join(taskDir, "ws-builder");
+	fs.mkdirSync(path.join(root, "src", "__tests__"), { recursive: true });
+	fs.mkdirSync(path.join(taskDir, "oracle"), { recursive: true });
+	fs.writeFileSync(path.join(taskDir, "oracle", "run.mjs"), "// hidden\n");
+	fs.mkdirSync(path.join(root, ".pi", "agents"), { recursive: true });
+	fs.writeFileSync(path.join(root, ".pi", "agents", "worker.md"), "# worker\n");
+	fs.writeFileSync(path.join(dir, "secret.txt"), "s\n");
+	const ev = (command) => decidePath({ root, tool: "bash", input: { command } });
+	const T = String.fromCharCode(96);
+
+	// No node -e anywhere: this half lives in judgeSegment and covers every bash command.
+	assert.equal(ev(`cat "$q../oracle/run.mjs"`).ok, false, "N1 quoted");
+	assert.equal(ev(`cat $q../oracle/run.mjs`).ok, false, "N2 bare");
+	assert.equal(ev(`cat "\${q}../oracle/run.mjs"`).ok, false, "N3 braced");
+	assert.equal(ev(`head -5 $q../oracle/run.mjs`).ok, false, "N4");
+	assert.equal(ev(`grep -n x $q../oracle/run.mjs`).ok, false, "N6");
+	assert.equal(ev(`cat ../oracle/run.mjs`).ok, false, "N5 the control still denies");
+
+	// And inside a double-quoted body, where a blanked literal never reaches judgeSegment.
+	assert.equal(ev(`node -e "readFileSync('$q../oracle/run.mjs')"`).ok, false, "P1");
+	assert.equal(ev(`node -e "readFileSync('\${q}../oracle/run.mjs')"`).ok, false, "P2");
+	assert.equal(ev(`node -e "readFileSync('$q.pi/agents/worker.md')"`).ok, false, "P3");
+	assert.equal(ev(`node -e "readFileSync('$q../../../secret.txt')"`).ok, false, "P4");
+	assert.equal(ev(`s=; node -e "readFileSync('$s../oracle/run.mjs')"`).ok, false, "P5, a name the line binds itself");
+	assert.equal(ev(`node -e "readFileSync(${T}$q../oracle/run.mjs${T})"`).ok, false, "P6, inside a template");
+	assert.match(ev(`node -e "readFileSync('$q../oracle/run.mjs')"`).reason, /single-quote the -e body, or build the path outside -e/);
+
+	// A single-quoted body does not expand, so there is nothing to judge.
+	assert.equal(ev(`node -e 'readFileSync("$q../x.mjs")'`).ok, true, "single-quoted body");
+	// The env patterns keep their own cases, and their better fragment.
+	const home = ev(`node -e "readFileSync('$HOME/x')"`);
+	assert.equal(home.ok, false);
+	assert.equal(home.fragment, "$HOME", "ENV_BARE still names the variable, not the whole literal");
+	// Ordinary work is untouched: this half sees every bash command.
+	for (const cmd of [
+		"ls src",
+		"cat src/pathnorm.mjs",
+		"node --test src/__tests__/",
+		"git status --short",
+		"echo $PATH",
+		"s=src; ls $s/",
+		"for f in src/*.mjs; do wc -l $f; done",
+		`node -e "console.log(/a$/.test('a'))"`,
+	]) {
+		assert.equal(ev(cmd).ok, true, cmd);
+	}
+	fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("v3 bash: the node -e existence check is injectable and decides both branches", () => {
 	const root = path.resolve("C:/work/runs/.ws-run/ws-builder");
 	const outside = path.resolve("C:/work/runs/.ws-run/secrets");
