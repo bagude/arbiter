@@ -291,6 +291,52 @@ test("v3 bash: a literal is judged by its decoded value, not only its source tex
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// The invariant, round 3: a span the matcher does not recognise is JUDGED, never erased.
+// Blanking an unrecognised span is fail-open, and three review rounds found three faces of
+// that one mistake. A backslash before a line terminator makes BODY_STRING miss the literal
+// entirely, so it fell into the code branch and was blanked — reading the oracle.
+test("v3 bash: an unrecognised span is judged, not erased", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "path-policy-span-"));
+	const taskDir = path.join(dir, "tasks", "pathnorm");
+	const root = path.join(taskDir, "ws-builder");
+	fs.mkdirSync(path.join(root, "src"), { recursive: true });
+	fs.mkdirSync(path.join(taskDir, "oracle"), { recursive: true });
+	fs.writeFileSync(path.join(taskDir, "oracle", "run.mjs"), "// hidden\n");
+	const ev = (command) => decidePath({ root, tool: "bash", input: { command } });
+	const B = "\\";
+	const NL = "\n";
+
+	// A literal BODY_STRING cannot match still has its path judged.
+	assert.equal(ev(`node -e 'readFileSync("../ora${B}${NL}cle/run.mjs")'`).ok, false, "line continuation, double-quoted literal");
+	assert.equal(ev(`node -e "readFileSync('../ora${B}${NL}cle/run.mjs')"`).ok, false, "line continuation, single-quoted literal");
+	assert.equal(ev(`node -e "const p = '../oracle/run.mjs';${NL}readFileSync(p)"`).ok, false, "a plain newline in the body");
+	assert.equal(ev("node -e 'readFileSync(String.raw`../oracle/run.mjs`)'").ok, false, "a tagged template");
+	assert.equal(ev(`node -e 'readFileSync(${B}'../oracle/run.mjs${B}')'`).ok, false, "a same-quote escape the matcher misses");
+
+	// And the twelve one-liners a worker would actually write all still pass. A code span is
+	// judged, so this is where a fail-closed default would show up as a false positive.
+	for (const cmd of [
+		`node -e 'console.log(s.replace(/${B}/+/g, "/"))'`,
+		`node -e 'console.log(sum(a) / sum(b))'`,
+		`node -e 'fetch("https://example.com/a/b")'`,
+		`node -e 'normalize("a/b") // see src/pathnorm.mjs'`,
+		`node -e 'const f = (a, b) => a > b ? a / b : b / a; console.log(f(1, 2))'`,
+		`node -e "import('./src/pathnorm.mjs').then(m => console.log(m.normalize('a//b')))"`,
+		`node -e 'apply(doc, [{op:"add", path:"/a/c", value:1}])'`,
+		`node -e 'render("{{#items}}x{{/items}}", d)'`,
+		`node -e "const segs = (s) => s.split('/').filter((x) => x && x !== '.'); console.log(segs('..'), segs('/c/d'), rel('..', '/c/d'))"`,
+		`node -e 'require("../ws-builder/src/pathnorm.mjs")'`,
+		`node -e 'console.log(1..toString())'`,
+		`node -e 'const f = (...xs) => xs.join("/"); console.log(f("a","b"))'`,
+	]) {
+		assert.equal(ev(cmd).ok, true, cmd);
+	}
+	// A run of separators is the same degenerate input as a lone one: `//` resolves to the
+	// drive root, exactly as `/` does, and is also how a line comment starts.
+	assert.equal(ev(`node -e 'x("//", "${B}${B}", "/")'`).ok, true, "separator runs are data");
+	fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("v3 bash: the node -e existence check is injectable and decides both branches", () => {
 	const root = path.resolve("C:/work/runs/.ws-run/ws-builder");
 	const outside = path.resolve("C:/work/runs/.ws-run/secrets");
