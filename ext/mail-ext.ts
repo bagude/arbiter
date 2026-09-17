@@ -46,7 +46,10 @@ const PROBE_HINT =
 			'args it ran — check that echo against what you meant to send before concluding a result is wrong. Body must be a ' +
 			'JSON array of {"id": "...", "fn": "<the exported function to call>", "args": [...]} — one entry per call, "args" ' +
 			'being that function\'s positional arguments. Most tasks\' probe runners reject a case with no "fn"; a ' +
-			'single-function task ignores it. Optionally add "expect" to a case (either a literal expected return value, or ' +
+			'single-function task ignores it; and a few take {"id": "...", "script": "<a JS body that returns a value>"} ' +
+			'instead, with no "fn" and no "args" at all. If a case comes back rejected, the probe runner\'s own header ' +
+			'comment in the task is the authority on which shape it takes. ' +
+			'Optionally add "expect" to a case (either a literal expected return value, or ' +
 			'{"throws":"SyntaxError"}) and the supervisor will tell you match/mismatch directly instead of you having to ' +
 			"compare by eye. Use probes instead of asking your counterpart to self-report test results. A case whose exact " +
 			"args you already probed against this same, unchanged code is NOT re-executed — the supervisor blocks it and " +
