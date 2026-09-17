@@ -1,6 +1,36 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { classOfCall, decideForce } from "../lib/policies/fork-force.mjs";
+import { classifyTurn, ACTION_CLASSES } from "../tools/decision-points.mjs";
+
+// The guard compares classOfCall's answer against a class the runner took from
+// decision-points, so the two classifiers must agree on every tool the orchestrator has. One
+// they disagree on makes a force spec no call can satisfy — the whole run is then denied.
+// `remember` was such a tool: listed as `memory` here, classified `inspect` there.
+test("classOfCall agrees with decision-points' classifyTurn on every orchestrator tool", () => {
+	const calls = [
+		["subagent", { subagent_type: "tester", prompt: "x" }],
+		["subagent", { resume: "id", prompt: "x" }],
+		["get_subagent_result", { id: "w" }],
+		["send_mail", { kind: "probe", body: "[]" }],
+		["send_mail", { kind: "done", body: "" }],
+		["send_mail", { kind: "memory", body: "" }],
+		["read", { path: "a" }],
+		["ls", { path: "." }],
+		["grep", { pattern: "x" }],
+		["bash", { command: "ls" }],
+		["memory_search", { query: "q" }],
+		["memory_get", { ids: [] }],
+		["remember", { text: "t" }],
+		["checkpoint", {}],
+		["context_usage", {}],
+	];
+	for (const [name, args] of calls) {
+		const viaTurn = classifyTurn([{ type: "toolCall", name, arguments: args }]).cls;
+		assert.equal(classOfCall(name, args), viaTurn, `${name} is classified differently by the two classifiers`);
+		assert.ok(ACTION_CLASSES.includes(viaTurn), `${viaTurn} is not one of the nine action classes`);
+	}
+});
 
 test("classOfCall mirrors decision-points' classes for a single tool call", () => {
 	assert.equal(classOfCall("subagent", { subagent_type: "tester", prompt: "x" }), "spawn");

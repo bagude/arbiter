@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { planForks, compareFirstRequest, forkRow, renderReport } from "../tools/fork.mjs";
+import { planForks, compareFirstRequest, forkRow, renderReport, collisionMessage } from "../tools/fork.mjs";
 
 test("planForks: G branch carries no action, and blanks ARBITER_FORK_FORCE rather than omitting it", () => {
 	const plans = planForks({ run: "r1", call: 5, branch: "G", replicates: 2 });
@@ -263,6 +263,38 @@ test("renderReport shows the fork_force and topology counts per replicate", () =
 	assert.match(report, /\| forced \(denied\/rewritten\) \| topology \(denied\/waived\) \|/);
 	assert.match(report, /\| run-a1 \|.*\| 0\/1 \| 2\/1 \|/, "the forced replicate shows its rewrite and the topology denials");
 	assert.match(report, /\| run-a2 \|.*\| 0\/0 \| 0\/0 \|/, "a replicate that forced nothing says so on its own row");
+});
+
+// The supervisor writes summary.fork with everything it restored, and the runner used to read
+// none of it: the producer and the consumer of that block were unconnected.
+test("renderReport carries the restored-worker counts from summary.fork", () => {
+	const source = { runId: "r1", call: 3, recordedCls: "probe", substantive: null, headPick: null };
+	const fork = { run: "r1", call: 3, sourceWorkers: [{ wid: "worker:a", liveAtFork: false }, { wid: "worker:b", liveAtFork: true }, { wid: "worker:c", liveAtFork: true }] };
+	const withFork = forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: true, firstDiff: null }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 1, fork }, exit: 0 });
+	assert.equal(withFork.sourceWorkers, 3);
+	assert.equal(withFork.liveAtFork, 2);
+	// An ordinary run carries fork: null; there is nothing to report, not zero of something.
+	const ordinary = forkRow({ branch: "G", replicate: 2, runId: "run-2", compare: { equal: true, firstDiff: null }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 1, fork: null }, exit: 0 });
+	assert.equal(ordinary.sourceWorkers, null);
+	assert.equal(ordinary.liveAtFork, null);
+	const report = renderReport(source, [withFork, ordinary], { nullMode: false });
+	assert.match(report, /\| workers restored \(live at fork\) \|/);
+	assert.match(report, /\| run-1 \|.*\| 3 \(2\) \|/);
+	assert.match(report, /\| run-2 \|.*\| — \|/);
+});
+
+// A replicate that dies at module scope after the workspace copy strands runs/.ws-<src>, and
+// every later replicate then exits 2 on the collision preflight. The batch must stop.
+test("collisionMessage finds the supervisor's collision preflight line in a replicate's log", () => {
+	const log = [
+		"[0.0s] some ordinary line",
+		"fork: C:\\Users\\x\\arbiter\\runs\\.ws-2026-09-17T16-47-16 already exists — a live run or another fork holds it; replicates must be serialised.",
+		"[0.1s] trailing",
+	].join("\n");
+	assert.match(collisionMessage(log), /\.ws-2026-09-17T16-47-16 already exists/);
+	assert.equal(collisionMessage("fork: missing C:/x/runs/r/summary.json"), null, "a different exit-2 preflight is this replicate's own problem");
+	assert.equal(collisionMessage(""), null);
+	assert.equal(collisionMessage(null), null);
 });
 
 test("renderReport in null mode adds the reproduction-rate line", () => {

@@ -180,6 +180,13 @@ export function forkRow({ branch, replicate, runId, compare, sourceCls, decision
 		resumes: decisions.filter((p) => p.action?.cls === "resume").length,
 		decoded: decisions.reduce((s, p) => s + (p.decoded ?? 0), 0),
 		wallSec: summary?.wallSec ?? null,
+		// What the supervisor recorded about the restoration itself. Without it the producer
+		// and the consumer of summary.fork are unconnected: how many of the source run's
+		// workers came back, and how many of those were still running at the fork instant (a
+		// worker restored as completed because no such process exists in the fork), is the
+		// difference between a fork that rebuilt the world and one that rebuilt part of it.
+		sourceWorkers: summary?.fork ? (summary.fork.sourceWorkers ?? []).length : null,
+		liveAtFork: summary?.fork ? (summary.fork.sourceWorkers ?? []).filter((w) => w.liveAtFork).length : null,
 		guards: {
 			forkForce: guardKinds(summary?.guards, "fork_force", ["denied", "rewritten"]),
 			topology: guardKinds(summary?.guards, "topology", ["denied", "waived"]),
@@ -190,6 +197,18 @@ export function forkRow({ branch, replicate, runId, compare, sourceCls, decision
 
 function paramsHead(params) {
 	return JSON.stringify(params ?? {}).slice(0, 60);
+}
+
+// The supervisor's collision preflight: a fork reuses the SOURCE run's out-of-tree paths, so
+// only one run may hold them at a time. Matched against a replicate's log because the failure
+// is not that replicate's. A replicate that dies at module scope after the workspace copy
+// leaves runs/.ws-<src> behind, and every LATER replicate then exits 2 here — one failure
+// costing the whole batch, every row after it identically crashed, with nothing saying why.
+const COLLISION = /^fork: .* already exists — a live run or another fork holds it/m;
+
+/** The collision line in a replicate's log, or null. */
+export function collisionMessage(log) {
+	return COLLISION.exec(String(log ?? ""))?.[0] ?? null;
 }
 
 /** Render the report: the source point, one row per replicate, and (nullMode) the
@@ -207,8 +226,8 @@ export function renderReport(source, rows, { nullMode = false } = {}) {
 	const subst = source.substantive?.cls ? `${source.substantive.cls} (${source.substantive.gatherSteps} gather step${source.substantive.gatherSteps === 1 ? "" : "s"})` : "none recorded";
 	const head = source.headPick ? `${source.headPick.pickClass} (p=${source.headPick.confidence.toFixed(2)})` : "not replayed";
 	lines.push(`Source point: recorded class **${source.recordedCls}**, next substantive action **${subst}**, head pick ${head}.`, "");
-	lines.push("| branch | replicate | run | exit | crashed | state match | settings | first action | reproduced | forced (denied/rewritten) | topology (denied/waived) | oracle | probes | resumes | decoded | wall s |");
-	lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+	lines.push("| branch | replicate | run | exit | crashed | state match | settings | first action | reproduced | forced (denied/rewritten) | topology (denied/waived) | workers restored (live at fork) | oracle | probes | resumes | decoded | wall s |");
+	lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
 	for (const r of rows) {
 		const fa = r.firstAction ? `${r.firstAction.cls} · ${r.firstAction.tool ?? "—"} · ${paramsHead(r.firstAction.params)}` : r.decisionsMissing ? "— (decision-points failed)" : "—";
 		const sm = r.stateMatch ? "yes" : `no (${JSON.stringify(r.firstDiff)})`;
@@ -222,7 +241,8 @@ export function renderReport(source, rows, { nullMode = false } = {}) {
 		// A fork the harness refused exits 0 with an ordinary summary, so the reason is the
 		// only thing that separates it from a run the model simply lost. Say which it was.
 		const crashed = r.crashed ? (r.forkAborted ? `yes — ${r.forkReason.replace(/\s+/g, " ").slice(0, 80)}` : "yes") : "no";
-		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${r.exit ?? "—"} | ${crashed} | ${sm} | ${settings} | ${fa} | ${rep} | ${forced} | ${topo} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
+		const workers = r.sourceWorkers === null ? "—" : `${r.sourceWorkers} (${r.liveAtFork})`;
+		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${r.exit ?? "—"} | ${crashed} | ${sm} | ${settings} | ${fa} | ${rep} | ${forced} | ${topo} | ${workers} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
 	}
 	lines.push("");
 	if (nullMode) {
@@ -296,7 +316,10 @@ function headPickFor(runDir, call) {
 	if (!fs.existsSync(file)) return null;
 	const rows = readJsonlSync(file);
 	const row = rows.find((r) => r.i === call - 1);
-	if (!row?.head) return null;
+	// renderReport calls confidence.toFixed(2), and this runs only after every replicate has
+	// already been run — so a replay row without a numeric confidence would crash the report
+	// at the one moment there is nothing left to retry. Read as "not replayed" instead.
+	if (!row?.head || typeof row.head.confidence !== "number") return null;
 	return { pickClass: row.head.pickClass, confidence: row.head.confidence };
 }
 
@@ -313,6 +336,10 @@ function runOnce(config, env, logFile) {
 			resolve({ code, runId: after.sort().pop() ?? null });
 		});
 	});
+}
+
+function collisionIn(logFile) {
+	return fs.existsSync(logFile) ? collisionMessage(fs.readFileSync(logFile, "utf8")) : null;
 }
 
 function oracleScores(runDir) {
@@ -351,10 +378,24 @@ async function main() {
 	const sourceReq = JSON.parse(fs.readFileSync(sourceReqFile, "utf8"));
 
 	const rows = [];
+	let abandoned = null;
 	for (const { env, branch, replicate, forceFile, forcePayload } of plan) {
 		if (forceFile) fs.writeFileSync(forceFile, JSON.stringify(forcePayload));
 		console.log(`[fork ${spec.runId}#${spec.call}] ${branch} replicate ${replicate}/${plan.filter((p) => p.branch === branch).length}: starting`);
-		const { code, runId } = await runOnce(spec.config, env, path.join(logDir, `${branch}-${replicate}.log`));
+		const logFile = path.join(logDir, `${branch}-${replicate}.log`);
+		const { code, runId } = await runOnce(spec.config, env, logFile);
+		// The collision preflight is not this replicate's problem: a fork reuses the source
+		// run's out-of-tree paths, so a leftover runs/.ws-<src> refuses this replicate and
+		// every one after it. Stop and say which directory is held, rather than spending the
+		// rest of the batch producing identical crashed rows.
+		const collision = code === 2 ? collisionIn(logFile) : null;
+		if (collision) {
+			abandoned = { branch, replicate, collision };
+			console.error(`[fork] ${branch}-${replicate} exited 2 on the collision preflight — ${collision}`);
+			console.error(`[fork] abandoning the rest of the batch: every later replicate would fail the same way. Remove the directory named above (no run is live if the supervisor already exited) and re-run.`);
+			rows.push(forkRow({ branch, replicate, runId: null, compare: { equal: false, firstDiff: "collision preflight" }, sourceCls, decisions: [], oracle: "", summary: null, exit: code }));
+			break;
+		}
 		if (!runId) {
 			console.error(`[fork] ${branch}-${replicate}: no new run directory appeared (exit ${code})`);
 			rows.push(forkRow({ branch, replicate, runId: null, compare: { equal: false, firstDiff: "no run produced" }, sourceCls, decisions: [], oracle: "", summary: null, exit: code }));
@@ -376,11 +417,15 @@ async function main() {
 	}
 
 	const source = { runId: spec.runId, call: spec.call, recordedCls: sourceCls, substantive: point.substantive ?? null, headPick: headPickFor(sourceDir, spec.call) };
-	const report = renderReport(source, rows, { nullMode: spec.nullMode });
+	let report = renderReport(source, rows, { nullMode: spec.nullMode });
+	if (abandoned) {
+		report += `\n**Batch abandoned** after ${abandoned.branch} replicate ${abandoned.replicate}: ${abandoned.collision}. ${plan.length - rows.length} replicate(s) of ${plan.length} were never run — every one of them would have failed the same way.\n`;
+	}
 	fs.mkdirSync(path.join(ROOT, "docs", "batch"), { recursive: true });
 	const reportName = `fork-${spec.runId}-${spec.call}.md`;
 	fs.writeFileSync(path.join(ROOT, "docs", "batch", reportName), report);
 	console.log(`[fork] report: docs/batch/${reportName}`);
+	if (abandoned) process.exit(2);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

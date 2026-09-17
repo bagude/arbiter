@@ -196,15 +196,29 @@ test("forkReplayOrder: a worker resumed after its last report is unreported in t
 
 test("forkCounters reads the harness state at the decision point and counts the mails sent before it", () => {
 	const pts = [
-		{ i: 0, action: { cls: "inspect" }, state: { probes: 0, doneAttempts: 0, pendingProbe: false } },
-		{ i: 1, action: { cls: "spawn" }, state: { probes: 0, doneAttempts: 0, pendingProbe: false } },
-		{ i: 2, action: { cls: "probe" }, state: { probes: 0, doneAttempts: 0, pendingProbe: false } },
-		{ i: 3, action: { cls: "memory" }, state: { probes: 1, doneAttempts: 0, pendingProbe: true } },
-		{ i: 4, action: { cls: "resume" }, state: { probes: 1, doneAttempts: 0, pendingProbe: false } },
+		{ i: 0, action: { cls: "inspect", tool: "read" }, state: { probes: 0, doneAttempts: 0, pendingProbe: false } },
+		{ i: 1, action: { cls: "spawn", tool: "subagent" }, state: { probes: 0, doneAttempts: 0, pendingProbe: false } },
+		{ i: 2, action: { cls: "probe", tool: "send_mail" }, state: { probes: 0, doneAttempts: 0, pendingProbe: false } },
+		{ i: 3, action: { cls: "memory", tool: "send_mail" }, state: { probes: 1, doneAttempts: 0, pendingProbe: true } },
+		{ i: 4, action: { cls: "resume", tool: "subagent" }, state: { probes: 1, doneAttempts: 0, pendingProbe: false } },
 	];
 	assert.deepEqual(forkCounters(pts, 5), { probeCount: 1, doneAttempts: 0, pendingProbe: false, mailCount: 2 });
 	assert.deepEqual(forkCounters(pts, 1), { probeCount: 0, doneAttempts: 0, pendingProbe: false, mailCount: 0 });
 	assert.throws(() => forkCounters(pts, 6), /no decision point/);
+});
+
+// classifyTurn gives the class `memory` to a send_mail whose kind is neither probe nor done
+// AND to the memory tools, which are not mail at all. Counting by class alone re-seeded
+// mailCount one too high per memory-tool call before the fork.
+test("forkCounters counts only send_mail calls as mail, not memory-tool calls sharing the class", () => {
+	const pts = [
+		{ i: 0, action: { cls: "memory", tool: "memory_search" }, state: { probes: 0, doneAttempts: 0, pendingProbe: false } },
+		{ i: 1, action: { cls: "memory", tool: "memory_get" }, state: { probes: 0, doneAttempts: 0, pendingProbe: false } },
+		{ i: 2, action: { cls: "probe", tool: "send_mail" }, state: { probes: 0, doneAttempts: 0, pendingProbe: false } },
+		{ i: 3, action: { cls: "done", tool: "send_mail" }, state: { probes: 1, doneAttempts: 0, pendingProbe: false } },
+		{ i: 4, action: { cls: "inspect", tool: "read" }, state: { probes: 1, doneAttempts: 1, pendingProbe: false } },
+	];
+	assert.equal(forkCounters(pts, 5).mailCount, 2, "the probe and the done, not the two memory lookups");
 });
 
 test("payloadEquals compares messages deeply and tool names, and names the first difference", () => {
