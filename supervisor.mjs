@@ -1404,7 +1404,21 @@ function runOracle() {
 		log({ type: "oracle", msg: verdict });
 		timeline.push({ ts: Date.now(), from: "supervisor", to: "both", kind: "oracle", body: verdict });
 		if (total > 0 && pass === total) return finish("SUCCESS: oracle passed");
-		if (doneAttempts >= CAPS.doneAttempts) return finish(`done attempts exhausted (${doneAttempts})`);
+		// The last attempt's verdict used to reach nobody: this branch finished before the
+		// deliver() below, so audit.jsonl showed "Oracle run #5: 69/70 passed." followed by
+		// "FINISH: done attempts exhausted (5)" with no delivery line between them. In run
+		// 2026-09-17T16-47-16 that fifth verdict was the only one with directional signal —
+		// four runs at 68/70 and then 69/70, which said the last edit had moved something —
+		// and it is the one nobody, agent or reader, was told.
+		//
+		// It is not delivered: finish() writes the summary and kills the agent processes, so
+		// no inference follows and a prompt sent here would be generated into a dying
+		// process. The score goes into the finish reason instead, which is summary.reason,
+		// the transcript's Outcome line and the FINISH row in the audit.
+		if (doneAttempts >= CAPS.doneAttempts) {
+			log({ type: "oracle", msg: `${verdict} Not delivered to any agent: the attempt cap (${CAPS.doneAttempts}) ends the run here.` });
+			return finish(`done attempts exhausted (${doneAttempts}); final oracle ${pass}/${total} passed`);
+		}
 		if (SOLO) {
 			deliver("builder", M.oracle.failedSolo(verdict, CAPS.doneAttempts - doneAttempts), "oracle verdict");
 		} else {
