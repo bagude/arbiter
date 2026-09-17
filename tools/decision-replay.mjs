@@ -49,8 +49,7 @@ function routingQuestion(valid) {
 // model reasons first, then a grammar forces exactly one letter after </think>; the
 // distribution is read from that last token's logprobs. Same state, same alphabet, so
 // the two modes separate "the abstraction is wrong" from "it needed to reason".
-const THINK_GRAMMAR = String.raw`root ::= "<think>" ( [^<] | "<" [^/] )* "</think>" [ 
-]* [A-I]`;
+const THINK_GRAMMAR = String.raw`root ::= "<think>" ( [^<] | "<" [^/] )* "</think>" [ \n]* [A-I]`;
 export function headRequest(payload, valid, { thinking = false } = {}) {
 	const messages = [...payload.messages, { role: "user", content: routingQuestion(valid) }];
 	return {
