@@ -1,6 +1,6 @@
 /**
  * Structural JSON diff/patch (RFC 6902) and JSON Pointer (RFC 6901) decoding.
- * Your counterpart holds the specification. Ask them.
+ * You do not have the specification; it comes from whoever briefs you.
  */
 
 export function diff(a, b) {

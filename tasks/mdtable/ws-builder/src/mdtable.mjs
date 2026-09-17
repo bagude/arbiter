@@ -1,6 +1,6 @@
 /**
  * Render an aligned Markdown table.
- * Your counterpart holds the specification. Ask them.
+ * You do not have the specification; it comes from whoever briefs you.
  */
 export function renderTable(header, rows, { align } = {}) {
 	throw new Error("not implemented");
@@ -8,7 +8,7 @@ export function renderTable(header, rows, { align } = {}) {
 
 /**
  * Parse an aligned Markdown table back into { header, rows, align }.
- * Your counterpart holds the specification. Ask them.
+ * You do not have the specification; it comes from whoever briefs you.
  */
 export function parseTable(text) {
 	throw new Error("not implemented");

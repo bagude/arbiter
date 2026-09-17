@@ -1,6 +1,6 @@
 /**
  * Closed-interval set algebra.
- * Your counterpart holds the specification. Ask them.
+ * You do not have the specification; it comes from whoever briefs you.
  */
 
 export function normalize(intervals) {
