@@ -40,13 +40,14 @@ test("truncateEntriesAt keeps the header and stops at the first entry past the i
 	assert.equal(kept[0].type, "session", "the header is kept");
 	assert.deepEqual(kept, entries.slice(0, 12), "the kept entries are the file's own, in order");
 	assert.ok(kept.every((e) => Date.parse(e.timestamp) <= cut), "nothing recorded after the instant survives");
-	// An instant past the whole file keeps everything the leaf rule allows — this fixture's
-	// last entry is an assistant message, so the cut retreats one to the tool result before
-	// it. An instant before the first body entry keeps only the header.
+	// An instant past the whole file keeps everything: this fixture is a finished worker whose
+	// last entry is its final answer (an assistant message with no tool call), a leaf a resume
+	// can re-prompt. An instant before the first body entry keeps only the header.
 	const whole = truncateEntriesAt(entries, Date.parse("2027-01-01T00:00:00.000Z"));
 	assert.equal(entries.at(-1).message.role, "assistant", "the fixture ends on an assistant message");
-	assert.equal(whole.length, 24);
-	assert.equal(whole.at(-1).message.role, "toolResult");
+	assert.ok(!entries.at(-1).message.content.some((c) => c?.type === "toolCall"), "…with no tool call in it");
+	assert.equal(whole.length, 25);
+	assert.deepEqual(whole, entries);
 	assert.deepEqual(truncateEntriesAt(entries, 0), [entries[0]]);
 	assert.deepEqual(truncateEntriesAt([], 1), []);
 	// An entry with no usable timestamp is kept only while no earlier entry has passed the
@@ -66,9 +67,8 @@ test("truncateEntriesAt keeps the header and stops at the first entry past the i
 });
 
 // The time cut alone lands wherever the clock falls, including between an assistant message and
-// the tool results answering its calls. A resume cannot continue from that leaf, so the tail
-// retreats to a user or tool-result message — the invariant Agent.continue() enforces, and the
-// one truncateSessionEntries already satisfies by construction.
+// the tool results answering its calls. A resume (a fresh user prompt on the session) cannot
+// continue from a dangling call, so the tail retreats past it; a plain final answer is kept.
 test("truncateEntriesAt retreats to a leaf a resume can continue from", () => {
 	const at = (s) => Date.parse(`2026-09-15T04:${s}Z`);
 	const msg = (role, min, content) => ({ type: "message", timestamp: at(min), message: { role, content: content ?? [] } });
@@ -96,18 +96,24 @@ test("truncateEntriesAt retreats to a leaf a resume can continue from", () => {
 	const early = truncateEntriesAt(entries, at("02:30.000"));
 	assert.deepEqual(early, entries.slice(0, 2));
 	assert.equal(early.at(-1).message.role, "user");
-	// (3) An all-assistant tail below the header leaves just the header; the header is never
+	// (3) A plain final answer is a valid leaf — a resume appends a user prompt after it — so a
+	// worker that finished before the instant keeps its last turn. Only a dangling tool call
+	// retreats.
+	const finished = [header, msg("user", "01:00.000"), msg("assistant", "02:00.000", [{ type: "toolCall", id: "a" }]), msg("toolResult", "03:00.000"), msg("assistant", "04:00.000", [{ type: "text", text: "done" }])];
+	assert.deepEqual(truncateEntriesAt(finished, at("09:00.000")), finished);
+	// (4) An all-dangling tail below the header leaves just the header; the header is never
 	// dropped, however far the retreat has to go.
-	const allAssistant = [header, msg("assistant", "01:00.000"), msg("assistant", "02:00.000")];
-	assert.deepEqual(truncateEntriesAt(allAssistant, at("09:00.000")), [header]);
+	const call = (min) => msg("assistant", min, [{ type: "toolCall", id: min }]);
+	const allDangling = [header, call("01:00.000"), call("02:00.000")];
+	assert.deepEqual(truncateEntriesAt(allDangling, at("09:00.000")), [header]);
 	// The first entry survives because it is the first entry, not because it happens to be a
 	// non-message header the retreat skips over. Pinned on a degenerate file whose very first
-	// entry is an assistant message, which the type-based reading would consume.
-	const headless = [msg("assistant", "01:00.000"), msg("assistant", "02:00.000")];
+	// entry is a dangling assistant message, which the type-based reading would consume.
+	const headless = [call("01:00.000"), call("02:00.000")];
 	assert.deepEqual(truncateEntriesAt(headless, at("09:00.000")), [headless[0]]);
-	// Non-message entries trailing the assistant leaf go with it, and a non-message entry is
+	// Non-message entries trailing a dangling leaf go with it, and a non-message entry is
 	// never itself the leaf the rule inspects.
-	const trailing = [header, msg("user", "01:00.000"), msg("assistant", "02:00.000"), { type: "model_change", timestamp: at("02:30.000") }];
+	const trailing = [header, msg("user", "01:00.000"), call("02:00.000"), { type: "model_change", timestamp: at("02:30.000") }];
 	assert.deepEqual(truncateEntriesAt(trailing, at("09:00.000")), trailing.slice(0, 2));
 });
 
