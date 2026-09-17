@@ -1,0 +1,7 @@
+{ "task": "raid-gear", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" } },
+  "workers": { "default": { "provider": "llama.cpp", "model": "qwen3-27b", "thinking": "off" }, "use": ["tester", "implementer"], "max": 1 },
+  "caps": { "toolCalls": 300, "wallSec": 5400, "usd": 5, "doneAttempts": 5 },
+  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 9000, "workerReserveChars": 4000, "readTask": "pathnorm" },
+  "guards": { "topology": "nudge" },
+  "_note": "Shuffled-memory null for the raid-gear class-C measurement (2026-09-17): identical to orch-raid-gear-27b-topology.json but reads task:pathnorm's memory instead of task:raid-gear's." }

@@ -1,0 +1,7 @@
+{ "task": "raid-gear", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" } },
+  "workers": { "default": { "provider": "llama.cpp", "model": "qwen3-27b", "thinking": "off" }, "use": ["tester", "implementer"], "max": 1 },
+  "caps": { "toolCalls": 300, "wallSec": 5400, "usd": 5, "doneAttempts": 5 },
+  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 9000, "workerReserveChars": 4000 },
+  "guards": { "topology": "nudge" },
+  "_note": "Class-C measurement (2026-09-17): test-first roster + topology nudge on a brownfield task (given src/raid.mjs core, deliver src/gear.mjs). Pair with orch-raid-gear-27b.json (control) and -shuffled.json (null). Ladder: docs/batch/roster-pathnorm-pair-2.md; spec docs/superpowers/specs/2026-09-17-roster-topology-design.md" }
