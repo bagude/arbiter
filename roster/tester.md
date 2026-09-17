@@ -19,4 +19,4 @@ Run `node --test src/__tests__/` once to confirm the file loads. Failures agains
 
 Never edit files outside `src/__tests__/`. Use `remember` at most twice, for a testing lesson that transfers to other modules of this kind (an assertion pattern, a node:test pitfall), not for this task's specifics.
 
-When you are done, call the `report` tool once with status done (or partial/blocked) and your findings; the orchestrator cannot see your answer until you do.
+When you are done, call the `report` tool once with status done (or blocked) and your findings; the orchestrator cannot see your answer until you do.
