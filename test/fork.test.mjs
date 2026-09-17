@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { truncateSessionEntries, truncateEntriesAt, rewriteSessionHeader, forkCounters, payloadEquals, forkSpec } from "../lib/fork.mjs";
+import { truncateSessionEntries, truncateEntriesAt, rewriteSessionHeader, forkCounters, forkReplayOrder, payloadEquals, forkSpec } from "../lib/fork.mjs";
 import { readSessionFile } from "../lib/context-trace.mjs";
+import { createTracker, ensureWorker, applyLifecycleEvent, unreportedWorkers } from "../lib/workers.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "fixtures", "run-trace", "sessions", "orchestrator", "2026-09-15T04-19-13-843Z_01a0a34a-5932-73db-aba5-dad81622d78a.jsonl");
@@ -125,6 +126,72 @@ test("rewriteSessionHeader replaces cwd and keeps the rest of the header", () =>
 	assert.equal(out[0].type, "session");
 	assert.notEqual(out[0], entries[0], "the original header object is not mutated");
 	assert.equal(out.length, entries.length);
+});
+
+// The done gate reads the ORDER of a worker's starts and reports, not their contents:
+// unreportedWorkers wants a report with seq > lastStartedSeq, and only started/resuming set
+// lastStartedSeq. Replaying reports alone gave every restored worker a lastStartedSeq of 0.
+test("forkReplayOrder merges the manifest's starts and the reports into one ts order, cut at the instant", () => {
+	const manifest = [
+		{ ts: 100, ev: "started", wid: "worker:a", description: "impl" },
+		{ ts: 110, ev: "bound", wid: "worker:a", sessionId: "s-a" }, // not a start: no seq of its own
+		{ ts: 200, ev: "completed", wid: "worker:a", status: "completed" },
+		{ ts: 300, ev: "resuming", wid: "worker:a" },
+		{ ts: 400, ev: "resumed", wid: "worker:a", status: "resumed" },
+		{ ts: 900, ev: "started", wid: "worker:b" }, // after the instant
+		{ ts: 150, ev: "started" }, // no wid: nothing to re-seed
+	];
+	const reports = [{ ts: 250, role: "worker:a", status: "ok" }, { ts: 950, role: "worker:b", status: "ok" }];
+	const order = forkReplayOrder(manifest, reports, 500);
+	assert.deepEqual(order.map((x) => [x.kind, x.ts]), [["start", 100], ["report", 250], ["start", 300]]);
+	assert.equal(order[0].ev, "started");
+	assert.equal(order[2].ev, "resuming");
+	assert.equal(order[1].row.role, "worker:a");
+	// Ties go to the report: tracker.seq exists because clocks tie, and a report sharing an
+	// instant with a start was filed by the run that preceded it.
+	const tied = forkReplayOrder([{ ts: 300, ev: "resuming", wid: "worker:a" }], [{ ts: 300, role: "worker:a" }], 500);
+	assert.deepEqual(tied.map((x) => x.kind), ["report", "start"]);
+	assert.deepEqual(forkReplayOrder(null, null, 500), []);
+});
+
+// The reviewer's scenario, replayed through the real reducer: a worker that completed, filed
+// a report, was resumed, and completed the resume without reporting again, all before the
+// fork instant. The source run refuses the orchestrator's `done` with "approval without
+// worker report"; the fork must refuse it too.
+test("forkReplayOrder: a worker resumed after its last report is unreported in the fork, as it was in the record", () => {
+	const manifest = [
+		{ ts: 100, ev: "started", wid: "worker:a" },
+		{ ts: 200, ev: "completed", wid: "worker:a", status: "completed" },
+		{ ts: 300, ev: "resuming", wid: "worker:a" },
+		{ ts: 400, ev: "resumed", wid: "worker:a", status: "resumed" },
+	];
+	const reports = [{ ts: 250, role: "worker:a", status: "ok", findings: [], verify: [], changed: [] }];
+
+	// Exactly what supervisor.mjs's fork block does: restore the worker as completed, then
+	// walk the merged order assigning one tracker.seq per item.
+	const replay = (order) => {
+		const tracker = createTracker();
+		const state = {};
+		const w = ensureWorker(state, "worker:a");
+		w.status = "completed";
+		w.busy = false;
+		for (const item of order) {
+			if (item.kind === "start") {
+				const seq = ++tracker.seq;
+				if (state[item.wid]) state[item.wid].lastStartedSeq = seq;
+				continue;
+			}
+			const row = item.row;
+			applyLifecycleEvent(tracker, state, [], { ev: "worker:report", data: { role: row.role, status: row.status, findings: 0, verify: 0, changed: 0, chars: 0, verifyCases: [] }, now: row.ts });
+		}
+		return unreportedWorkers(tracker, state);
+	};
+
+	assert.deepEqual(replay(forkReplayOrder(manifest, reports, 500)), ["worker:a"], "the resume outranks the report, so the done gate refuses");
+	// Cut the fork BEFORE the resume and the same worker is reported, as it was then.
+	assert.deepEqual(replay(forkReplayOrder(manifest, reports, 260)), [], "before the resume, the report is the worker's latest word");
+	// The old behaviour — reports only, no starts — called it reported in both cases.
+	assert.deepEqual(replay(forkReplayOrder([], reports, 500)), [], "reports alone can never make a worker unreported; this is the bug");
 });
 
 test("forkCounters reads the harness state at the decision point and counts the mails sent before it", () => {

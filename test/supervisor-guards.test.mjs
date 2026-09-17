@@ -118,10 +118,18 @@ test("supervisor's fork mode restores the source run's workers", () => {
 		["FORK_SOURCE_WORKERS.push(", "each restored worker must be recorded for summary.fork.sourceWorkers"],
 		// A fork restores the world as of request `call` and nothing later, so both the
 		// manifest and the reports are folded over records at or before FORK_REQ.ts.
-		["readManifest(FORK_SRC).filter((r) => r.ts <= FORK_REQ.ts)", "only workers that existed at the fork instant may be restored"],
+		["manifestJoin(sourceManifest.filter((r) => r.ts <= FORK_REQ.ts))", "only workers that existed at the fork instant may be restored"],
 		["fs.rmSync(p, { force: true })", "transcripts of workers spawned after the fork instant must be deleted, not left for FIFO binding"],
 		['ev: "worker:report"', "recorded reports must be replayed through the live lifecycle path so unreportedWorkers sees them"],
-		["readJsonl(reportsFile).filter((r) => r.ts <= FORK_REQ.ts)", "only reports filed at or before the fork instant may be replayed"],
+		// The done gate reads the ORDER of a worker's starts against its reports:
+		// unreportedWorkers wants a report with seq > lastStartedSeq, and only started/resuming
+		// set lastStartedSeq. Replaying the reports alone left every restored worker at
+		// lastStartedSeq 0, so a worker resumed after its last report — unreported in the source
+		// run, its done refused there — counted as reported in the fork. Both streams, one ts
+		// order (the helper also applies the instant cut), one tracker.seq per item.
+		["forkReplayOrder(sourceManifest, sourceReports, FORK_REQ.ts)", "starts and reports must be replayed as one stream in the record's own order, cut at the instant"],
+		["state[item.wid].lastStartedSeq = seq", "a restored worker's lastStartedSeq must be re-seeded from the record's own starts"],
+		["if (state[item.wid])", "a replayed start must not ensureWorker a phantom — liveWorkers() would then block the quiescence oracle for the whole run"],
 		["liveAtFork", "each restored worker must record whether it was still running at the fork instant"],
 		// manifestJoin's `resuming` case sets status "running" without clearing the endedTs an
 		// earlier terminal record left, so endedTs alone calls a worker mid-resume finished.
@@ -134,12 +142,20 @@ test("supervisor's fork mode restores the source run's workers", () => {
 		assert.ok(fork.includes(needle), `${why} (missing from the fork block: ${needle})`);
 	}
 	assert.match(src, /import \{[^}]*\btruncateEntriesAt\b[^}]*\} from "\.\/lib\/fork\.mjs"/, "truncateEntriesAt must come from ./lib/fork.mjs, where it is unit-tested");
+	assert.match(src, /import \{[^}]*\bforkReplayOrder\b[^}]*\} from "\.\/lib\/fork\.mjs"/, "forkReplayOrder must come from ./lib/fork.mjs, where it is unit-tested");
 	// Order is load-bearing: the tail offset must be the TRUNCATED size, so the cut has to
 	// happen before the tailer is positioned or everything after the instant is skipped
 	// rather than dropped.
 	assert.ok(
 		fork.indexOf("truncateEntriesAt(readSessionFile(p), FORK_REQ.ts)") < fork.indexOf("tail.offset = fs.statSync(p).size"),
 		"an inherited transcript must be truncated at the fork instant BEFORE its tail offset is taken",
+	);
+	// The worker-restoration loop must run BEFORE the merged replay: it is what puts each
+	// worker in `state` (so a replayed start has something to re-seed) and what fills
+	// tracker.bound (so workerIdForTranscriptName resolves each replayed report's role).
+	assert.ok(
+		fork.indexOf("ensureWorker(state, row.wid)") < fork.indexOf("forkReplayOrder(sourceManifest, sourceReports, FORK_REQ.ts)"),
+		"the source workers must be restored before their starts and reports are replayed",
 	);
 	const summaryLine = src.split("\n").find((l) => l.includes("summary.fork ="));
 	assert.ok(summaryLine, "summary.fork assignment missing");

@@ -36,7 +36,7 @@ import { contextTokensOf, decideCompaction, composeInstructions, ledgerLines } f
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 import { readJsonl } from "./lib/jsonl.mjs";
 import { argsKey as probeArgsKey, matchCase as matchProbeCase } from "./lib/probe-match.mjs";
-import { forkSpec, truncateSessionEntries, truncateEntriesAt, rewriteSessionHeader, forkCounters } from "./lib/fork.mjs";
+import { forkSpec, truncateSessionEntries, truncateEntriesAt, rewriteSessionHeader, forkCounters, forkReplayOrder } from "./lib/fork.mjs";
 import { readSessionFile } from "./lib/context-trace.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
@@ -1733,7 +1733,10 @@ if (FORK) {
 		// resumed after it reads `failed`, as it did then.
 		const tasksDir = childTranscriptDir(dstDir);
 		const kept = new Set();
-		for (const row of manifestJoin(readManifest(FORK_SRC).filter((r) => r.ts <= FORK_REQ.ts)).values()) {
+		// Read once: the join below restores each worker's state, and the lifecycle replay
+		// further down walks the same records for their `started`/`resuming` ordering.
+		const sourceManifest = readManifest(FORK_SRC);
+		for (const row of manifestJoin(sourceManifest.filter((r) => r.ts <= FORK_REQ.ts)).values()) {
 			// A worker whose `bound` record had not arrived by the fork instant has no transcript
 			// to attribute; its file is dropped below with the rest of what did not exist yet.
 			if (!row.sessionId || !tasksDir) continue;
@@ -1788,24 +1791,45 @@ if (FORK) {
 				dropped++;
 			}
 		}
-		// Reports filed at or before the fork instant, replayed through the same lifecycle path a
-		// live `report` tool call takes (ext/report-ext.ts emits the counts, not the arrays, and
-		// reports.jsonl stores the full entry — so the emit payload is rebuilt from the row).
-		// Without this the restored workers are all `unreportedWorkers`, and the fork's first
-		// done would be refused with "approval without worker report" naming a worker it never
-		// spawned. Going through applyLifecycleEvent also gives each report a tracker.seq above
-		// the restored workers' lastStartedSeq, with no sentinel anywhere.
+		// The source run's reports and worker starts at or before the fork instant, replayed as
+		// ONE stream in the record's own order (forkReplayOrder, unit-tested in lib/fork.mjs).
+		// Reports go through the same lifecycle path a live `report` tool call takes
+		// (ext/report-ext.ts emits the counts, not the arrays, and reports.jsonl stores the full
+		// entry — so the emit payload is rebuilt from the row). Without them the restored workers
+		// are all `unreportedWorkers` and the fork's first done is refused with "approval without
+		// worker report" naming a worker it never spawned.
+		//
+		// The starts are here because the done gate reads the ORDER, not the reports alone:
+		// unreportedWorkers wants a report with seq > lastStartedSeq, and only started/resuming
+		// set lastStartedSeq. Replaying the reports by themselves left every restored worker at
+		// lastStartedSeq 0, so a worker that was resumed after its last report — unreported in
+		// the source run, and a `done` there refused — counted as reported in the fork. Three of
+		// the twelve planned forks resume a source worker and one of the five frontier states is
+		// done-versus-probe, so that looseness lands on the experiment rather than beside it.
 		const reportsFile = path.join(FORK_SRC, "reports.jsonl");
+		const sourceReports = fs.existsSync(reportsFile) ? readJsonl(reportsFile) : [];
 		let restoredReports = 0;
-		if (fs.existsSync(reportsFile)) {
-			for (const row of readJsonl(reportsFile).filter((r) => r.ts <= FORK_REQ.ts)) {
-				const data = { role: row.role, status: row.status, findings: (row.findings ?? []).length, verify: (row.verify ?? []).length, changed: (row.changed ?? []).length, chars: JSON.stringify(row).length, verifyCases: row.verify ?? [] };
-				// Deliberately not through pumpLifecycle: that would also re-fire the autoProbe
-				// branch and re-run probes the source run already ran before the fork.
-				const { audit: lines } = applyLifecycleEvent(tracker, state, timeline, { ev: "worker:report", data, now: row.ts });
-				for (const line of lines) log(line);
-				restoredReports++;
+		let restoredStarts = 0;
+		for (const item of forkReplayOrder(sourceManifest, sourceReports, FORK_REQ.ts)) {
+			if (item.kind === "start") {
+				// One seq per item, so the numbering carries the record's interleaving — but only
+				// re-seed a worker this fork actually restored. ensureWorker here would invent a
+				// phantom at status "running", and liveWorkers() would then block the quiescence
+				// oracle for the rest of the run.
+				const seq = ++tracker.seq;
+				if (state[item.wid]) {
+					state[item.wid].lastStartedSeq = seq;
+					restoredStarts++;
+				}
+				continue;
 			}
+			const row = item.row;
+			const data = { role: row.role, status: row.status, findings: (row.findings ?? []).length, verify: (row.verify ?? []).length, changed: (row.changed ?? []).length, chars: JSON.stringify(row).length, verifyCases: row.verify ?? [] };
+			// Deliberately not through pumpLifecycle: that would also re-fire the autoProbe
+			// branch and re-run probes the source run already ran before the fork.
+			const { audit: lines } = applyLifecycleEvent(tracker, state, timeline, { ev: "worker:report", data, now: row.ts });
+			for (const line of lines) log(line);
+			restoredReports++;
 		}
 		// truncateSessionEntries throws when the recorded session has fewer assistant entries
 		// than `call`, and rewriteSessionHeader when the file does not start with a header;
@@ -1819,7 +1843,8 @@ if (FORK) {
 		// the forked inference sees the same prefix the recorded one did. This deliberately
 		// overrides the fresh prompt assembled above, including a fresh memory seed.
 		prompts.orchestrator = fs.readFileSync(path.join(FORK_SRC, "prompts", "orchestrator.md"), "utf8");
-		log({ type: "fork", msg: `session truncated at entry ${FORK_CUT} of ${FORK.run}; ${FORK_SOURCE_WORKERS.length} source worker(s) restored${FORK_SOURCE_WORKERS.length ? ` (${FORK_SOURCE_WORKERS.map((w) => `${w.wid} ${w.type ?? "?"}${w.liveAtFork ? " live-at-fork" : ""}`).join(", ")})` : ""}, ${restoredReports} report(s) replayed, ${dropped} post-fork transcript(s) dropped; recorded system prompt restored` });
+		log({ type: "fork", msg: `session truncated at entry ${FORK_CUT} of ${FORK.run}; ${FORK_SOURCE_WORKERS.length} source worker(s) restored${FORK_SOURCE_WORKERS.length ? ` (${FORK_SOURCE_WORKERS.map((w) => `${w.wid} ${w.type ?? "?"}${w.liveAtFork ? " live-at-fork" : ""}`).join(", ")})` : ""}, ${restoredReports} report(s) and ${restoredStarts} start(s) replayed in ts order, ${dropped} post-fork transcript(s) dropped; recorded system prompt restored` });
+		log({ type: "fork", msg: `unreported at the fork instant: ${unreportedWorkers(tracker, state).join(", ") || "none"}` });
 	} catch (err) {
 		forkAbort(err?.message ?? String(err));
 	}
