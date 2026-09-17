@@ -1,0 +1,276 @@
+#!/usr/bin/env node
+// Fork runner: drives supervisor.mjs's fork mode (env ARBITER_FORK[/ARBITER_FORK_FORCE],
+// lib/fork.mjs, ext/guards/fork-force.ts) to restore a recorded decision point and either
+// let the orchestrator continue on its own (branch G) or force its first tool call to a
+// class (A-natural) or a recorded class+tool+args (A-oracle). Spec:
+// docs/superpowers/specs/2026-09-17-fork-runner-design.md.
+//
+//   node tools/fork.mjs <runId> <call> --config <config.json> --branch G|A-natural|A-oracle
+//                        [--action <cls>] [--replicates N] [--null]
+//
+// <call> is the 1-based inference number in runs/<runId>/decisions.jsonl (point i = call-1)
+// that the fork restores. --null runs branch G and reports the null-gate read-out: how often
+// the restored run reproduces the recorded transition with no intervention at all — the
+// gate the twelve real forks in the design doc are conditioned on passing first.
+//
+// For A-oracle, --action may be omitted: the runner takes the recorded class and tool from
+// runs/<runId>/decisions.jsonl (point call-1) and the recorded arguments from the session
+// file's call-th assistant entry's first tool call.
+//
+// Each replicate is a child `node supervisor.mjs --config <cfg>` with ARBITER_FORK (+
+// ARBITER_FORK_FORCE for A branches) set, run to exit, its new run id found the way
+// tools/batch.mjs finds one (diff runs/ before/after). Then: `node tools/decision-points.mjs
+// <newId>`, a payload comparison of the fork's first captured request against the source's,
+// and a row built from the new run's decisions/summary/audit. Replicates run sequentially —
+// one model server slot.
+//
+// Report: docs/batch/fork-<runId>-<call>.md.
+import fs from "node:fs";
+import path from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { payloadEquals } from "../lib/fork.mjs";
+import { traceRun, readSessionFile } from "../lib/context-trace.mjs";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(here, "..");
+
+// ---------- pure parts (tested in test/fork-runner.test.mjs, no runs, no server) ----------
+
+/**
+ * Expand a fork spec into one env-object per replicate. `spec` is
+ * { run, call, branch, action?, replicates? } (action is required for A-natural; optional
+ * for A-oracle, where it is filled from `recorded` when omitted). `recorded` is
+ * { cls, tool, args } — the source run's actual call at `call`, required for A-oracle.
+ * Returns [{ env: { ARBITER_FORK, ARBITER_FORK_FORCE? }, branch, replicate }, ...].
+ */
+export function planForks(spec, recorded = null) {
+	const { run, call, branch, replicates = 1 } = spec;
+	let action = spec.action ?? null;
+	let tool = null;
+	let args = null;
+	if (branch === "A-oracle") {
+		if (!recorded) throw new Error("A-oracle needs the recorded action (cls, tool, args) to fill in when none is given explicitly");
+		action = action ?? recorded.cls;
+		tool = recorded.tool;
+		args = recorded.args ?? null;
+	} else if (branch === "A-natural") {
+		if (!action) throw new Error("A-natural requires an action class to force (--action, or the head's prediction)");
+	} else if (branch !== "G") {
+		throw new Error(`unknown branch ${branch}`);
+	}
+	const plans = [];
+	for (let replicate = 1; replicate <= replicates; replicate++) {
+		const fork = { run, call, branch, replicate };
+		if (branch !== "G") fork.action = action;
+		if (branch === "A-oracle") { fork.tool = tool; fork.args = args; }
+		const env = { ARBITER_FORK: JSON.stringify(fork) };
+		if (branch !== "G") {
+			const force = { cls: action };
+			if (branch === "A-oracle") { force.tool = tool; force.args = args; }
+			env.ARBITER_FORK_FORCE = JSON.stringify(force);
+		}
+		plans.push({ env, branch, replicate });
+	}
+	return plans;
+}
+
+/** Is the fork's first captured request the recorded one? sourceReq/forkReq are the raw
+ * requests/NNNN.json bodies ({ payload, ... }); forkReq may be null (fork captured nothing). */
+export function compareFirstRequest(sourceReq, forkReq) {
+	if (!forkReq) return { equal: false, firstDiff: "no fork request captured" };
+	return payloadEquals(sourceReq?.payload, forkReq.payload);
+}
+
+function guardTotal(guards, name) {
+	const g = guards?.[name];
+	if (!g) return 0;
+	return Object.values(g).reduce((sum, byAgent) => sum + Object.values(byAgent).reduce((a, b) => a + b, 0), 0);
+}
+
+/**
+ * One report row from already-loaded pieces: `compare` (compareFirstRequest's result),
+ * `sourceCls` (the source point's recorded action class), `decisions` (the fork run's
+ * decisions.jsonl records), `oracle` (the joined "x/y" oracle-run scores from its
+ * audit.jsonl), `summary` (its summary.json). `runId` is null when the fork produced no run.
+ */
+export function forkRow({ branch, replicate, runId, compare, sourceCls, decisions = [], oracle = "", summary = {} }) {
+	const first = decisions[0] ?? null;
+	const firstAction = first ? { cls: first.action.cls, tool: first.action.tool, params: first.action.params } : null;
+	return {
+		branch, replicate, runId,
+		stateMatch: compare?.equal ?? false,
+		firstDiff: compare?.firstDiff ?? null,
+		firstAction,
+		reproduced: firstAction ? firstAction.cls === sourceCls : null,
+		oracle,
+		probes: decisions.filter((p) => p.action?.cls === "probe").length,
+		resumes: decisions.filter((p) => p.action?.cls === "resume").length,
+		decoded: decisions.reduce((s, p) => s + (p.decoded ?? 0), 0),
+		wallSec: summary.wallSec ?? null,
+		guards: { forkForce: guardTotal(summary.guards, "fork_force"), topology: guardTotal(summary.guards, "topology") },
+	};
+}
+
+function paramsHead(params) {
+	return JSON.stringify(params ?? {}).slice(0, 60);
+}
+
+/** Render the report: the source point, one row per replicate, and (nullMode) the
+ * reproduction-rate line. `source` is { runId, call, recordedCls, substantive, headPick }. */
+export function renderReport(source, rows, { nullMode = false } = {}) {
+	const lines = [`# fork ${source.runId} #${source.call}`, ""];
+	const subst = source.substantive?.cls ? `${source.substantive.cls} (${source.substantive.gatherSteps} gather step${source.substantive.gatherSteps === 1 ? "" : "s"})` : "none recorded";
+	const head = source.headPick ? `${source.headPick.pickClass} (p=${source.headPick.confidence.toFixed(2)})` : "not replayed";
+	lines.push(`Source point: recorded class **${source.recordedCls}**, next substantive action **${subst}**, head pick ${head}.`, "");
+	lines.push("| branch | replicate | run | state match | first action | reproduced | oracle | probes | resumes | decoded | wall s |");
+	lines.push("|---|---|---|---|---|---|---|---|---|---|---|");
+	for (const r of rows) {
+		const fa = r.firstAction ? `${r.firstAction.cls} · ${r.firstAction.tool ?? "—"} · ${paramsHead(r.firstAction.params)}` : "—";
+		const sm = r.stateMatch ? "yes" : `no (${JSON.stringify(r.firstDiff)})`;
+		const rep = r.reproduced === null ? "—" : r.reproduced ? "yes" : "no";
+		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${sm} | ${fa} | ${rep} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
+	}
+	lines.push("");
+	if (nullMode) {
+		const n = rows.length;
+		const stateMatches = rows.filter((r) => r.stateMatch).length;
+		const reproduced = rows.filter((r) => r.reproduced).length;
+		lines.push(`null fork: state match ${stateMatches}/${n}, recorded class reproduced ${reproduced}/${n}`, "");
+	}
+	return lines.join("\n");
+}
+
+// ---------- impure: reading the recorded run, spawning replicates, writing the report ----------
+
+function usage(msg) {
+	if (msg) console.error(msg);
+	console.error("usage: node tools/fork.mjs <runId> <call> --config <config.json> --branch G|A-natural|A-oracle [--action <cls>] [--replicates N] [--null]");
+	process.exit(1);
+}
+
+function parseArgs(argv) {
+	const [runId, callStr, ...rest] = argv;
+	if (!runId || !callStr) usage();
+	const call = Number(callStr);
+	if (!Number.isInteger(call) || call < 1) usage(`<call> must be a positive integer, got ${callStr}`);
+	const opts = { config: null, branch: null, action: null, replicates: 1, nullMode: false };
+	for (let i = 0; i < rest.length; i++) {
+		const a = rest[i];
+		if (a === "--config") opts.config = rest[++i];
+		else if (a === "--branch") opts.branch = rest[++i];
+		else if (a === "--action") opts.action = rest[++i];
+		else if (a === "--replicates") opts.replicates = Number(rest[++i]);
+		else if (a === "--null") opts.nullMode = true;
+		else usage(`unknown flag ${a}`);
+	}
+	if (!opts.config) usage("--config is required");
+	if (opts.nullMode) opts.branch = opts.branch ?? "G";
+	if (!opts.branch) usage("--branch is required (or pass --null)");
+	if (opts.nullMode && opts.branch !== "G") usage("--null runs branch G; drop --null or set --branch G");
+	if (!["G", "A-natural", "A-oracle"].includes(opts.branch)) usage(`--branch must be G, A-natural or A-oracle, got ${opts.branch}`);
+	if (!Number.isInteger(opts.replicates) || opts.replicates < 1) usage(`--replicates must be a positive integer, got ${opts.replicates}`);
+	return { runId, call, ...opts };
+}
+
+function readJsonlSync(file) {
+	if (!fs.existsSync(file)) return [];
+	return fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+}
+
+/** The recorded call's class, tool and raw arguments — decisions.jsonl has the first two
+ * (params there are already redacted/summarised); the arguments come from the orchestrator's
+ * session file, the call-th assistant entry's first tool call. */
+function recordedAction(runDir, call, point) {
+	const trace = traceRun(runDir);
+	const oi = trace.agents.findIndex((a) => a.role !== "worker");
+	if (oi < 0) throw new Error(`${runDir}: no orchestrator session found`);
+	const sessionFile = path.join(runDir, "sessions", trace.agents[oi].file);
+	const turns = readSessionFile(sessionFile).filter((e) => e.type === "message" && e.message?.role === "assistant" && e.message?.usage);
+	const turn = turns[call - 1];
+	const first = (turn?.message?.content ?? []).find((c) => c.type === "toolCall");
+	return { cls: point.action.cls, tool: point.action.tool, args: first?.arguments ?? null };
+}
+
+/** The head's pick at this point, from decisions-replay-substantive.jsonl, if that replay
+ * was run (docs/batch's decision-head reports). Absent that file, the report says so. */
+function headPickFor(runDir, call) {
+	const file = path.join(runDir, "decisions-replay-substantive.jsonl");
+	if (!fs.existsSync(file)) return null;
+	const rows = readJsonlSync(file);
+	const row = rows.find((r) => r.i === call - 1);
+	if (!row?.head) return null;
+	return { pickClass: row.head.pickClass, confidence: row.head.confidence };
+}
+
+function runOnce(config, env, logFile) {
+	return new Promise((resolve) => {
+		const before = new Set(fs.readdirSync(path.join(ROOT, "runs")));
+		const log = fs.openSync(logFile, "w");
+		const child = spawn(process.execPath, [path.join(ROOT, "supervisor.mjs"), "--config", config], {
+			cwd: ROOT, stdio: ["ignore", log, log], env: { ...process.env, ...env },
+		});
+		child.on("exit", (code) => {
+			fs.closeSync(log);
+			const after = fs.readdirSync(path.join(ROOT, "runs")).filter((d) => !before.has(d) && /^\d{4}-/.test(d));
+			resolve({ code, runId: after.sort().pop() ?? null });
+		});
+	});
+}
+
+function oracleScores(runDir) {
+	const file = path.join(runDir, "audit.jsonl");
+	if (!fs.existsSync(file)) return "";
+	return (fs.readFileSync(file, "utf8").match(/Oracle run #\d+: (\d+\/\d+)/g) ?? []).map((m) => m.replace(/.*: /, "")).join(", ");
+}
+
+async function main() {
+	const spec = parseArgs(process.argv.slice(2));
+	const sourceDir = path.join(ROOT, "runs", spec.runId);
+	const decisionsPath = path.join(sourceDir, "decisions.jsonl");
+	if (!fs.existsSync(decisionsPath)) usage(`${spec.runId}: no decisions.jsonl (run node tools/decision-points.mjs ${spec.runId} first)`);
+	const points = readJsonlSync(decisionsPath);
+	const point = points.find((p) => p.i === spec.call - 1);
+	if (!point) usage(`${spec.runId}: no decision point at call ${spec.call} (${points.length} points recorded)`);
+	const sourceCls = point.action.cls;
+
+	const recorded = spec.branch === "A-oracle" ? recordedAction(sourceDir, spec.call, point) : null;
+	const plan = planForks({ run: spec.runId, call: spec.call, branch: spec.branch, action: spec.action, replicates: spec.replicates }, recorded);
+
+	const sourceReqFile = path.join(sourceDir, "requests", `${String(spec.call).padStart(4, "0")}.json`);
+	if (!fs.existsSync(sourceReqFile)) usage(`${spec.runId}: no ${sourceReqFile} (this run has no captured request for call ${spec.call})`);
+	const sourceReq = JSON.parse(fs.readFileSync(sourceReqFile, "utf8"));
+
+	const logDir = path.join(ROOT, "runs", `.batch-fork-${spec.runId}-${spec.call}`);
+	fs.mkdirSync(logDir, { recursive: true });
+
+	const rows = [];
+	for (const { env, branch, replicate } of plan) {
+		console.log(`[fork ${spec.runId}#${spec.call}] ${branch} replicate ${replicate}/${plan.filter((p) => p.branch === branch).length}: starting`);
+		const { code, runId } = await runOnce(spec.config, env, path.join(logDir, `${branch}-${replicate}.log`));
+		if (!runId) {
+			console.error(`[fork] ${branch}-${replicate}: no new run directory appeared (exit ${code})`);
+			rows.push(forkRow({ branch, replicate, runId: null, compare: { equal: false, firstDiff: "no run produced" }, sourceCls, decisions: [], oracle: "", summary: {} }));
+			continue;
+		}
+		spawnSync(process.execPath, [path.join(ROOT, "tools", "decision-points.mjs"), runId], { cwd: ROOT, stdio: "ignore" });
+		const runDir = path.join(ROOT, "runs", runId);
+		const forkReqFile = path.join(runDir, "requests", "0001.json");
+		const forkReq = fs.existsSync(forkReqFile) ? JSON.parse(fs.readFileSync(forkReqFile, "utf8")) : null;
+		const compare = compareFirstRequest(sourceReq, forkReq);
+		const decisions = readJsonlSync(path.join(runDir, "decisions.jsonl"));
+		const summary = fs.existsSync(path.join(runDir, "summary.json")) ? JSON.parse(fs.readFileSync(path.join(runDir, "summary.json"), "utf8")) : {};
+		const row = forkRow({ branch, replicate, runId, compare, sourceCls, decisions, oracle: oracleScores(runDir), summary });
+		rows.push(row);
+		console.log(`[fork] ${branch}-${replicate} → ${runId} stateMatch=${row.stateMatch} reproduced=${row.reproduced} oracle=${row.oracle || "—"}`);
+	}
+
+	const source = { runId: spec.runId, call: spec.call, recordedCls: sourceCls, substantive: point.substantive ?? null, headPick: headPickFor(sourceDir, spec.call) };
+	const report = renderReport(source, rows, { nullMode: spec.nullMode });
+	fs.mkdirSync(path.join(ROOT, "docs", "batch"), { recursive: true });
+	const reportName = `fork-${spec.runId}-${spec.call}.md`;
+	fs.writeFileSync(path.join(ROOT, "docs", "batch", reportName), report);
+	console.log(`[fork] report: docs/batch/${reportName}`);
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
