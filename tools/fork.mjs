@@ -22,7 +22,14 @@
 // tools/batch.mjs finds one (diff runs/ before/after). Then: `node tools/decision-points.mjs
 // <newId>`, a payload comparison of the fork's first captured request against the source's,
 // and a row built from the new run's decisions/summary/audit. Replicates run sequentially —
-// one model server slot.
+// one model server slot. A-oracle's recorded arguments go to
+// runs/.batch-fork-<runId>-<call>/force-<branch>-<replicate>.json rather than inline in
+// ARBITER_FORK_FORCE, which just points at it ("@<path>") — a recorded probe body can be
+// arbitrary JSON, and Windows caps a process's whole environment block at ~32 KB.
+//
+// A crashed replicate (non-zero supervisor exit, or no summary.json) is still reported, but
+// excluded from the null-gate reproduction counts — its numbers describe a run that never
+// finished.
 //
 // Report: docs/batch/fork-<runId>-<call>.md.
 import fs from "node:fs";
@@ -41,10 +48,21 @@ const ROOT = path.join(here, "..");
  * Expand a fork spec into one env-object per replicate. `spec` is
  * { run, call, branch, action?, replicates? } (action is required for A-natural; optional
  * for A-oracle, where it is filled from `recorded` when omitted). `recorded` is
- * { cls, tool, args } — the source run's actual call at `call`, required for A-oracle.
- * Returns [{ env: { ARBITER_FORK, ARBITER_FORK_FORCE? }, branch, replicate }, ...].
+ * { cls, tool, args } — the source run's actual call at `call`, required for A-oracle, whose
+ * `tool` must be non-null (a null tool means the recorded point was an "answer" with no tool
+ * call to force). `forceDir`, required only for A-oracle, is where its recorded `args` are
+ * written to disk: they can be arbitrary JSON (a probe body, say) large enough to blow past
+ * Windows' ~32 KB process-environment-block limit if carried inline in ARBITER_FORK_FORCE, so
+ * ext/guards/fork-force.ts instead reads them from a file named "@<path>" in that env var.
+ * A-natural's force spec is just { cls } — small enough to stay inline — and G needs no forcing
+ * at all. `args` is deliberately kept out of ARBITER_FORK itself: lib/fork.mjs's forkSpec only
+ * needs `tool` to restore an A-oracle fork; the parameters themselves travel only through the
+ * force file, never through the supervisor's own env.
+ * Returns [{ env: { ARBITER_FORK, ARBITER_FORK_FORCE? }, branch, replicate, forceFile?,
+ * forcePayload? }, ...] — a plan with a `forceFile` needs it written (JSON.stringify(forcePayload))
+ * before the replicate is spawned.
  */
-export function planForks(spec, recorded = null) {
+export function planForks(spec, recorded = null, { forceDir = null } = {}) {
 	const { run, call, branch, replicates = 1 } = spec;
 	let action = spec.action ?? null;
 	let tool = null;
@@ -54,6 +72,7 @@ export function planForks(spec, recorded = null) {
 		action = action ?? recorded.cls;
 		tool = recorded.tool;
 		args = recorded.args ?? null;
+		if (!tool) throw new Error(`A-oracle needs a recorded tool call to force, but the recorded point at call ${call} is an "answer" (no tool call) — pick a different call`);
 	} else if (branch === "A-natural") {
 		if (!action) throw new Error("A-natural requires an action class to force (--action, or the head's prediction)");
 	} else if (branch !== "G") {
@@ -63,13 +82,16 @@ export function planForks(spec, recorded = null) {
 	for (let replicate = 1; replicate <= replicates; replicate++) {
 		const fork = { run, call, branch, replicate };
 		if (branch !== "G") fork.action = action;
-		if (branch === "A-oracle") { fork.tool = tool; fork.args = args; }
+		if (branch === "A-oracle") fork.tool = tool; // args deliberately excluded — see above
 		const env = { ARBITER_FORK: JSON.stringify(fork) };
-		if (branch !== "G") {
-			const force = { cls: action };
-			if (branch === "A-oracle") { force.tool = tool; force.args = args; }
-			env.ARBITER_FORK_FORCE = JSON.stringify(force);
+		if (branch === "A-oracle") {
+			if (!forceDir) throw new Error("A-oracle needs a forceDir to write its recorded arguments to (the env cannot carry them safely — see the Windows env-size note above)");
+			const forcePayload = { cls: action, tool, args };
+			const forceFile = path.join(forceDir, `force-${branch}-${replicate}.json`);
+			plans.push({ env: { ...env, ARBITER_FORK_FORCE: `@${forceFile}` }, branch, replicate, forceFile, forcePayload });
+			continue;
 		}
+		if (branch !== "G") env.ARBITER_FORK_FORCE = JSON.stringify({ cls: action });
 		plans.push({ env, branch, replicate });
 	}
 	return plans;
@@ -92,13 +114,21 @@ function guardTotal(guards, name) {
  * One report row from already-loaded pieces: `compare` (compareFirstRequest's result),
  * `sourceCls` (the source point's recorded action class), `decisions` (the fork run's
  * decisions.jsonl records), `oracle` (the joined "x/y" oracle-run scores from its
- * audit.jsonl), `summary` (its summary.json). `runId` is null when the fork produced no run.
+ * audit.jsonl), `summary` (its summary.json, or null when the run never wrote one). `runId` is
+ * null when the fork produced no run at all. `exit` is the supervisor child's own exit code;
+ * `crashed` is true when that exit was non-zero or `summary` is null — either way, this
+ * replicate's numbers (oracle, probes, decoded, ...) describe a run that did not finish
+ * normally and should not count toward a reproduction rate. `decisionsMissing` is true when
+ * `tools/decision-points.mjs` failed on this run (so `decisions` may be stale or empty even
+ * though the run itself did not crash).
  */
-export function forkRow({ branch, replicate, runId, compare, sourceCls, decisions = [], oracle = "", summary = {} }) {
+export function forkRow({ branch, replicate, runId, compare, sourceCls, decisions = [], oracle = "", summary = null, exit = null, decisionsMissing = false }) {
 	const first = decisions[0] ?? null;
 	const firstAction = first ? { cls: first.action.cls, tool: first.action.tool, params: first.action.params } : null;
+	const crashed = (exit !== null && exit !== 0) || summary === null;
 	return {
 		branch, replicate, runId,
+		exit, crashed,
 		stateMatch: compare?.equal ?? false,
 		firstDiff: compare?.firstDiff ?? null,
 		firstAction,
@@ -107,8 +137,9 @@ export function forkRow({ branch, replicate, runId, compare, sourceCls, decision
 		probes: decisions.filter((p) => p.action?.cls === "probe").length,
 		resumes: decisions.filter((p) => p.action?.cls === "resume").length,
 		decoded: decisions.reduce((s, p) => s + (p.decoded ?? 0), 0),
-		wallSec: summary.wallSec ?? null,
-		guards: { forkForce: guardTotal(summary.guards, "fork_force"), topology: guardTotal(summary.guards, "topology") },
+		wallSec: summary?.wallSec ?? null,
+		guards: { forkForce: guardTotal(summary?.guards, "fork_force"), topology: guardTotal(summary?.guards, "topology") },
+		decisionsMissing,
 	};
 }
 
@@ -117,26 +148,30 @@ function paramsHead(params) {
 }
 
 /** Render the report: the source point, one row per replicate, and (nullMode) the
- * reproduction-rate line. `source` is { runId, call, recordedCls, substantive, headPick }. */
+ * reproduction-rate line. `source` is { runId, call, recordedCls, substantive, headPick }.
+ * Crashed replicates (see forkRow) are shown in the table but excluded from the null-gate
+ * counts, since their numbers describe a run that never finished. */
 export function renderReport(source, rows, { nullMode = false } = {}) {
 	const lines = [`# fork ${source.runId} #${source.call}`, ""];
 	const subst = source.substantive?.cls ? `${source.substantive.cls} (${source.substantive.gatherSteps} gather step${source.substantive.gatherSteps === 1 ? "" : "s"})` : "none recorded";
 	const head = source.headPick ? `${source.headPick.pickClass} (p=${source.headPick.confidence.toFixed(2)})` : "not replayed";
 	lines.push(`Source point: recorded class **${source.recordedCls}**, next substantive action **${subst}**, head pick ${head}.`, "");
-	lines.push("| branch | replicate | run | state match | first action | reproduced | oracle | probes | resumes | decoded | wall s |");
-	lines.push("|---|---|---|---|---|---|---|---|---|---|---|");
+	lines.push("| branch | replicate | run | exit | crashed | state match | first action | reproduced | oracle | probes | resumes | decoded | wall s |");
+	lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
 	for (const r of rows) {
-		const fa = r.firstAction ? `${r.firstAction.cls} · ${r.firstAction.tool ?? "—"} · ${paramsHead(r.firstAction.params)}` : "—";
+		const fa = r.firstAction ? `${r.firstAction.cls} · ${r.firstAction.tool ?? "—"} · ${paramsHead(r.firstAction.params)}` : r.decisionsMissing ? "— (decision-points failed)" : "—";
 		const sm = r.stateMatch ? "yes" : `no (${JSON.stringify(r.firstDiff)})`;
 		const rep = r.reproduced === null ? "—" : r.reproduced ? "yes" : "no";
-		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${sm} | ${fa} | ${rep} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
+		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${r.exit ?? "—"} | ${r.crashed ? "yes" : "no"} | ${sm} | ${fa} | ${rep} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
 	}
 	lines.push("");
 	if (nullMode) {
-		const n = rows.length;
-		const stateMatches = rows.filter((r) => r.stateMatch).length;
-		const reproduced = rows.filter((r) => r.reproduced).length;
-		lines.push(`null fork: state match ${stateMatches}/${n}, recorded class reproduced ${reproduced}/${n}`, "");
+		const included = rows.filter((r) => !r.crashed);
+		const crashedCount = rows.length - included.length;
+		const n = included.length;
+		const stateMatches = included.filter((r) => r.stateMatch).length;
+		const reproduced = included.filter((r) => r.reproduced).length;
+		lines.push(`null fork: state match ${stateMatches}/${n}, recorded class reproduced ${reproduced}/${n} (${crashedCount} crashed, excluded)`, "");
 	}
 	return lines.join("\n");
 }
@@ -234,35 +269,39 @@ async function main() {
 	if (!point) usage(`${spec.runId}: no decision point at call ${spec.call} (${points.length} points recorded)`);
 	const sourceCls = point.action.cls;
 
+	const logDir = path.join(ROOT, "runs", `.batch-fork-${spec.runId}-${spec.call}`);
+	fs.mkdirSync(logDir, { recursive: true });
+
 	const recorded = spec.branch === "A-oracle" ? recordedAction(sourceDir, spec.call, point) : null;
-	const plan = planForks({ run: spec.runId, call: spec.call, branch: spec.branch, action: spec.action, replicates: spec.replicates }, recorded);
+	const plan = planForks({ run: spec.runId, call: spec.call, branch: spec.branch, action: spec.action, replicates: spec.replicates }, recorded, { forceDir: logDir });
 
 	const sourceReqFile = path.join(sourceDir, "requests", `${String(spec.call).padStart(4, "0")}.json`);
 	if (!fs.existsSync(sourceReqFile)) usage(`${spec.runId}: no ${sourceReqFile} (this run has no captured request for call ${spec.call})`);
 	const sourceReq = JSON.parse(fs.readFileSync(sourceReqFile, "utf8"));
 
-	const logDir = path.join(ROOT, "runs", `.batch-fork-${spec.runId}-${spec.call}`);
-	fs.mkdirSync(logDir, { recursive: true });
-
 	const rows = [];
-	for (const { env, branch, replicate } of plan) {
+	for (const { env, branch, replicate, forceFile, forcePayload } of plan) {
+		if (forceFile) fs.writeFileSync(forceFile, JSON.stringify(forcePayload));
 		console.log(`[fork ${spec.runId}#${spec.call}] ${branch} replicate ${replicate}/${plan.filter((p) => p.branch === branch).length}: starting`);
 		const { code, runId } = await runOnce(spec.config, env, path.join(logDir, `${branch}-${replicate}.log`));
 		if (!runId) {
 			console.error(`[fork] ${branch}-${replicate}: no new run directory appeared (exit ${code})`);
-			rows.push(forkRow({ branch, replicate, runId: null, compare: { equal: false, firstDiff: "no run produced" }, sourceCls, decisions: [], oracle: "", summary: {} }));
+			rows.push(forkRow({ branch, replicate, runId: null, compare: { equal: false, firstDiff: "no run produced" }, sourceCls, decisions: [], oracle: "", summary: null, exit: code }));
 			continue;
 		}
-		spawnSync(process.execPath, [path.join(ROOT, "tools", "decision-points.mjs"), runId], { cwd: ROOT, stdio: "ignore" });
+		const dp = spawnSync(process.execPath, [path.join(ROOT, "tools", "decision-points.mjs"), runId], { cwd: ROOT, stdio: "ignore" });
+		const decisionsMissing = dp.status !== 0;
+		if (decisionsMissing) console.error(`[fork] ${branch}-${replicate}: tools/decision-points.mjs exited ${dp.status} for ${runId}`);
 		const runDir = path.join(ROOT, "runs", runId);
 		const forkReqFile = path.join(runDir, "requests", "0001.json");
 		const forkReq = fs.existsSync(forkReqFile) ? JSON.parse(fs.readFileSync(forkReqFile, "utf8")) : null;
 		const compare = compareFirstRequest(sourceReq, forkReq);
 		const decisions = readJsonlSync(path.join(runDir, "decisions.jsonl"));
-		const summary = fs.existsSync(path.join(runDir, "summary.json")) ? JSON.parse(fs.readFileSync(path.join(runDir, "summary.json"), "utf8")) : {};
-		const row = forkRow({ branch, replicate, runId, compare, sourceCls, decisions, oracle: oracleScores(runDir), summary });
+		const summaryFile = path.join(runDir, "summary.json");
+		const summary = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")) : null;
+		const row = forkRow({ branch, replicate, runId, compare, sourceCls, decisions, oracle: oracleScores(runDir), summary, exit: code, decisionsMissing });
 		rows.push(row);
-		console.log(`[fork] ${branch}-${replicate} → ${runId} stateMatch=${row.stateMatch} reproduced=${row.reproduced} oracle=${row.oracle || "—"}`);
+		console.log(`[fork] ${branch}-${replicate} → ${runId} exit=${row.exit} crashed=${row.crashed} stateMatch=${row.stateMatch} reproduced=${row.reproduced} oracle=${row.oracle || "—"}`);
 	}
 
 	const source = { runId: spec.runId, call: spec.call, recordedCls: sourceCls, substantive: point.substantive ?? null, headPick: headPickFor(sourceDir, spec.call) };

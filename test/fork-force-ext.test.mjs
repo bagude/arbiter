@@ -78,6 +78,33 @@ test("A-oracle (cls=resume, tool=subagent): the subagent call's input is mutated
 	assert.equal(lines[0].data.tool, "subagent");
 });
 
+test("A-oracle via a file (ARBITER_FORK_FORCE='@<path>'): the force spec is read from disk, not the env value itself", () => {
+	const file = path.join(os.tmpdir(), `fork-force-args-${process.pid}-${Date.now()}.json`);
+	fs.writeFileSync(file, JSON.stringify({ cls: "probe", tool: "send_mail", args: { kind: "probe", body: "[]" } }));
+	try {
+		const { registered, out, lines } = run({
+			calls: [{ toolName: "send_mail", input: { kind: "probe", body: '["different"]' } }],
+			env: { ARBITER_FORK_FORCE: `@${file}` },
+		});
+		assert.deepEqual(registered, ["tool_call"]);
+		assert.equal(out[0].result, null);
+		assert.deepEqual(out[0].input, { kind: "probe", body: "[]" }, "input rewritten in place to the recorded args, read from the file");
+		assert.equal(lines.length, 1);
+		assert.equal(lines[0].ev, "guard:fork_force_rewritten");
+	} finally {
+		fs.rmSync(file, { force: true });
+	}
+});
+
+test("ARBITER_FORK_FORCE='@<missing path>' registers nothing rather than throwing", () => {
+	const { registered, out } = run({
+		calls: [{ toolName: "read", input: { path: "a" } }],
+		env: { ARBITER_FORK_FORCE: `@${path.join(os.tmpdir(), "no-such-fork-force-file.json")}` },
+	});
+	assert.deepEqual(registered, []);
+	assert.equal(out[0].result, "not-registered");
+});
+
 test("a worker's tool_call is never forced (role gate)", () => {
 	const { out, lines } = run({
 		calls: [{ toolName: "read", input: { path: "a" } }],

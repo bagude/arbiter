@@ -6,15 +6,19 @@
  * then spent for the rest of the run (lib/policies/fork-force.mjs has the mapping
  * and the one-shot rule).
  *
- * Opt-in per run: ARBITER_FORK_FORCE is "" (registers nothing) or a JSON object
- * `{ cls, tool?, args? }` set by the fork runner in the supervisor's own env, which
- * the supervisor passes through unchanged. Orchestrator only — the same nudge would
- * make no sense for a worker mid-task — but harmless to load everywhere, like every
- * other guard here.
+ * Opt-in per run: ARBITER_FORK_FORCE is "" (registers nothing), a JSON object
+ * `{ cls, tool?, args? }` set by the fork runner in the supervisor's own env, or
+ * "@<absolute path>" naming a file holding that same JSON — the fork runner
+ * (tools/fork.mjs) uses the file form for A-oracle, whose recorded `args` can be
+ * arbitrary JSON (a probe body, say) large enough to blow past Windows' ~32 KB
+ * process-environment-block limit if carried inline. The supervisor passes either
+ * form through unchanged. Orchestrator only — the same nudge would make no sense for
+ * a worker mid-task — but harmless to load everywhere, like every other guard here.
  *
  * Must precede topology.ts in supervisor.mjs GUARDS: pi returns the first blocking
  * tool_call result, and the fork's forcing must be seen before the topology nudge.
  */
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -27,8 +31,16 @@ const { decideForce } = await import(kit.homeUrl(home, "lib", "policies", "fork-
 function optionsFromEnv(raw: string | undefined): { cls: string; tool?: string | null; args?: Record<string, unknown> | null } | null {
 	const v = (raw ?? "").trim();
 	if (!v) return null;
+	let text = v;
+	if (v.startsWith("@")) {
+		try {
+			text = fs.readFileSync(v.slice(1), "utf8");
+		} catch {
+			return null;
+		}
+	}
 	try {
-		const parsed = JSON.parse(v);
+		const parsed = JSON.parse(text);
 		return parsed && typeof parsed === "object" && parsed.cls ? parsed : null;
 	} catch {
 		return null;
