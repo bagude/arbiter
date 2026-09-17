@@ -148,6 +148,25 @@ test("the shipped roster declares the intended topology", () => {
 	assert.deepEqual(roster.get("worker").produces, []);
 });
 
+// Cases 7 and 8 of docs/batch/harness-text-audit-2026-09-17.md. The tester's own prompt
+// named the case that beat run 2026-09-17T16-47-16 — relative(".", "a") — and a sibling
+// clause let it be dropped without a word; the orchestrator's roster blurb never said
+// the tester carried a degenerate-input mandate, so it never looked for that output.
+// Neither prompt may pin a test command, since the brief chooses how the suite runs.
+test("the shipped tester declares degenerate-input coverage, drops cases out loud, and neither prompt pins a test command", () => {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const roster = loadRoster(path.join(here, "..", "roster"));
+	const tester = roster.get("tester");
+	assert.match(tester.description, /covers each argument's degenerate inputs and names, under findings, every such case the brief did not determine/);
+	assert.match(rosterSection(selectSpecialists(roster, ["tester"])), /^- `subagent` \(subagent_type "tester"\): .*degenerate inputs/m);
+	assert.match(tester.body, /list it explicitly under findings as an undetermined case/);
+	assert.match(tester.body, /never drop it silently/);
+	assert.match(tester.body, /Run the suite once, the way the brief specifies/);
+	assert.doesNotMatch(tester.body, /node --test src\/__tests__/);
+	assert.match(roster.get("implementer").body, /run it first the way the brief specifies/);
+	assert.doesNotMatch(roster.get("implementer").body, /node --test src\/__tests__/);
+});
+
 test("ROSTER_TOOLS covers every tool the shipped roster files use, and the four shipped files parse", () => {
 	const here = path.dirname(fileURLToPath(import.meta.url));
 	const roster = loadRoster(path.join(here, "..", "roster"));
