@@ -45,11 +45,10 @@ function routingQuestion(valid) {
 	return `[ROUTER] Before you continue: which kind of action will you take next? Reply with exactly one capital letter and nothing else.\n${lines.join("\n")}`;
 }
 
-// Mode A (default): thinking off, one decoded token. Mode B (`thinking: true`): the
-// model reasons first, then a grammar forces exactly one letter after </think>; the
-// distribution is read from that last token's logprobs. Same state, same alphabet, so
-// the two modes separate "the abstraction is wrong" from "it needed to reason".
-const THINK_GRAMMAR = String.raw`root ::= "<think>" ( [^<] | "<" [^/] )* "</think>" [ \n]* [A-I]`;
+// Mode A (default): thinking off, one decoded token, P(action | state). Mode B
+// (`thinking: true`): P(action | state, generated reasoning), in two calls — see
+// askThinking. Same state (tool schemas kept), same alphabet, so the two modes separate
+// "the abstraction is wrong" from "it needed to reason".
 export function headRequest(payload, valid, { thinking = false } = {}) {
 	const messages = [...payload.messages, { role: "user", content: routingQuestion(valid) }];
 	return {
@@ -62,17 +61,13 @@ export function headRequest(payload, valid, { thinking = false } = {}) {
 		logprobs: true,
 		top_logprobs: 20,
 		cache_prompt: true,
-		...(thinking ? { grammar: THINK_GRAMMAR } : {}),
 		chat_template_kwargs: { ...(payload.chat_template_kwargs ?? {}), enable_thinking: thinking },
 	};
 }
 
-/** Distribution over the nine letters from a chat-completions logprobs block. */
+/** Distribution over the nine letters from the top logprobs of one scored token. */
 export function distributionFrom(choice) {
-	const toks = choice?.logprobs?.content ?? [];
-	const last = toks[toks.length - 1];
-	const top = last?.top_logprobs ?? [];
-	const thinkTokens = Math.max(0, toks.length - 1);
+	const top = choice?.logprobs?.content?.[0]?.top_logprobs ?? [];
 	const raw = Object.fromEntries(LETTERS.map((l) => [l, 0]));
 	let other = 0;
 	for (const t of top) {
@@ -80,8 +75,50 @@ export function distributionFrom(choice) {
 		const p = Math.exp(t.logprob);
 		if (tok in raw) raw[tok] += p; else other += p;
 	}
-	const content = String(choice?.message?.content ?? "").trim();
-	return { raw, other, sampled: content.slice(-1), thinkTokens, thought: thinkTokens ? content.replace(/^<think>|<\/think>[\s\S]*$/g, "").trim().slice(0, 600) : null };
+	return { raw, other, sampled: String(choice?.message?.content ?? "").trim() };
+}
+
+/** The reasoning text of a thinking reply, without the tags. */
+export function reasoningOf(message) {
+	return String(message?.reasoning_content ?? "").replace(/^\s*<think>\n?/, "").replace(/<\/think>\s*$/, "").trim();
+}
+
+/**
+ * Mode B in two calls, because with speculative decoding the server attaches
+ * probabilities only to tokens the target model sampled itself, so the letter at the
+ * end of a long thinking answer usually carries none. Call 1: the same state, thinking
+ * on, lets the model reason and answer. Call 2: render the same messages and tools
+ * through the model's chat template (/apply-template), append the reasoning it just
+ * produced as the open think block's content, close the block, and score exactly one
+ * token with pre-sampling top probabilities (/completion). The distribution is then
+ * P(action | state, that reasoning), and the prefix cache pays for most of call 2.
+ */
+export async function askThinking(server, key, payload, valid) {
+	const t0 = Date.now();
+	const req = headRequest(payload, valid, { thinking: true });
+	delete req.logprobs; delete req.top_logprobs;
+	const first = await post(server, key, "/v1/chat/completions", req);
+	const reasoning = reasoningOf(first.choices?.[0]?.message);
+	const thinkTokens = first.usage?.completion_tokens ?? null;
+	const rendered = await post(server, key, "/apply-template", { model: req.model, messages: req.messages, tools: req.tools, chat_template_kwargs: req.chat_template_kwargs });
+	let prompt = String(rendered.prompt ?? "");
+	if (!prompt) throw new Error("apply-template returned no prompt");
+	if (!prompt.endsWith("<think>\n")) prompt += "<think>\n";
+	prompt += `${reasoning}\n</think>\n\n`;
+	const scored = await post(server, key, "/completion", { model: req.model, prompt, n_predict: 1, temperature: 0, n_probs: 20, post_sampling_probs: false, cache_prompt: true });
+	const cp = scored.completion_probabilities?.[0] ?? {};
+	const choice = { message: { content: cp.token ?? "" }, logprobs: { content: [{ token: cp.token ?? "", top_logprobs: cp.top_logprobs ?? [] }] } };
+	return {
+		choice, wallMs: Date.now() - t0, thinkTokens, thought: reasoning.slice(0, 600), firstAnswer: String(first.choices?.[0]?.message?.content ?? "").trim().slice(0, 8),
+		predictedMs: first.timings?.predicted_ms ?? null, promptMs: (first.timings?.prompt_ms ?? 0) + (scored.timings?.prompt_ms ?? 0),
+		cachedTokens: scored.timings?.cache_n ?? null, promptTokens: (scored.timings?.cache_n ?? 0) + (scored.timings?.prompt_n ?? 0),
+	};
+}
+
+async function post(server, key, route, body) {
+	const res = await fetch(`${server}${route}`, { method: "POST", headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) }, body: JSON.stringify(body) });
+	if (!res.ok) throw new Error(`${route} ${res.status} ${await res.text()}`);
+	return res.json();
 }
 
 export function scorePoint(point, dist) {
@@ -126,12 +163,20 @@ export async function replayRun(runId, { server, key, limit = Infinity, thinking
 		const f = path.join(reqDir, `${String(p.i + 1).padStart(4, "0")}.json`);
 		if (!fs.existsSync(f)) { out.push({ ...p, head: null, skipped: "no captured request" }); continue; }
 		const { payload } = JSON.parse(fs.readFileSync(f, "utf8"));
-		const { json, wallMs } = await ask(server, key, headRequest(payload, p.valid, { thinking }));
-		const dist = distributionFrom(json.choices?.[0]);
-		const score = scorePoint(p, dist);
-		const head = { mode: thinking ? "B" : "A", ...score, raw: dist.raw, other: dist.other, sampled: dist.sampled, thinkTokens: dist.thinkTokens, thought: dist.thought, wallMs, promptMs: json.timings?.prompt_ms ?? null, predictedMs: json.timings?.predicted_ms ?? null, cachedTokens: json.usage?.prompt_tokens_details?.cached_tokens ?? null, promptTokens: json.usage?.prompt_tokens ?? null };
+		let head;
+		if (thinking) {
+			const r = await askThinking(server, key, payload, p.valid);
+			const dist = distributionFrom(r.choice);
+			const score = scorePoint(p, dist);
+			head = { mode: "B", ...score, raw: dist.raw, other: dist.other, sampled: dist.sampled, firstAnswer: r.firstAnswer, thinkTokens: r.thinkTokens, thought: r.thought, wallMs: r.wallMs, promptMs: r.promptMs, predictedMs: r.predictedMs, cachedTokens: r.cachedTokens, promptTokens: r.promptTokens };
+		} else {
+			const { json, wallMs } = await ask(server, key, headRequest(payload, p.valid));
+			const dist = distributionFrom(json.choices?.[0]);
+			const score = scorePoint(p, dist);
+			head = { mode: "A", ...score, raw: dist.raw, other: dist.other, sampled: dist.sampled, thinkTokens: 0, thought: null, wallMs, promptMs: json.timings?.prompt_ms ?? null, predictedMs: json.timings?.predicted_ms ?? null, cachedTokens: json.usage?.prompt_tokens_details?.cached_tokens ?? null, promptTokens: json.usage?.prompt_tokens ?? null };
+		}
 		out.push({ ...p, head });
-		log(`${runId} #${String(p.i + 1).padStart(3)} ${p.action.cls.padEnd(10)}→${String(p.substantive?.cls ?? "-").padEnd(8)} head ${score.pickClass.padEnd(10)} p=${score.confidence.toFixed(2)} ${score.agree ? "=" : score.agreeSubstantive ? "≈" : "≠"}${thinking ? ` think ${dist.thinkTokens}` : ""}  ${Math.round(wallMs)} ms (cached ${head.cachedTokens}/${head.promptTokens})`);
+		log(`${runId} #${String(p.i + 1).padStart(3)} ${p.action.cls.padEnd(10)}→${String(p.substantive?.cls ?? "-").padEnd(8)} head ${head.pickClass.padEnd(10)} p=${head.confidence.toFixed(2)} ${head.agree ? "=" : head.agreeSubstantive ? "≈" : "≠"}${thinking ? ` think ${head.thinkTokens}` : ""}  ${Math.round(head.wallMs)} ms (cached ${head.cachedTokens}/${head.promptTokens})`);
 	}
 	fs.writeFileSync(path.join(dir, thinking ? "decisions-replay-thinking.jsonl" : "decisions-replay.jsonl"), out.map((r) => JSON.stringify(r)).join("\n") + "\n");
 	return out;

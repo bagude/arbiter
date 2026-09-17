@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { headRequest, distributionFrom, scorePoint, summarize, matrix } from "../tools/decision-replay.mjs";
+import { headRequest, distributionFrom, scorePoint, summarize, matrix, reasoningOf } from "../tools/decision-replay.mjs";
 
 const VALID_EARLY = { spawn: true, resume: false, collect: false, probe: false, done: false, inspect: true, memory: true, checkpoint: true, answer: true };
 
@@ -73,22 +73,16 @@ test("summarize builds the threshold curve with coverage, agreement, and the gen
 	assert.equal(s.byClass.probe.agreement, 0);
 });
 
-test("mode B asks for thinking with a grammar that ends on one letter; the distribution comes from the last token", () => {
-	const payload = { model: "m", messages: [{ role: "user", content: "U" }], tools: [], chat_template_kwargs: { enable_thinking: true } };
+test("mode B keeps the tools and turns thinking on; the reasoning text is stripped of its tags for the scoring prefix", () => {
+	const payload = { model: "m", messages: [{ role: "user", content: "U" }], tools: [{ type: "function", function: { name: "read" } }], chat_template_kwargs: { enable_thinking: true } };
 	const req = headRequest(payload, VALID_EARLY, { thinking: true });
 	assert.equal(req.chat_template_kwargs.enable_thinking, true);
 	assert.ok(req.max_tokens > 1);
-	assert.match(req.grammar, /<think>/);
-	assert.match(req.grammar, /\[A-I\]$/);
-	const choice = { message: { content: "<think>reasoning here</think>\n\nA" }, logprobs: { content: [
-		{ token: "<think>", logprob: 0, top_logprobs: [] }, { token: "reasoning", logprob: 0, top_logprobs: [] }, { token: "</think>", logprob: 0, top_logprobs: [] },
-		{ token: "A", logprob: Math.log(0.9), top_logprobs: [{ token: "A", logprob: Math.log(0.9) }, { token: "F", logprob: Math.log(0.1) }] },
-	] } };
-	const d = distributionFrom(choice);
-	assert.equal(d.sampled, "A");
-	assert.equal(d.thinkTokens, 3);
-	assert.equal(d.thought, "reasoning here");
-	assert.ok(Math.abs(d.raw.A - 0.9) < 1e-9 && Math.abs(d.raw.F - 0.1) < 1e-9);
+	assert.equal(req.grammar, undefined, "llama-server refuses a grammar alongside tools; the state stays identical instead");
+	assert.deepEqual(req.tools, payload.tools);
+	assert.equal(reasoningOf({ reasoning_content: "<think>\nThe roster says tester first.\n</think>" }), "The roster says tester first.");
+	assert.equal(reasoningOf({ reasoning_content: "plain" }), "plain");
+	assert.equal(reasoningOf({}), "");
 });
 
 test("scorePoint scores the substantive horizon and the gather-vs-act binary alongside the literal label", () => {
