@@ -8,3 +8,4 @@ tools/runs-data.json
 __pycache__/
 **/memory/index/
 **/memory/wiki/
+.worktrees/
