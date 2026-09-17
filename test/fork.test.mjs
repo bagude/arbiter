@@ -40,9 +40,13 @@ test("truncateEntriesAt keeps the header and stops at the first entry past the i
 	assert.equal(kept[0].type, "session", "the header is kept");
 	assert.deepEqual(kept, entries.slice(0, 12), "the kept entries are the file's own, in order");
 	assert.ok(kept.every((e) => Date.parse(e.timestamp) <= cut), "nothing recorded after the instant survives");
-	// An instant past the whole file keeps it whole; one before the first body entry keeps
-	// only the header.
-	assert.equal(truncateEntriesAt(entries, Date.parse("2027-01-01T00:00:00.000Z")).length, 25);
+	// An instant past the whole file keeps everything the leaf rule allows — this fixture's
+	// last entry is an assistant message, so the cut retreats one to the tool result before
+	// it. An instant before the first body entry keeps only the header.
+	const whole = truncateEntriesAt(entries, Date.parse("2027-01-01T00:00:00.000Z"));
+	assert.equal(entries.at(-1).message.role, "assistant", "the fixture ends on an assistant message");
+	assert.equal(whole.length, 24);
+	assert.equal(whole.at(-1).message.role, "toolResult");
 	assert.deepEqual(truncateEntriesAt(entries, 0), [entries[0]]);
 	assert.deepEqual(truncateEntriesAt([], 1), []);
 	// An entry with no usable timestamp is kept only while no earlier entry has passed the
@@ -59,6 +63,52 @@ test("truncateEntriesAt keeps the header and stops at the first entry past the i
 	// message entries also carry an epoch-ms timestamp on message.timestamp; a numeric
 	// top-level timestamp is read as epoch ms rather than parsed as a date string.
 	assert.deepEqual(truncateEntriesAt([{ type: "session" }, { type: "message", timestamp: 5 }, { type: "message", timestamp: 50 }], 10).length, 2);
+});
+
+// The time cut alone lands wherever the clock falls, including between an assistant message and
+// the tool results answering its calls. A resume cannot continue from that leaf, so the tail
+// retreats to a user or tool-result message — the invariant Agent.continue() enforces, and the
+// one truncateSessionEntries already satisfies by construction.
+test("truncateEntriesAt retreats to a leaf a resume can continue from", () => {
+	const at = (s) => Date.parse(`2026-09-15T04:${s}Z`);
+	const msg = (role, min, content) => ({ type: "message", timestamp: at(min), message: { role, content: content ?? [] } });
+	const header = { type: "session", timestamp: at("00:00.000") };
+	const entries = [
+		header,
+		msg("user", "01:00.000"),
+		msg("assistant", "02:00.000", [{ type: "toolCall", id: "a" }]),
+		msg("toolResult", "03:00.000"),
+		msg("assistant", "04:00.000", [{ type: "toolCall", id: "b" }]),
+		msg("toolResult", "05:00.000"),
+	];
+	// (1) A cut immediately after an assistant message whose tool calls have no results yet
+	// retreats past it, to the tool result before it.
+	const mid = truncateEntriesAt(entries, at("04:30.000"));
+	assert.equal(mid.length, 4);
+	assert.equal(mid.at(-1).message.role, "toolResult");
+	assert.deepEqual(mid, entries.slice(0, 4));
+	// (2) A cut that lands on a tool result keeps it — nothing to retreat from.
+	const onResult = truncateEntriesAt(entries, at("05:30.000"));
+	assert.equal(onResult.length, 6);
+	assert.equal(onResult.at(-1).message.role, "toolResult");
+	// The same cut one entry earlier retreats to the user message, since the only message
+	// entries left are assistant ones.
+	const early = truncateEntriesAt(entries, at("02:30.000"));
+	assert.deepEqual(early, entries.slice(0, 2));
+	assert.equal(early.at(-1).message.role, "user");
+	// (3) An all-assistant tail below the header leaves just the header; the header is never
+	// dropped, however far the retreat has to go.
+	const allAssistant = [header, msg("assistant", "01:00.000"), msg("assistant", "02:00.000")];
+	assert.deepEqual(truncateEntriesAt(allAssistant, at("09:00.000")), [header]);
+	// The first entry survives because it is the first entry, not because it happens to be a
+	// non-message header the retreat skips over. Pinned on a degenerate file whose very first
+	// entry is an assistant message, which the type-based reading would consume.
+	const headless = [msg("assistant", "01:00.000"), msg("assistant", "02:00.000")];
+	assert.deepEqual(truncateEntriesAt(headless, at("09:00.000")), [headless[0]]);
+	// Non-message entries trailing the assistant leaf go with it, and a non-message entry is
+	// never itself the leaf the rule inspects.
+	const trailing = [header, msg("user", "01:00.000"), msg("assistant", "02:00.000"), { type: "model_change", timestamp: at("02:30.000") }];
+	assert.deepEqual(truncateEntriesAt(trailing, at("09:00.000")), trailing.slice(0, 2));
 });
 
 test("rewriteSessionHeader replaces cwd and keeps the rest of the header", () => {
