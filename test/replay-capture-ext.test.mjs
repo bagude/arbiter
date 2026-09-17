@@ -38,10 +38,8 @@ test("writes each orchestrator request verbatim with a 1-based sequence and a sr
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "replay-capture-out-"));
 	const ws = fs.mkdtempSync(path.join(os.tmpdir(), "replay-capture-ws-"));
 	fs.mkdirSync(path.join(ws, "src", "__tests__"), { recursive: true });
-	fs.writeFileSync(path.join(ws, "src", "a.mjs"), "export const a = 1;
-");
-	fs.writeFileSync(path.join(ws, "src", "__tests__", "a.test.mjs"), "// t
-");
+	fs.writeFileSync(path.join(ws, "src", "a.mjs"), "export const a = 1;\n");
+	fs.writeFileSync(path.join(ws, "src", "__tests__", "a.test.mjs"), "// t\n");
 	const payload1 = { model: "qwen3-27b", messages: [{ role: "system", content: "sys" }, { role: "user", content: "hi" }], tools: [{ type: "function", function: { name: "read" } }], stream: true };
 	const payload2 = { ...payload1, messages: [...payload1.messages, { role: "assistant", content: "ok" }] };
 	const { registered, files, read } = run({
@@ -56,8 +54,7 @@ test("writes each orchestrator request verbatim with a 1-based sequence and a sr
 	assert.equal(first.seq, 1);
 	assert.deepEqual(first.payload, payload1);
 	assert.equal(first.snapshot, path.join("0001-ws", "src"));
-	assert.equal(fs.readFileSync(path.join(dir, "0001-ws", "src", "a.mjs"), "utf8"), "export const a = 1;
-");
+	assert.equal(fs.readFileSync(path.join(dir, "0001-ws", "src", "a.mjs"), "utf8"), "export const a = 1;\n");
 	assert.ok(fs.existsSync(path.join(dir, "0002-ws", "src", "__tests__", "a.test.mjs")), "nested files are copied");
 	assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "0002.json"), "utf8")).payload.messages.length, 3);
 	assert.deepEqual(files, [], "nothing lands in the unused default dir");
