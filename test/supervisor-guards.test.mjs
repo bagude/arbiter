@@ -12,6 +12,29 @@ function supervisorSource() {
 	return fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8").replace(/\r\n/g, "\n");
 }
 
+// A run that has already written a valid summary.json must not then die on the way out.
+// finish() writes the summary and tears the run down, but events still in flight keep
+// arriving: an `agent_end` after FINISH becomes a silent-turn nudge, deliver() calls send(),
+// and the child's stdin is already closed. `exitCode !== null` does not cover that window —
+// stdin closes first and exitCode stays null until the process is reaped — so the write raised
+// an unhandled EPIPE and the supervisor exited 1 on top of a SUCCESS run (runs/2026-09-17T18-09-28,
+// FINISH at 623.3 s, throw at 623.4 s). Sliced to send()'s own body: a `finished` check
+// elsewhere in the file cannot satisfy this.
+test("send() writes nothing once the run is finished or the child's stdin is gone", () => {
+	const src = supervisorSource();
+	const at = src.indexOf("\nfunction send(name, cmd) {\n");
+	assert.ok(at >= 0, "could not locate send() in supervisor.mjs");
+	const body = src.slice(at + 1);
+	const fn = body.slice(0, body.indexOf("\n}\n"));
+	assert.ok(fn.includes("if (finished) return;"), `send() must refuse to write after finish(); found:\n${fn}`);
+	for (const needle of ["stdin.destroyed", "stdin.writableEnded", "stdin.writable === false"]) {
+		assert.ok(fn.includes(needle), `send() must check ${needle} — exitCode alone misses the window between stdin closing and the process being reaped; found:\n${fn}`);
+	}
+	// The checks are only worth anything before the write they guard.
+	assert.ok(fn.indexOf("if (finished) return;") < fn.indexOf("stdin.write("), "the finished check must precede the write");
+	assert.ok(fn.indexOf("stdin.destroyed") < fn.indexOf("stdin.write("), "the pipe checks must precede the write");
+});
+
 // pi's extension runner returns the FIRST blocking tool_call result, so a guard
 // that denies `subagent` must precede pre-spawn-compact in supervisor.mjs's GUARDS
 // list or its reason never reaches the model. Read the source rather than import

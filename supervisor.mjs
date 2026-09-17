@@ -595,7 +595,18 @@ function send(name, cmd) {
 	// Workers have no child process of their own — they run inside the orchestrator's
 	// pi process, so there is no stdin to write an RPC command to.
 	if (!s || !s.child || s.child.exitCode !== null) return;
-	s.child.stdin.write(`${JSON.stringify(cmd)}\n`);
+	// Nothing is sent once finish() has run: the summary is written and the run is being torn
+	// down, but events already in flight still arrive (an agent_end after FINISH becomes a
+	// silent-turn nudge). `exitCode !== null` does not cover that window — the child's stdin
+	// closes first and exitCode stays null until the process is reaped, so the write raised an
+	// unhandled EPIPE on the socket and the supervisor exited 1 AFTER a complete, valid
+	// summary.json. Observed live in runs/2026-09-17T18-09-28: SUCCESS at 623.3 s, the nudge
+	// at 623.4 s, then the throw. The pipe check stands on its own for the same window with
+	// the run still live.
+	if (finished) return;
+	const stdin = s.child.stdin;
+	if (!stdin || stdin.destroyed || stdin.writableEnded || stdin.writable === false) return;
+	stdin.write(`${JSON.stringify(cmd)}\n`);
 }
 
 // Neither agent otherwise has any way to know how much wall-clock is left —
