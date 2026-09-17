@@ -64,9 +64,20 @@ test("tests exist but were not read since written: denied with the read reason; 
 	assert.equal(stale.ok, false);
 	assert.equal(stale.failed, "tests:unread");
 	assert.match(stale.reason, /tests exist but you have not read them since they were written/);
+	// Case 12: how much moved since the read, so a three-line tester resume can be told
+	// from a whole new suite without re-reading the file to find out which it was.
+	assert.match(stale.reason, /\(1 of 2 files written since that read, the newest 3s after it\)/);
 	noteToolCall({ toolName: "bash", input: { command: "cat src/__tests__/pathnorm.test.mjs" } }, state, 6000);
 	const fresh = decideSpawn({ mode: "enforce", needsFor: NEEDS, input: spawn("implementer"), state, testsFiles });
 	assert.deepEqual(fresh, { ok: true, event: null });
+});
+
+test("tests never read at all: the denial says so instead of timing from the epoch", () => {
+	const state = initialState();
+	const never = decideSpawn({ mode: "enforce", needsFor: NEEDS, input: spawn("implementer"), state, testsFiles: [{ mtimeMs: 5000 }] });
+	assert.equal(never.failed, "tests:unread");
+	assert.match(never.reason, /you have not read them at all/);
+	assert.doesNotMatch(never.reason, /\d+s after it/);
 });
 
 test("noteToolCall ignores reads elsewhere and tools it does not know", () => {
