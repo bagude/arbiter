@@ -2,5 +2,5 @@
   "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" } },
   "workers": { "default": { "provider": "llama.cpp", "model": "qwen3-27b", "thinking": "off" }, "use": ["scout", "implementer", "tester"], "max": 1 },
   "caps": { "toolCalls": 250, "wallSec": 1800, "usd": 5, "doneAttempts": 5 },
-  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 6000, "workerReserveChars": 3000 },
+  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 9000, "workerReserveChars": 4000 },
   "_note": "Roster+memory arm (2026-09-16): scout → implementer → tester, with specialist memory (memory_search, memory_get, remember)." }

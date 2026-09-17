@@ -11,15 +11,15 @@ const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-budge
 test("charge appends and spent sums by tool and role; refusals are counted, not charged", () => {
 	const f = tmp();
 	assert.equal(spent(f).chars, 0, "a missing ledger is empty");
-	assert.equal(charge(f, { role: "supervisor", tool: "seed", chars: 1200, detail: "seeded brief" }), 1200);
-	assert.equal(charge(f, { role: "orchestrator", tool: "search", chars: 800, detail: "TX water loader" }), 2000);
-	assert.equal(charge(f, { role: "worker:854e28b7", tool: "get", chars: 3000, detail: "m_a,m_b" }), 5000);
+	assert.equal(charge(f, { role: "supervisor", tool: "seed", chars: 0, detail: "seeded brief 1200 chars" }), 0, "the seed is recorded, not charged");
+	assert.equal(charge(f, { role: "orchestrator", tool: "search", chars: 800, detail: "TX water loader" }), 800);
+	assert.equal(charge(f, { role: "worker:854e28b7", tool: "get", chars: 4200, detail: "m_a,m_b" }), 5000);
 	charge(f, { role: "worker:854e28b7", tool: "refused", chars: 0, detail: "get m_c" });
 	const s = spent(f);
 	assert.equal(s.chars, 5000);
 	assert.deepEqual(s.calls, { seed: 1, search: 1, get: 1 });
 	assert.equal(s.refused, 1);
-	assert.deepEqual(s.byRole, { supervisor: 1200, orchestrator: 800, "worker:854e28b7": 3000 });
+	assert.deepEqual(s.byRole, { supervisor: 0, orchestrator: 800, "worker:854e28b7": 4200 });
 	assert.equal(wouldExceed(f, 6000, 1000), false);
 	assert.equal(wouldExceed(f, 6000, 1001), true);
 });

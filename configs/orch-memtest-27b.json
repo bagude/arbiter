@@ -2,6 +2,6 @@
   "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" } },
   "workers": { "default": { "provider": "llama.cpp", "model": "qwen3-27b", "thinking": "off" }, "use": ["implementer"], "max": 1 },
   "caps": { "toolCalls": 120, "wallSec": 900, "usd": 5, "doneAttempts": 4 },
-  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 6000, "workerReserveChars": 4000 },
+  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 9000, "workerReserveChars": 5000 },
   "memoryDir": "tasks/memtest/store",
   "_note": "Retrieval test (2026-09-16). One implementer; the canary token exists only in the body of an agent:implementer record in tasks/memtest/store. Pass requires a real memory_get. memoryDir keeps the real ledger untouched. Run twice: run 2 should find run 1's remembered candidate." }

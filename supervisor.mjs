@@ -250,7 +250,12 @@ if (MEMORY_MODE === "inject") {
 	MEMORY_TEXT = brief.text;
 	MEMORY_SEED_CHARS = brief.chars;
 	fs.writeFileSync(MEMORY_LEDGER, "");
-	charge(MEMORY_LEDGER, { role: "supervisor", tool: "seed", chars: brief.chars, detail: `seeded brief, ${brief.ids.length} of ${brief.matched} matches` });
+	// The seed is recorded for accounting but costs the pool nothing: it is capped by
+	// budgetChars and chosen by the supervisor, not the orchestrator. Charging it too
+	// meant a richer promoted set shrank the orchestrator's room to memory_get the very
+	// records the seed pointed at (2026-09-17T01-41-50: seed 1692 of a 3000 share, get
+	// refused).
+	charge(MEMORY_LEDGER, { role: "supervisor", tool: "seed", chars: 0, detail: `seeded brief ${brief.chars} chars, ${brief.ids.length} of ${brief.matched} matches` });
 	log({ type: "memory_index", msg: `index ${MEMORY_REVISION} (${resolved.records.size} records); seed ${brief.chars} chars, ${brief.ids.length} rows; retrieval budget ${RETRIEVAL_BUDGET} (${WORKER_RESERVE} reserved for workers)` });
 	// Oracle children inherit these from the supervisor's environment; launch() sets
 	// them for every agent process explicitly.
