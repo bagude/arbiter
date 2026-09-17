@@ -163,6 +163,33 @@ test("forkRow: crashed when summary.json is missing, even if exit was 0", () => 
 	assert.equal(row.crashed, true);
 });
 
+// The supervisor's finish() always exits 0, including on the rejected-`continue` path, so a
+// fork the harness refused writes an ordinary summary.json with exit 0. Left in the
+// denominator it reads as the model failing to reproduce its own recorded behaviour.
+test("forkRow: a fork the supervisor refused is crashed, though it exited 0 with a summary", () => {
+	const summary = { wallSec: 3, reason: "FORK: continue rejected — Cannot continue from message role: assistant" };
+	const row = forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: false, firstDiff: "no fork request captured" }, sourceCls: "probe", decisions: [], oracle: "", summary, exit: 0 });
+	assert.equal(row.crashed, true);
+	assert.equal(row.forkAborted, true);
+	assert.match(row.forkReason, /continue rejected/);
+	// An ordinary failure reason is the run finishing badly, not the fork never starting.
+	const ordinary = forkRow({ branch: "G", replicate: 2, runId: "run-2", compare: { equal: true, firstDiff: null }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 3, reason: "FAILED: done attempts exhausted" }, exit: 0 });
+	assert.equal(ordinary.crashed, false);
+	assert.equal(ordinary.forkAborted, false);
+	assert.equal(ordinary.forkReason, null);
+});
+
+test("renderReport: a refused fork is out of the null denominator, on the page, and named as a harness refusal", () => {
+	const source = { runId: "r1", call: 3, recordedCls: "probe", substantive: null, headPick: null };
+	const rows = [
+		forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: true, firstDiff: null }, sourceCls: "probe", decisions: [{ i: 3, action: { cls: "probe", tool: "send_mail", params: {} }, decoded: 5 }], oracle: "", summary: { wallSec: 5 }, exit: 0 }),
+		forkRow({ branch: "G", replicate: 2, runId: "run-2", compare: { equal: false, firstDiff: "no fork request captured" }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 1, reason: "FORK: continue rejected — Cannot continue from message role: assistant" }, exit: 0 }),
+	];
+	const report = renderReport(source, rows, { nullMode: true });
+	assert.match(report, /null fork: state match 1\/1, recorded class reproduced 1\/1 \(1 crashed, excluded — 1 of them the harness refusing the fork, not the model\)/);
+	assert.match(report, /\| run-2 \| 0 \| yes — FORK: continue rejected/, "the refused replicate is shown with its reason, not silently dropped");
+});
+
 test("forkRow: decisionsMissing passes through when tools/decision-points.mjs failed on this run", () => {
 	const row = forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: true, firstDiff: null }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 1 }, exit: 0, decisionsMissing: true });
 	assert.equal(row.decisionsMissing, true);

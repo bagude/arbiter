@@ -27,9 +27,10 @@
 // ARBITER_FORK_FORCE, which just points at it ("@<path>") — a recorded probe body can be
 // arbitrary JSON, and Windows caps a process's whole environment block at ~32 KB.
 //
-// A crashed replicate (non-zero supervisor exit, or no summary.json) is still reported, but
-// excluded from the null-gate reproduction counts — its numbers describe a run that never
-// finished.
+// A crashed replicate (non-zero supervisor exit, no summary.json, or a summary whose `reason`
+// begins "FORK:" — the supervisor refusing the fork itself, which still exits 0) is still
+// reported, but excluded from the null-gate reproduction counts: its numbers describe a run
+// that never finished, and a harness refusal is not the model failing to reproduce itself.
 //
 // Report: docs/batch/fork-<runId>-<call>.md.
 import fs from "node:fs";
@@ -135,19 +136,29 @@ function guardKinds(guards, name, kinds) {
  * decisions.jsonl records), `oracle` (the joined "x/y" oracle-run scores from its
  * audit.jsonl), `summary` (its summary.json, or null when the run never wrote one). `runId` is
  * null when the fork produced no run at all. `exit` is the supervisor child's own exit code;
- * `crashed` is true when that exit was non-zero or `summary` is null — either way, this
- * replicate's numbers (oracle, probes, decoded, ...) describe a run that did not finish
- * normally and should not count toward a reproduction rate. `decisionsMissing` is true when
- * `tools/decision-points.mjs` failed on this run (so `decisions` may be stale or empty even
- * though the run itself did not crash).
+ * `crashed` is true when that exit was non-zero, `summary` is null, or the summary's `reason`
+ * begins `FORK:` — either way, this replicate's numbers (oracle, probes, decoded, ...)
+ * describe a run that did not finish normally and should not count toward a reproduction
+ * rate. `decisionsMissing` is true when `tools/decision-points.mjs` failed on this run (so
+ * `decisions` may be stale or empty even though the run itself did not crash).
+ *
+ * The `FORK:` reason is the case exit codes cannot see. The supervisor's finish() always
+ * exits 0, including on the rejected-`continue` path, so a fork whose restored transcript
+ * `Agent.continue()` refused writes an ordinary summary.json with reason "FORK: continue
+ * rejected — ..." and exit 0. Counted as a normal run, three such replicates read as
+ * "state match 0/3, recorded class reproduced 0/3, 0 crashed": a harness refusal depressing
+ * the very gate the twelve real forks are conditioned on. It is shown, not hidden — the row
+ * carries the reason — but it is out of the denominator.
  */
 export function forkRow({ branch, replicate, runId, compare, sourceCls, decisions = [], oracle = "", summary = null, exit = null, decisionsMissing = false }) {
 	const first = decisions[0] ?? null;
 	const firstAction = first ? { cls: first.action.cls, tool: first.action.tool, params: first.action.params } : null;
-	const crashed = (exit !== null && exit !== 0) || summary === null;
+	const forkAborted = String(summary?.reason ?? "").startsWith("FORK:");
+	const crashed = (exit !== null && exit !== 0) || summary === null || forkAborted;
 	return {
 		branch, replicate, runId,
-		exit, crashed,
+		exit, crashed, forkAborted,
+		forkReason: forkAborted ? String(summary.reason) : null,
 		stateMatch: compare?.equal ?? false,
 		firstDiff: compare?.firstDiff ?? null,
 		firstAction,
@@ -192,7 +203,10 @@ export function renderReport(source, rows, { nullMode = false } = {}) {
 		const rep = r.reproduced === null ? "—" : r.reproduced ? "yes" : "no";
 		const forced = `${r.guards.forkForce.denied}/${r.guards.forkForce.rewritten}`;
 		const topo = `${r.guards.topology.denied}/${r.guards.topology.waived}`;
-		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${r.exit ?? "—"} | ${r.crashed ? "yes" : "no"} | ${sm} | ${fa} | ${rep} | ${forced} | ${topo} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
+		// A fork the harness refused exits 0 with an ordinary summary, so the reason is the
+		// only thing that separates it from a run the model simply lost. Say which it was.
+		const crashed = r.crashed ? (r.forkAborted ? `yes — ${r.forkReason.replace(/\s+/g, " ").slice(0, 80)}` : "yes") : "no";
+		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${r.exit ?? "—"} | ${crashed} | ${sm} | ${fa} | ${rep} | ${forced} | ${topo} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
 	}
 	lines.push("");
 	if (nullMode) {
@@ -201,7 +215,9 @@ export function renderReport(source, rows, { nullMode = false } = {}) {
 		const n = included.length;
 		const stateMatches = included.filter((r) => r.stateMatch).length;
 		const reproduced = included.filter((r) => r.reproduced).length;
-		lines.push(`null fork: state match ${stateMatches}/${n}, recorded class reproduced ${reproduced}/${n} (${crashedCount} crashed, excluded)`, "");
+		const aborted = rows.filter((r) => r.forkAborted).length;
+		const why = aborted ? `${crashedCount} crashed, excluded — ${aborted} of them the harness refusing the fork, not the model` : `${crashedCount} crashed, excluded`;
+		lines.push(`null fork: state match ${stateMatches}/${n}, recorded class reproduced ${reproduced}/${n} (${why})`, "");
 	}
 	return lines.join("\n");
 }
@@ -340,7 +356,7 @@ async function main() {
 		const summary = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")) : null;
 		const row = forkRow({ branch, replicate, runId, compare, sourceCls, decisions, oracle: oracleScores(runDir), summary, exit: code, decisionsMissing });
 		rows.push(row);
-		console.log(`[fork] ${branch}-${replicate} → ${runId} exit=${row.exit} crashed=${row.crashed} stateMatch=${row.stateMatch} reproduced=${row.reproduced} oracle=${row.oracle || "—"}`);
+		console.log(`[fork] ${branch}-${replicate} → ${runId} exit=${row.exit} crashed=${row.crashed}${row.forkAborted ? ` (${row.forkReason})` : ""} stateMatch=${row.stateMatch} reproduced=${row.reproduced} oracle=${row.oracle || "—"}`);
 	}
 
 	const source = { runId: spec.runId, call: spec.call, recordedCls: sourceCls, substantive: point.substantive ?? null, headPick: headPickFor(sourceDir, spec.call) };
