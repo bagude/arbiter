@@ -44,12 +44,14 @@ const PROBE_HINT =
 		? 'kind="probe" is special: the supervisor intercepts it (your counterpart never sees it), executes it ' +
 			'host-side against the real current code, and replies to you directly with real values, echoing back the exact ' +
 			'args it ran — check that echo against what you meant to send before concluding a result is wrong. Body must be a ' +
-			'JSON array of {"id": "...", "args": [...]} — one entry per call to the target function, "args" being its ' +
-			'positional arguments. Optionally add "expect" to a case (either a literal expected return value, or ' +
+			'JSON array of {"id": "...", "fn": "<the exported function to call>", "args": [...]} — one entry per call, "args" ' +
+			'being that function\'s positional arguments. Most tasks\' probe runners reject a case with no "fn"; a ' +
+			'single-function task ignores it. Optionally add "expect" to a case (either a literal expected return value, or ' +
 			'{"throws":"SyntaxError"}) and the supervisor will tell you match/mismatch directly instead of you having to ' +
 			"compare by eye. Use probes instead of asking your counterpart to self-report test results. A case whose exact " +
 			"args you already probed against this same, unchanged code is NOT re-executed — the supervisor blocks it and " +
-			"returns the prior answer instead of running it again, because re-sending it cannot produce a different result."
+			"returns the prior answer instead of running it again, because re-sending it cannot produce a different result " +
+			"— a block lifts as soon as src/ changes."
 		: "";
 
 // Memory is addressed to future runs, not to anyone here: the supervisor stores the
