@@ -38,16 +38,21 @@ const readJsonl = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").split(/\
  * and that mail's verdict is the next oracle line before the following done mail (a claim the
  * done gate refused has none).
  */
-export function pairClaims(points, audit, fromIndex = 0) {
+const MAIL_LINE = /^MAIL #\d+ (\S+) -> (\S+) \[(\w+)\]/; // supervisor.mjs log line, parsed positionally
+const isDoneMail = (a, from) => { const m = a.type === "mail" ? MAIL_LINE.exec(a.msg ?? "") : null; return Boolean(m && m[3] === "done" && m[2] === "supervisor" && (!from || m[1] === from)); };
+
+export function pairClaims(points, audit, fromIndex = 0, { from = null } = {}) {
 	const dones = points.filter((p) => p.action?.cls === "done" && p.i >= fromIndex).sort((a, b) => a.i - b.i);
 	const mails = [];
 	for (let k = 0; k < audit.length; k++) {
 		const a = audit[k];
-		if (a.type !== "mail" || !/\[done\]/.test(a.msg ?? "")) continue;
+		// The kind comes from the line's own field, never from the body slice, and only mails to
+		// the supervisor count (a worker's or critic's own "done" to another role is not a claim).
+		if (!isDoneMail(a, from)) continue;
 		let oracle = null;
 		for (let j = k + 1; j < audit.length; j++) {
 			const b = audit[j];
-			if (b.type === "mail" && /\[done\]/.test(b.msg ?? "")) break;
+			if (isDoneMail(b, from)) break;
 			const m = b.type === "oracle" ? String(b.msg).match(/Oracle run #(\d+): (\d+)\/(\d+)/) : null;
 			if (m) { oracle = { t: Number(b.t), run: Number(m[1]), passed: Number(m[2]), total: Number(m[3]) }; break; }
 		}

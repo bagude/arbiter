@@ -38,20 +38,24 @@ const SHIM = `
 import fs from "node:fs";
 import { strict as real } from "node:assert";
 const records = [];
-function callerLine() {
-	const stack = String(new Error().stack).split("\\n");
-	for (const s of stack) {
+function suiteLines() {
+	// Every frame inside the suite, innermost first; the harness picks the first that is a
+	// call site rather than a helper definition or a test() block header.
+	const out = [];
+	for (const s of String(new Error().stack).split("\\n")) {
 		const m = s.match(/\\((.*?):(\\d+):\\d+\\)\\s*$/) ?? s.match(/at (.*?):(\\d+):\\d+\\s*$/);
-		if (m && m[1].replace(/\\\\/g, "/").endsWith(process.env.SUITE_BASENAME)) return Number(m[2]);
+		if (m && m[1].replace(/\\\\/g, "/").endsWith(process.env.SUITE_BASENAME)) out.push(Number(m[2]));
 	}
-	return null;
+	return out;
 }
-function record(pass, detail) { records.push({ line: callerLine(), pass, ...detail }); }
+function record(pass, detail) { records.push({ lines: suiteLines(), pass, ...detail }); }
 function wrap(name) {
 	return (...args) => { try { real[name](...args); record(true, { method: name }); } catch (e) { record(false, { method: name, error: String(e.message).slice(0, 200) }); } };
 }
 const assert = (v, m) => { try { real.ok(v, m); record(true, { method: "ok" }); } catch (e) { record(false, { method: "ok", error: String(e.message).slice(0, 200) }); } };
-for (const n of ["strictEqual", "equal", "deepStrictEqual", "deepEqual", "notStrictEqual", "notEqual", "ok", "match", "doesNotThrow", "fail", "rejects"]) assert[n] = wrap(n);
+for (const n of ["strictEqual", "equal", "deepStrictEqual", "deepEqual", "notStrictEqual", "notEqual", "ok", "match", "doesNotThrow", "fail"]) assert[n] = wrap(n);
+// assert.rejects returns a promise: a sync try/catch would score it as a pass unconditionally.
+assert.rejects = async (...args) => { try { await real.rejects(...args); record(true, { method: "rejects" }); } catch (e) { record(false, { method: "rejects", error: String(e.message).slice(0, 200) }); } };
 assert.throws = (fn, validator, m) => {
 	try { real.throws(fn, validator, m); record(true, { method: "throws" }); } catch (e) { record(false, { method: "throws", error: String(e.message).slice(0, 200) }); }
 };
@@ -72,21 +76,41 @@ export function truthFor(suiteFile, referenceFile) {
 	const src = fs.readFileSync(suiteFile, "utf8");
 	const refUrl = pathToFileURL(path.resolve(referenceFile)).href;
 	const shimUrl = pathToFileURL(path.join(tmp, "assert-shim.mjs")).href;
+	// The module under test is named after the reference (reference.mjs stands in for
+	// src/<module>.mjs; the tester imports it as ../<module>.mjs or ./<module>.mjs).
+	const modName = path.basename(path.dirname(path.dirname(path.resolve(referenceFile)))); // tasks/<task>/oracle → <task>
+	const esc = modName.replace(/[.*+?^${}()|[\]\\]/g, (ch) => "\\" + ch);
+	const modRe = new RegExp("from\\s+[\"'](?:\\.\\./|\\./|\\.\\./src/)" + esc + "\\.m?js[\"']", "g");
 	const rewritten = src
-		.replace(/from\s+["'](\.\.\/pathnorm\.mjs|\.\.\/src\/pathnorm\.mjs|\.\/pathnorm\.mjs|\.\.\/pathnorm\.js)["']/g, `from ${JSON.stringify(refUrl)}`)
+		.replace(modRe, `from ${JSON.stringify(refUrl)}`)
 		.replace(/from\s+["']node:assert\/strict["']/g, `from ${JSON.stringify(shimUrl)}`)
 		.replace(/from\s+["']node:assert["']/g, `from ${JSON.stringify(shimUrl)}`)
 		.replace(/import\s+\{\s*test\s*\}\s+from\s+["']node:test["'];?/g, "const test = (n, fn) => fn();")
 		.replace(/process\.exit\(\s*\d*\s*\)/g, "void 0");
 	const suiteCopy = path.join(tmp, path.basename(suiteFile));
-	fs.writeFileSync(path.join(tmp, "assert-shim.mjs"), SHIM.replace("for (const s of stack) {", "for (const s of stack.slice().reverse()) {"));
+	fs.writeFileSync(path.join(tmp, "assert-shim.mjs"), SHIM);
 	fs.writeFileSync(suiteCopy, rewritten);
 	const recordFile = path.join(tmp, "records.json");
 	const r = spawnSync(process.execPath, [suiteCopy], { env: { ...process.env, SUITE_BASENAME: path.basename(suiteFile), RECORD_FILE: recordFile }, encoding: "utf8", timeout: 30000 });
 	const records = fs.existsSync(recordFile) ? JSON.parse(fs.readFileSync(recordFile, "utf8")) : [];
 	const lines = src.split(/\r?\n/);
 	fs.rmSync(tmp, { recursive: true, force: true });
-	return { records: records.map((x) => ({ ...x, source: x.line ? (lines[x.line - 1] ?? "").trim() : "" })), exit: r.status, stderr: (r.stderr ?? "").slice(0, 400) };
+	// The call site is the innermost suite frame that is not a helper definition or a
+	// test()/it()/describe() header (a suite in blocks would otherwise collapse every
+	// assertion onto the block's first line and lose all but one).
+	const isDefinition = (t) => /^\s*(async\s+)?(function|const|let|var)\b/.test(t) || /=>\s*\{?\s*$/.test(t) || /^\s*(test|it|describe)\s*\(/.test(t);
+	const closed = (t) => { let d = 0; for (const ch of t) { if (ch === "(") d++; else if (ch === ")") d--; } return d === 0; };
+	const withSource = records.map((x) => {
+		// Outermost first: the innermost frame is the helper's own body (assert.* inside eq), the
+		// outermost is a test() header when the suite is in blocks; the call site is the outermost
+		// frame that is neither.
+		const line = [...(x.lines ?? [])].reverse().find((n) => !isDefinition((lines[n - 1] ?? "").trim())) ?? null;
+		const source = line ? (lines[line - 1] ?? "").trim() : "";
+		// A multi-line assertion yields an unclosed fragment; it is kept for the count but
+		// carries no source, so it is never sent to Jev as if it were the whole assertion.
+		return { ...x, line, source: closed(source) ? source : "" };
+	});
+	return { records: withSource, exit: r.status, stderr: (r.stderr ?? "").slice(0, 400) };
 }
 
 export function questionFor(spec, assertion) {
@@ -109,7 +133,7 @@ export function auc(rows) {
 
 async function main() {
 	const argv = process.argv.slice(2);
-	const spec = { suites: [], specFile: path.join(ROOT, "tasks", "pathnorm", "spec.md"), reference: path.join(ROOT, "tasks", "pathnorm", "oracle", "reference.mjs"), limit: Infinity, dryRun: false };
+	const spec = { suites: [], specFile: path.join(ROOT, "tasks", "pathnorm", "spec.md"), reference: path.join(ROOT, "tasks", "pathnorm", "oracle", "reference.mjs"), limit: Infinity, dryRun: false, stripLabels: false };
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "--spec") spec.specFile = path.resolve(argv[++i]);
@@ -120,7 +144,7 @@ async function main() {
 		else if (a === "--strip-labels") spec.stripLabels = true;
 		else spec.suites.push(path.resolve(a));
 	}
-	if (!spec.suites.length) { console.error("usage: node tools/jev-tests.mjs <suite.mjs> [...] [--spec f] [--reference f] [--limit N] [--dry-run]"); process.exit(2); }
+	if (!spec.suites.length) { console.error("usage: node tools/jev-tests.mjs <suite.mjs> [...] [--list f] [--spec f] [--reference f] [--limit N] [--strip-labels] [--dry-run]"); process.exit(2); }
 	const specText = fs.readFileSync(spec.specFile, "utf8");
 	const key = spec.dryRun ? "" : readKey();
 	if (!spec.dryRun && !key) { console.error("no TYPESAFE_API_KEY"); process.exit(2); }

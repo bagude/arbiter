@@ -82,6 +82,7 @@ async function replayRun(runId, spec, key) {
 	const points = readJsonl(path.join(runDir, "decisions.jsonl"));
 	if (!points.length) { console.error(`${runId}: no decisions.jsonl (run tools/decision-points.mjs first)`); return; }
 	const outFile = path.join(runDir, "decisions-jev.jsonl");
+	if (spec.force && fs.existsSync(outFile)) fs.writeFileSync(outFile, "");
 	const existing = spec.force ? [] : readJsonl(outFile);
 	const have = new Map(existing.map((r) => [r.i, r]));
 	const rows = [];
@@ -94,13 +95,16 @@ async function replayRun(runId, spec, key) {
 		const payload = JSON.parse(fs.readFileSync(reqFile, "utf8")).payload;
 		if (spec.dryRun) {
 			const r = renderState(payload, { maxChars: spec.maxChars });
-			console.log(`${runId} #${String(point.i + 1).padStart(2)} ${point.action.cls.padEnd(10)} state ${r.state.length} chars ≈ ${Math.round(r.state.length / 4)} tokens${r.truncated ? ` (cut to ${(100 * r.kept).toFixed(0)}% of messages)` : ""}`);
+			console.log(`${runId} #${String(point.i + 1).padStart(2)} ${String(point.action?.cls ?? "?").padEnd(10)} state ${r.state.length} chars ≈ ${Math.round(r.state.length / 4)} tokens${r.truncated ? ` (cut to ${(100 * r.kept).toFixed(0)}% of messages)` : ""}`);
 			continue;
 		}
 		const shadowFile = path.join(runDir, "jev", `${String(point.i + 1).padStart(4, "0")}.json`);
 		let r;
 		let source = "replay";
-		if (fs.existsSync(shadowFile)) { r = JSON.parse(fs.readFileSync(shadowFile, "utf8")); source = "shadow"; }
+		// A live shadow row asked the literal question over all nine classes (it has no mask at
+		// request time); a masked replay asks over the valid ones. They are different questions,
+		// so shadow rows are reused only under --no-mask — pooling them would mix two forms.
+		if (!spec.mask && fs.existsSync(shadowFile)) { r = JSON.parse(fs.readFileSync(shadowFile, "utf8")); source = "shadow"; }
 		else {
 			r = await askWithRetry({ payload, key, valid: spec.mask ? point.valid : null, pendingReply: spec.mask ? point.state?.pendingReply : null, maxChars: spec.maxChars });
 			asked += 1;
@@ -116,7 +120,7 @@ async function replayRun(runId, spec, key) {
 	if (spec.dryRun) return;
 	console.log("");
 	console.log(`${runId}: ${rows.length} rows (${asked} asked now, ${rows.filter((r) => r.source === "shadow").length} from the live shadow, ${rows.filter((r) => !r.ok).length} errors), ${tokens} input tokens`);
-	for (const key of ["literal", "substantive"]) console.log(formatSummary(summarise(rows.filter((r) => r.ok), key), key));
+	for (const q of ["literal", "substantive"]) console.log(formatSummary(summarise(rows.filter((r) => r.ok), q), q));
 	const okRows = rows.filter((r) => r.ok);
 	const modeN = okRows.filter((r) => r.score?.mode?.agree != null).length;
 	const modeOk = okRows.filter((r) => r.score?.mode?.agree).length;

@@ -85,6 +85,7 @@ async function main() {
 		const byTask = {};
 		for (const r of scoredRows) { const b = (byTask[r.task] ??= { n: 0, fts: 0, jev: 0 }); b.n++; b.fts += r.ftsRank ? 1 / r.ftsRank : 0; b.jev += r.jevRank ? 1 / r.jevRank : 0; }
 		for (const [t, b] of Object.entries(byTask)) console.log(`  ${t.padEnd(18)} n=${b.n} MRR fts ${(b.fts / b.n).toFixed(2)} jev ${(b.jev / b.n).toFixed(2)}`);
+		fs.mkdirSync(path.join(ROOT, "runs"), { recursive: true });
 		fs.writeFileSync(path.join(ROOT, "runs", "jev-memory.jsonl"), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
 	}
 }
