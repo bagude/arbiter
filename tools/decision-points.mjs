@@ -86,7 +86,9 @@ export function validMask(state, cfg) {
 		resume: state.spawned > 0,
 		collect: state.backgroundOutstanding > 0,
 		probe: state.completed > 0,
-		done: state.probes > 0,
+		// the done gate needs probe evidence, and a probe whose reply has not arrived is
+		// not evidence yet — the runtime knows this; the policy should never have to guess
+		done: state.probes > 0 && !state.pendingProbe,
 		inspect: true,
 		memory: cfg.memoryTools,
 		checkpoint: true,
@@ -122,11 +124,15 @@ export function extractRun(runDir) {
 	const oracleFirst = (audit.find((e) => e.type === "oracle")?.msg ?? "").replace(/^Oracle run #\d+: /, "") || null;
 	const cfg = { use: summary.config?.workers?.use ?? ["worker"], memoryTools: summary.config?.memory?.mode === "search", topology: summary.config?.guards?.topology?.mode ?? null };
 
-	const state = { spawned: 0, completed: 0, backgroundOutstanding: 0, probes: 0, doneAttempts: 0 };
+	const state = { spawned: 0, completed: 0, backgroundOutstanding: 0, probes: 0, doneAttempts: 0, pendingProbe: false, pendingReply: null };
 	const horizon = substantiveHorizon(actions.map((a) => a.cls));
 	const out = [];
 	orch.calls.forEach((c, i) => {
 		const action = actions[i];
+		// a mail sent earlier whose reply lands after this point: the orchestrator is waiting
+		const pending = out.filter((q) => q.children.some((l) => l.k === "replied" && l.i > i)).map((q) => q.action.cls);
+		state.pendingProbe = pending.includes("probe");
+		state.pendingReply = pending.length ? pending[pending.length - 1] : null;
 		const valid = validMask(state, cfg);
 		const children = links[oi][i];
 		const outcome = outcomeFor(action, children, trace, reports, turns[i]);

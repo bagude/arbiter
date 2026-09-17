@@ -128,3 +128,20 @@ test("matrix reads both replay files per run and reports three horizons × two m
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
 });
+
+test("the routing question tells the head about a pending reply, and the substantive variant offers only state-changing actions and scores the substantive label", () => {
+	const payload = { model: "m", messages: [{ role: "user", content: "U" }], tools: [], chat_template_kwargs: {} };
+	const valid = { spawn: true, resume: true, collect: false, probe: true, done: false, inspect: true, memory: false, checkpoint: true, answer: true };
+	const q = headRequest(payload, valid, { state: { pendingReply: "probe", pendingProbe: true } }).messages.at(-1).content;
+	assert.match(q, /A probe you sent to the supervisor has not been answered yet/);
+	assert.doesNotMatch(q, /\nE\. claim/, "done is not offered while the probe is pending");
+	const qs = headRequest(payload, valid, { horizon: "substantive" }).messages.at(-1).content;
+	assert.match(qs, /state-changing action/);
+	assert.match(qs, /\nA\. spawn/);
+	assert.doesNotMatch(qs, /\nF\. inspect/, "gather actions are not offered on the substantive horizon");
+	const point = { action: { cls: "inspect", symbol: "F", mode: "gather" }, substantive: { cls: "probe", symbol: "D", gatherSteps: 1 }, valid };
+	const s = scorePoint(point, { raw: { A: 0.1, B: 0.2, C: 0, D: 0.6, E: 0, F: 0.1, G: 0, H: 0, I: 0 }, other: 0 }, { horizon: "substantive" });
+	assert.deepEqual(Object.keys(s.pValid), ["A", "B", "D"], "renormalised over the offered substantive actions only");
+	assert.equal(s.pick, "D");
+	assert.equal(s.agree, true, "on the substantive horizon the target is the next substantive action");
+});

@@ -40,17 +40,23 @@ const DESCRIBE = {
 const LETTERS = Object.values(SYMBOLS);
 const BY_LETTER = Object.fromEntries(ACTION_CLASSES.map((c) => [SYMBOLS[c], c]));
 
-function routingQuestion(valid) {
-	const lines = ACTION_CLASSES.filter((c) => valid[c]).map((c) => `${SYMBOLS[c]}. ${DESCRIBE[c]}`);
-	return `[ROUTER] Before you continue: which kind of action will you take next? Reply with exactly one capital letter and nothing else.\n${lines.join("\n")}`;
+const SUBSTANTIVE_CLASSES = ["spawn", "resume", "collect", "probe", "done"];
+function routingQuestion(valid, { horizon = "literal", state = null } = {}) {
+	const classes = horizon === "substantive" ? SUBSTANTIVE_CLASSES : ACTION_CLASSES;
+	const lines = classes.filter((c) => valid[c]).map((c) => `${SYMBOLS[c]}. ${DESCRIBE[c]}`);
+	const pending = state?.pendingReply ? `\n(A ${state.pendingReply === "done" ? "done claim" : state.pendingReply === "probe" ? "probe" : "message"} you sent to the supervisor has not been answered yet.)` : "";
+	const ask = horizon === "substantive"
+		? "which state-changing action will you take next, ignoring any reads, memory lookups or checkpoints you might do first?"
+		: "which kind of action will you take next?";
+	return `[ROUTER] Before you continue: ${ask} Reply with exactly one capital letter and nothing else.${pending}\n${lines.join("\n")}`;
 }
 
 // Mode A (default): thinking off, one decoded token, P(action | state). Mode B
 // (`thinking: true`): P(action | state, generated reasoning), in two calls — see
 // askThinking. Same state (tool schemas kept), same alphabet, so the two modes separate
 // "the abstraction is wrong" from "it needed to reason".
-export function headRequest(payload, valid, { thinking = false } = {}) {
-	const messages = [...payload.messages, { role: "user", content: routingQuestion(valid) }];
+export function headRequest(payload, valid, { thinking = false, horizon = "literal", state = null } = {}) {
+	const messages = [...payload.messages, { role: "user", content: routingQuestion(valid, { horizon, state }) }];
 	return {
 		model: payload.model,
 		messages,
@@ -93,9 +99,9 @@ export function reasoningOf(message) {
  * token with pre-sampling top probabilities (/completion). The distribution is then
  * P(action | state, that reasoning), and the prefix cache pays for most of call 2.
  */
-export async function askThinking(server, key, payload, valid) {
+export async function askThinking(server, key, payload, valid, { horizon = "literal", state = null } = {}) {
 	const t0 = Date.now();
-	const req = headRequest(payload, valid, { thinking: true });
+	const req = headRequest(payload, valid, { thinking: true, horizon, state });
 	delete req.logprobs; delete req.top_logprobs;
 	const first = await post(server, key, "/v1/chat/completions", req);
 	const reasoning = reasoningOf(first.choices?.[0]?.message);
@@ -121,12 +127,14 @@ async function post(server, key, route, body) {
 	return res.json();
 }
 
-export function scorePoint(point, dist) {
-	const validLetters = ACTION_CLASSES.filter((c) => point.valid[c]).map((c) => SYMBOLS[c]);
+export function scorePoint(point, dist, { horizon = "literal" } = {}) {
+	const offered = horizon === "substantive" ? SUBSTANTIVE_CLASSES : ACTION_CLASSES;
+	const validLetters = offered.filter((c) => point.valid[c]).map((c) => SYMBOLS[c]);
 	const mass = validLetters.reduce((s, l) => s + dist.raw[l], 0);
 	const pValid = Object.fromEntries(validLetters.map((l) => [l, mass > 0 ? dist.raw[l] / mass : 1 / validLetters.length]));
 	const ranked = [...validLetters].sort((a, b) => pValid[b] - pValid[a]);
-	const chosen = point.action.symbol;
+	// the target: the literal next call, or the next substantive action when that is the question asked
+	const chosen = horizon === "substantive" ? (point.substantive?.symbol ?? null) : point.action.symbol;
 	const chosenValid = validLetters.includes(chosen);
 	const pChosen = chosenValid ? pValid[chosen] : 0;
 	const entropy = -validLetters.reduce((s, l) => (pValid[l] > 0 ? s + pValid[l] * Math.log(pValid[l]) : s), 0);
@@ -151,7 +159,7 @@ async function ask(server, key, body) {
 	return { json, wallMs: Date.now() - t0 };
 }
 
-export async function replayRun(runId, { server, key, limit = Infinity, thinking = false, log = () => {} }) {
+export async function replayRun(runId, { server, key, limit = Infinity, thinking = false, horizon = "literal", log = () => {} }) {
 	const dir = path.join(ROOT, "runs", runId);
 	const decisionsFile = path.join(dir, "decisions.jsonl");
 	const reqDir = path.join(dir, "requests");
@@ -163,22 +171,24 @@ export async function replayRun(runId, { server, key, limit = Infinity, thinking
 		const f = path.join(reqDir, `${String(p.i + 1).padStart(4, "0")}.json`);
 		if (!fs.existsSync(f)) { out.push({ ...p, head: null, skipped: "no captured request" }); continue; }
 		const { payload } = JSON.parse(fs.readFileSync(f, "utf8"));
+		if (horizon === "substantive" && !p.substantive?.symbol) { out.push({ ...p, head: null, skipped: "no substantive action follows" }); continue; }
 		let head;
 		if (thinking) {
-			const r = await askThinking(server, key, payload, p.valid);
+			const r = await askThinking(server, key, payload, p.valid, { horizon, state: p.state });
 			const dist = distributionFrom(r.choice);
-			const score = scorePoint(p, dist);
-			head = { mode: "B", ...score, raw: dist.raw, other: dist.other, sampled: dist.sampled, firstAnswer: r.firstAnswer, thinkTokens: r.thinkTokens, thought: r.thought, wallMs: r.wallMs, promptMs: r.promptMs, predictedMs: r.predictedMs, cachedTokens: r.cachedTokens, promptTokens: r.promptTokens };
+			const score = scorePoint(p, dist, { horizon });
+			head = { mode: "B", horizon, ...score, raw: dist.raw, other: dist.other, sampled: dist.sampled, firstAnswer: r.firstAnswer, thinkTokens: r.thinkTokens, thought: r.thought, wallMs: r.wallMs, promptMs: r.promptMs, predictedMs: r.predictedMs, cachedTokens: r.cachedTokens, promptTokens: r.promptTokens };
 		} else {
-			const { json, wallMs } = await ask(server, key, headRequest(payload, p.valid));
+			const { json, wallMs } = await ask(server, key, headRequest(payload, p.valid, { horizon, state: p.state }));
 			const dist = distributionFrom(json.choices?.[0]);
-			const score = scorePoint(p, dist);
-			head = { mode: "A", ...score, raw: dist.raw, other: dist.other, sampled: dist.sampled, thinkTokens: 0, thought: null, wallMs, promptMs: json.timings?.prompt_ms ?? null, predictedMs: json.timings?.predicted_ms ?? null, cachedTokens: json.usage?.prompt_tokens_details?.cached_tokens ?? null, promptTokens: json.usage?.prompt_tokens ?? null };
+			const score = scorePoint(p, dist, { horizon });
+			head = { mode: "A", horizon, ...score, raw: dist.raw, other: dist.other, sampled: dist.sampled, thinkTokens: 0, thought: null, wallMs, promptMs: json.timings?.prompt_ms ?? null, predictedMs: json.timings?.predicted_ms ?? null, cachedTokens: json.usage?.prompt_tokens_details?.cached_tokens ?? null, promptTokens: json.usage?.prompt_tokens ?? null };
 		}
 		out.push({ ...p, head });
 		log(`${runId} #${String(p.i + 1).padStart(3)} ${p.action.cls.padEnd(10)}→${String(p.substantive?.cls ?? "-").padEnd(8)} head ${head.pickClass.padEnd(10)} p=${head.confidence.toFixed(2)} ${head.agree ? "=" : head.agreeSubstantive ? "≈" : "≠"}${thinking ? ` think ${head.thinkTokens}` : ""}  ${Math.round(head.wallMs)} ms (cached ${head.cachedTokens}/${head.promptTokens})`);
 	}
-	fs.writeFileSync(path.join(dir, thinking ? "decisions-replay-thinking.jsonl" : "decisions-replay.jsonl"), out.map((r) => JSON.stringify(r)).join("\n") + "\n");
+	const file = `decisions-replay${horizon === "substantive" ? "-substantive" : ""}${thinking ? "-thinking" : ""}.jsonl`;
+	fs.writeFileSync(path.join(dir, file), out.map((r) => JSON.stringify(r)).join("\n") + "\n");
 	return out;
 }
 
@@ -262,12 +272,13 @@ async function main() {
 	const keyFile = opt("--key", "C:/Users/user/Downloads/claude_playground/os/qwen-flash/.llama-api-key");
 	const limit = Number(opt("--limit", "Infinity"));
 	const thinking = args.includes("--thinking");
+	const horizon = args.includes("--substantive") ? "substantive" : "literal";
 	const key = fs.existsSync(keyFile) ? fs.readFileSync(keyFile, "utf8").trim() : "";
 	const ids = args.filter((a, i) => !a.startsWith("--") && !["--server", "--key", "--limit"].includes(args[i - 1]));
-	if (!ids.length) { console.error("usage: node tools/decision-replay.mjs <runId> [...] [--server url] [--key file] [--limit N] [--thinking] [--matrix]"); process.exit(1); }
+	if (!ids.length) { console.error("usage: node tools/decision-replay.mjs <runId> [...] [--server url] [--key file] [--limit N] [--thinking] [--substantive] [--matrix]"); process.exit(1); }
 	if (args.includes("--matrix")) { printMatrix(matrix(ids)); return; }
 	const all = [];
-	for (const id of ids) all.push(...(await replayRun(id, { server, key, limit, thinking, log: console.log })));
+	for (const id of ids) all.push(...(await replayRun(id, { server, key, limit, thinking, horizon, log: console.log })));
 	printSummary(summarize(all));
 }
 

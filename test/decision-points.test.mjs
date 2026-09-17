@@ -28,10 +28,13 @@ test("classifyTurn maps the first tool call to one of nine action classes with o
 });
 
 test("validMask conditions on the harness state: no resume before a spawn, no probe before a completion, no done before a probe", () => {
-	const fresh = validMask({ spawned: 0, completed: 0, backgroundOutstanding: 0, probes: 0, doneAttempts: 0 }, { memoryTools: false });
+	const fresh = validMask({ spawned: 0, completed: 0, backgroundOutstanding: 0, probes: 0, doneAttempts: 0, pendingProbe: false }, { memoryTools: false });
 	assert.deepEqual(fresh, { spawn: true, resume: false, collect: false, probe: false, done: false, inspect: true, memory: false, checkpoint: true, answer: true });
-	const later = validMask({ spawned: 1, completed: 1, backgroundOutstanding: 1, probes: 1, doneAttempts: 0 }, { memoryTools: true });
+	const later = validMask({ spawned: 1, completed: 1, backgroundOutstanding: 1, probes: 1, doneAttempts: 0, pendingProbe: false }, { memoryTools: true });
 	assert.deepEqual(Object.values(later), Array(9).fill(true));
+	const waiting = validMask({ spawned: 1, completed: 1, backgroundOutstanding: 0, probes: 1, doneAttempts: 0, pendingProbe: true }, { memoryTools: true });
+	assert.equal(waiting.done, false, "no done claim while a probe is unanswered: the runtime knows, the policy must not be asked");
+	assert.equal(waiting.probe, true, "another probe batch is still allowed");
 });
 
 test("extractRun on the fixture: one point per orchestrator call, a spawn point with its child link, state advancing past the return", () => {
