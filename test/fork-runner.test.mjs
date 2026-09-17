@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { planForks, compareFirstRequest, forkRow, renderReport } from "../tools/fork.mjs";
 
-test("planForks: G branch carries no action and no forcing env", () => {
+test("planForks: G branch carries no action, and blanks ARBITER_FORK_FORCE rather than omitting it", () => {
 	const plans = planForks({ run: "r1", call: 5, branch: "G", replicates: 2 });
 	assert.equal(plans.length, 2);
 	assert.deepEqual(plans.map((p) => p.replicate), [1, 2]);
@@ -11,8 +11,23 @@ test("planForks: G branch carries no action and no forcing env", () => {
 	for (const p of plans) {
 		const fork = JSON.parse(p.env.ARBITER_FORK);
 		assert.deepEqual(fork, { run: "r1", call: 5, branch: "G", replicate: p.replicate });
-		assert.equal(p.env.ARBITER_FORK_FORCE, undefined);
+		// Explicitly "" — the runner spreads process.env under this, so an omitted key would
+		// let a stale ARBITER_FORK_FORCE in the operator's shell arm the guard in a null run.
+		assert.equal(p.env.ARBITER_FORK_FORCE, "", "the null branch must disarm the guard explicitly");
 	}
+});
+
+test("planForks: an action class outside decision-points' nine is refused before any replicate runs", () => {
+	assert.throws(() => planForks({ run: "r1", call: 5, branch: "A-natural", action: "probes" }), /unknown action class "probes"/);
+	assert.throws(
+		() => planForks({ run: "r1", call: 5, branch: "A-oracle", action: "reusme" }, { cls: "resume", tool: "subagent", args: {} }, { forceDir: "runs/x" }),
+		/unknown action class "reusme"/,
+	);
+	// The one of the nine that classOfCall can never return: `answer` is the ABSENCE of a
+	// tool call, so forcing it denies every call of the run and burns the whole replicate.
+	assert.throws(() => planForks({ run: "r1", call: 5, branch: "A-natural", action: "answer" }), /cannot be forced/);
+	// G forces nothing, so it has no action to validate.
+	assert.equal(planForks({ run: "r1", call: 5, branch: "G" }).length, 1);
 });
 
 test("planForks: A-natural forces only the class, from spec.action, inline (no forceDir needed)", () => {
@@ -113,7 +128,7 @@ test("forkRow builds the row fields from a summary/decisions/audit-derived input
 	assert.equal(row.resumes, 2);
 	assert.equal(row.decoded, 120);
 	assert.equal(row.wallSec, 12.5);
-	assert.deepEqual(row.guards, { forkForce: 1, topology: 2 });
+	assert.deepEqual(row.guards, { forkForce: { denied: 0, rewritten: 1 }, topology: { denied: 2, waived: 0 } }, "per kind, not one total: a rewritten says the forcing landed, a topology denial says it may not have");
 	assert.equal(row.decisionsMissing, false);
 });
 
@@ -123,7 +138,7 @@ test("forkRow: reproduced is false when the fork's first action differs from the
 	assert.equal(row.reproduced, false);
 	assert.equal(row.stateMatch, false);
 	assert.deepEqual(row.firstDiff, { index: 2, field: "content" });
-	assert.deepEqual(row.guards, { forkForce: 0, topology: 0 });
+	assert.deepEqual(row.guards, { forkForce: { denied: 0, rewritten: 0 }, topology: { denied: 0, waived: 0 } });
 	assert.equal(row.crashed, false);
 });
 
@@ -169,6 +184,28 @@ test("renderReport contains the source point and one row per replicate, with exi
 	assert.match(report, /\| exit \| crashed \|/);
 	assert.equal(report.split("\n").filter((l) => l.startsWith("| G ") || l.startsWith("| A-oracle ")).length, 2);
 	assert.doesNotMatch(report, /null fork:/);
+});
+
+// An A-branch replicate whose forcing never happened — a topology nudge blocked it, or the
+// guard never armed — reads exactly like a valid one unless these counts are on the page.
+// The Task 3 ruling accepted the topology risk on the condition that they are.
+test("renderReport shows the fork_force and topology counts per replicate", () => {
+	const source = { runId: "r1", call: 3, recordedCls: "resume", substantive: null, headPick: null };
+	const forcedRow = forkRow({
+		branch: "A-oracle", replicate: 1, runId: "run-a1", compare: { equal: true, firstDiff: null }, sourceCls: "resume",
+		decisions: [{ i: 3, action: { cls: "resume", tool: "subagent", params: {} }, decoded: 5 }], oracle: "",
+		summary: { wallSec: 5, guards: { fork_force: { rewritten: { orchestrator: 1 } }, topology: { denied: { orchestrator: 2 }, waived: { orchestrator: 1 } } } }, exit: 0,
+	});
+	// Labelled A-oracle, but no fork_force event of any kind: the guard never armed.
+	const unforcedRow = forkRow({
+		branch: "A-oracle", replicate: 2, runId: "run-a2", compare: { equal: true, firstDiff: null }, sourceCls: "resume",
+		decisions: [{ i: 3, action: { cls: "inspect", tool: "read", params: {} }, decoded: 5 }], oracle: "",
+		summary: { wallSec: 5, guards: {} }, exit: 0,
+	});
+	const report = renderReport(source, [forcedRow, unforcedRow], { nullMode: false });
+	assert.match(report, /\| forced \(denied\/rewritten\) \| topology \(denied\/waived\) \|/);
+	assert.match(report, /\| run-a1 \|.*\| 0\/1 \| 2\/1 \|/, "the forced replicate shows its rewrite and the topology denials");
+	assert.match(report, /\| run-a2 \|.*\| 0\/0 \| 0\/0 \|/, "a replicate that forced nothing says so on its own row");
 });
 
 test("renderReport in null mode adds the reproduction-rate line", () => {

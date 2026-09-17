@@ -11,7 +11,11 @@ import { spawnSync } from "node:child_process";
 // ARBITER_FORK_FORCE is set, and only acts for the orchestrator role.
 const PI = "C:/Users/user/open_harnessess/pi/pi";
 
-function run({ calls, env = {}, agentName = "orchestrator" }) {
+// `sessionFile` is what the role gate actually reads: pi-subagents workers run INSIDE the
+// orchestrator's process and so carry AGENT_NAME=orchestrator too, and guard-kit's roleFor
+// tells them apart only by a session path ending `/tasks/<id>.jsonl`. `allowFail` is for the
+// one case that must take the agent process down: a force file the guard cannot read.
+function run({ calls, env = {}, agentName = "orchestrator", sessionFile = null, allowFail = false }) {
 	const lifecycle = path.join(os.tmpdir(), `fork-force-${process.pid}-${Date.now()}.jsonl`);
 	const driver = path.join(os.tmpdir(), `fork-force-driver-${process.pid}.mjs`);
 	fs.writeFileSync(
@@ -21,7 +25,8 @@ function run({ calls, env = {}, agentName = "orchestrator" }) {
 		const mod = await import(pathToFileURL(${JSON.stringify(path.resolve("ext/guards/fork-force.ts"))}).href);
 		const handlers = {};
 		mod.default({ on: (ev, fn) => { handlers[ev] = fn; }, events: { on() {} } });
-		const ctx = { cwd: "C:/ws", sessionManager: { getSessionFile: () => undefined } };
+		const sessionFile = ${JSON.stringify(sessionFile)};
+		const ctx = { cwd: "C:/ws", sessionManager: { getSessionFile: () => sessionFile ?? undefined } };
 		const out = [];
 		for (const call of ${JSON.stringify(calls)}) {
 			const input = { ...call.input };
@@ -35,9 +40,10 @@ function run({ calls, env = {}, agentName = "orchestrator" }) {
 		encoding: "utf8",
 		env: { ...process.env, AGENT_NAME: agentName, ARBITER_LIFECYCLE_FILE: lifecycle, NODE_PATH: `${PI}/node_modules`, ARBITER_FORK_FORCE: "", ...env },
 	});
-	assert.equal(r.status, 0, r.stderr);
 	const lines = fs.existsSync(lifecycle) ? fs.readFileSync(lifecycle, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
-	return { ...JSON.parse(r.stdout.trim()), lines };
+	if (allowFail) return { status: r.status, stderr: r.stderr, stdout: r.stdout, lines };
+	assert.equal(r.status, 0, r.stderr);
+	return { ...JSON.parse(r.stdout.trim()), lines, status: r.status };
 }
 
 test("not registered when ARBITER_FORK_FORCE is unset", () => {
@@ -96,21 +102,56 @@ test("A-oracle via a file (ARBITER_FORK_FORCE='@<path>'): the force spec is read
 	}
 });
 
-test("ARBITER_FORK_FORCE='@<missing path>' registers nothing rather than throwing", () => {
-	const { registered, out } = run({
+// A fork that cannot arm itself must not start. A-oracle ALWAYS uses the file form, so a
+// silently-disarmed guard produced a run labelled A-oracle that behaved like the null branch
+// G with nothing in its report saying so. The throw takes the agent process down instead.
+test("ARBITER_FORK_FORCE='@<missing path>' throws rather than disarming the guard", () => {
+	const missing = path.join(os.tmpdir(), "no-such-fork-force-file.json");
+	const { status, stderr } = run({
 		calls: [{ toolName: "read", input: { path: "a" } }],
-		env: { ARBITER_FORK_FORCE: `@${path.join(os.tmpdir(), "no-such-fork-force-file.json")}` },
+		env: { ARBITER_FORK_FORCE: `@${missing}` },
+		allowFail: true,
 	});
+	assert.notEqual(status, 0, "the process must fail, not register an unarmed guard");
+	assert.match(stderr, /force file that cannot be read/);
+});
+
+test("ARBITER_FORK_FORCE='@<path>' whose file is not a usable force spec throws too", () => {
+	const bad = path.join(os.tmpdir(), `fork-force-bad-${process.pid}-${Date.now()}.json`);
+	fs.writeFileSync(bad, "{ not json");
+	const noCls = path.join(os.tmpdir(), `fork-force-nocls-${process.pid}-${Date.now()}.json`);
+	fs.writeFileSync(noCls, JSON.stringify({ tool: "send_mail" }));
+	try {
+		const parse = run({ calls: [{ toolName: "read", input: { path: "a" } }], env: { ARBITER_FORK_FORCE: `@${bad}` }, allowFail: true });
+		assert.notEqual(parse.status, 0);
+		assert.match(parse.stderr, /is not JSON/);
+		const cls = run({ calls: [{ toolName: "read", input: { path: "a" } }], env: { ARBITER_FORK_FORCE: `@${noCls}` }, allowFail: true });
+		assert.notEqual(cls.status, 0);
+		assert.match(cls.stderr, /has no "cls"/);
+	} finally {
+		fs.rmSync(bad, { force: true });
+		fs.rmSync(noCls, { force: true });
+	}
+});
+
+// An empty ARBITER_FORK_FORCE is an ordinary run, not a fork that lost its orders: every
+// agent process of every run loads this guard, so this is the path all of them take.
+test("an absent ARBITER_FORK_FORCE still registers nothing, without throwing", () => {
+	const { registered, out } = run({ calls: [{ toolName: "read", input: { path: "a" } }], env: { ARBITER_FORK_FORCE: "   " } });
 	assert.deepEqual(registered, []);
 	assert.equal(out[0].result, "not-registered");
 });
 
-test("a worker's tool_call is never forced (role gate)", () => {
+// pi-subagents workers run inside the orchestrator's own process, so AGENT_NAME says
+// "orchestrator" for them too; guard-kit's roleFor separates them only by the session path.
+// Gating on AGENT_NAME instead would exercise a branch that never occurs in a live run.
+test("a worker's tool_call is never forced (role gate), even though it carries AGENT_NAME=orchestrator", () => {
 	const { out, lines } = run({
 		calls: [{ toolName: "read", input: { path: "a" } }],
 		env: { ARBITER_FORK_FORCE: JSON.stringify({ cls: "probe" }) },
-		agentName: "tester",
+		agentName: "orchestrator",
+		sessionFile: "C:/ws/.sessions/2026-09-15T04-19-13-843Z_01a0a34a/tasks/2026-09-15T04-22-16-260Z_01a0a34d.jsonl",
 	});
-	assert.equal(out[0].result, null);
-	assert.equal(lines.length, 0);
+	assert.equal(out[0].result, null, "a worker's call passes untouched");
+	assert.equal(lines.length, 0, "and nothing is reported for it");
 });

@@ -12,8 +12,10 @@
  * (tools/fork.mjs) uses the file form for A-oracle, whose recorded `args` can be
  * arbitrary JSON (a probe body, say) large enough to blow past Windows' ~32 KB
  * process-environment-block limit if carried inline. The supervisor passes either
- * form through unchanged. Orchestrator only — the same nudge would make no sense for
- * a worker mid-task — but harmless to load everywhere, like every other guard here.
+ * form through unchanged. A named force file that cannot be read or parsed THROWS at
+ * module scope rather than disarming (see optionsFromEnv). Orchestrator only — the same
+ * nudge would make no sense for a worker mid-task — but harmless to load everywhere,
+ * like every other guard here.
  *
  * Must precede topology.ts in supervisor.mjs GUARDS: pi returns the first blocking
  * tool_call result, and the fork's forcing must be seen before the topology nudge.
@@ -28,19 +30,34 @@ const home = process.env.ARBITER_HOME ?? path.resolve(here, "..", "..");
 const kit = await import(new URL(`file:///${path.join(home, "ext", "guard-kit.ts").replace(/\\/g, "/")}`).href);
 const { decideForce } = await import(kit.homeUrl(home, "lib", "policies", "fork-force.mjs"));
 
+// A fork that cannot arm itself must not start. An "@<path>" force file that cannot be read
+// or parsed used to leave the guard silently unregistered, and A-oracle ALWAYS uses the file
+// form — so a bad path produced a run labelled A-oracle that behaved exactly like the null
+// branch G, with nothing in its report saying so. Throwing here takes the agent process down
+// instead, which the runner shows as a crashed replicate and excludes from the gate. Absent
+// or empty still registers nothing: that is an ordinary run, not a fork that lost its orders.
 function optionsFromEnv(raw: string | undefined): { cls: string; tool?: string | null; args?: Record<string, unknown> | null } | null {
 	const v = (raw ?? "").trim();
 	if (!v) return null;
-	let text = v;
 	if (v.startsWith("@")) {
+		const file = v.slice(1);
+		let text: string;
 		try {
-			text = fs.readFileSync(v.slice(1), "utf8");
-		} catch {
-			return null;
+			text = fs.readFileSync(file, "utf8");
+		} catch (err) {
+			throw new Error(`ARBITER_FORK_FORCE names a force file that cannot be read: ${file} (${(err as Error)?.message ?? String(err)})`);
 		}
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(text);
+		} catch (err) {
+			throw new Error(`ARBITER_FORK_FORCE force file ${file} is not JSON: ${(err as Error)?.message ?? String(err)}`);
+		}
+		if (!parsed || typeof parsed !== "object" || !(parsed as { cls?: unknown }).cls) throw new Error(`ARBITER_FORK_FORCE force file ${file} has no "cls"`);
+		return parsed as { cls: string; tool?: string | null; args?: Record<string, unknown> | null };
 	}
 	try {
-		const parsed = JSON.parse(text);
+		const parsed = JSON.parse(v);
 		return parsed && typeof parsed === "object" && parsed.cls ? parsed : null;
 	} catch {
 		return null;

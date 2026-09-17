@@ -38,6 +38,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { payloadEquals } from "../lib/fork.mjs";
 import { traceRun, readSessionFile } from "../lib/context-trace.mjs";
+import { ACTION_CLASSES } from "./decision-points.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(here, "..");
@@ -61,6 +62,13 @@ const ROOT = path.join(here, "..");
  * Returns [{ env: { ARBITER_FORK, ARBITER_FORK_FORCE? }, branch, replicate, forceFile?,
  * forcePayload? }, ...] — a plan with a `forceFile` needs it written (JSON.stringify(forcePayload))
  * before the replicate is spawned.
+ *
+ * The resolved action class is validated against tools/decision-points.mjs's nine classes,
+ * because `decideForce` compares it against `classOfCall`'s output on every tool call: a class
+ * that never comes back from there denies the orchestrator's every call for the whole run, and
+ * the replicate burns a full run whose report row looks ordinary. `answer` is one of the nine
+ * but is exactly such a class — it is the ABSENCE of a tool call, so no tool call can ever
+ * satisfy it — and is rejected here too.
  */
 export function planForks(spec, recorded = null, { forceDir = null } = {}) {
 	const { run, call, branch, replicates = 1 } = spec;
@@ -78,6 +86,10 @@ export function planForks(spec, recorded = null, { forceDir = null } = {}) {
 	} else if (branch !== "G") {
 		throw new Error(`unknown branch ${branch}`);
 	}
+	if (branch !== "G") {
+		if (!ACTION_CLASSES.includes(action)) throw new Error(`unknown action class "${action}" — must be one of ${ACTION_CLASSES.join(", ")}`);
+		if (action === "answer") throw new Error('action class "answer" cannot be forced: it is the absence of a tool call, so no tool call would ever satisfy it and every call of the run would be denied');
+	}
 	const plans = [];
 	for (let replicate = 1; replicate <= replicates; replicate++) {
 		const fork = { run, call, branch, replicate };
@@ -91,7 +103,10 @@ export function planForks(spec, recorded = null, { forceDir = null } = {}) {
 			plans.push({ env: { ...env, ARBITER_FORK_FORCE: `@${forceFile}` }, branch, replicate, forceFile, forcePayload });
 			continue;
 		}
-		if (branch !== "G") env.ARBITER_FORK_FORCE = JSON.stringify({ cls: action });
+		// G is the null branch and must force nothing. Set explicitly rather than omitted:
+		// runOnce spreads process.env under the plan's env, so a stale ARBITER_FORK_FORCE in
+		// the operator's shell would otherwise arm the guard during a null-gate run.
+		env.ARBITER_FORK_FORCE = branch === "G" ? "" : JSON.stringify({ cls: action });
 		plans.push({ env, branch, replicate });
 	}
 	return plans;
@@ -104,10 +119,14 @@ export function compareFirstRequest(sourceReq, forkReq) {
 	return payloadEquals(sourceReq?.payload, forkReq.payload);
 }
 
-function guardTotal(guards, name) {
+/** summary.guards is guard name -> kind -> role -> count; this totals `kinds` across roles.
+ * Reported per kind rather than as one number because the two kinds mean opposite things:
+ * a `fork_force` REWRITTEN says the forcing landed, a DENIED says the model was redirected,
+ * and a `topology` DENIED of the forced call is the accepted risk that leaves an A-branch
+ * replicate's retry unforced — the thing the reader has to be able to see. */
+function guardKinds(guards, name, kinds) {
 	const g = guards?.[name];
-	if (!g) return 0;
-	return Object.values(g).reduce((sum, byAgent) => sum + Object.values(byAgent).reduce((a, b) => a + b, 0), 0);
+	return Object.fromEntries(kinds.map((kind) => [kind, Object.values(g?.[kind] ?? {}).reduce((a, b) => a + b, 0)]));
 }
 
 /**
@@ -138,7 +157,10 @@ export function forkRow({ branch, replicate, runId, compare, sourceCls, decision
 		resumes: decisions.filter((p) => p.action?.cls === "resume").length,
 		decoded: decisions.reduce((s, p) => s + (p.decoded ?? 0), 0),
 		wallSec: summary?.wallSec ?? null,
-		guards: { forkForce: guardTotal(summary?.guards, "fork_force"), topology: guardTotal(summary?.guards, "topology") },
+		guards: {
+			forkForce: guardKinds(summary?.guards, "fork_force", ["denied", "rewritten"]),
+			topology: guardKinds(summary?.guards, "topology", ["denied", "waived"]),
+		},
 		decisionsMissing,
 	};
 }
@@ -150,19 +172,27 @@ function paramsHead(params) {
 /** Render the report: the source point, one row per replicate, and (nullMode) the
  * reproduction-rate line. `source` is { runId, call, recordedCls, substantive, headPick }.
  * Crashed replicates (see forkRow) are shown in the table but excluded from the null-gate
- * counts, since their numbers describe a run that never finished. */
+ * counts, since their numbers describe a run that never finished.
+ *
+ * The `forced` and `topology` columns are what make an A-branch replicate readable: a row
+ * with no `fork_force` event at all did not force anything, whatever its branch label says,
+ * and a `topology` denial on the same call is the accepted risk from the Task 3 ruling
+ * (fork-force disarms on the first ATTEMPTED call of the forced class, so a nudge that
+ * blocks that call leaves the retry unforced). Both were computed and thrown away before. */
 export function renderReport(source, rows, { nullMode = false } = {}) {
 	const lines = [`# fork ${source.runId} #${source.call}`, ""];
 	const subst = source.substantive?.cls ? `${source.substantive.cls} (${source.substantive.gatherSteps} gather step${source.substantive.gatherSteps === 1 ? "" : "s"})` : "none recorded";
 	const head = source.headPick ? `${source.headPick.pickClass} (p=${source.headPick.confidence.toFixed(2)})` : "not replayed";
 	lines.push(`Source point: recorded class **${source.recordedCls}**, next substantive action **${subst}**, head pick ${head}.`, "");
-	lines.push("| branch | replicate | run | exit | crashed | state match | first action | reproduced | oracle | probes | resumes | decoded | wall s |");
-	lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+	lines.push("| branch | replicate | run | exit | crashed | state match | first action | reproduced | forced (denied/rewritten) | topology (denied/waived) | oracle | probes | resumes | decoded | wall s |");
+	lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
 	for (const r of rows) {
 		const fa = r.firstAction ? `${r.firstAction.cls} · ${r.firstAction.tool ?? "—"} · ${paramsHead(r.firstAction.params)}` : r.decisionsMissing ? "— (decision-points failed)" : "—";
 		const sm = r.stateMatch ? "yes" : `no (${JSON.stringify(r.firstDiff)})`;
 		const rep = r.reproduced === null ? "—" : r.reproduced ? "yes" : "no";
-		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${r.exit ?? "—"} | ${r.crashed ? "yes" : "no"} | ${sm} | ${fa} | ${rep} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
+		const forced = `${r.guards.forkForce.denied}/${r.guards.forkForce.rewritten}`;
+		const topo = `${r.guards.topology.denied}/${r.guards.topology.waived}`;
+		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${r.exit ?? "—"} | ${r.crashed ? "yes" : "no"} | ${sm} | ${fa} | ${rep} | ${forced} | ${topo} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
 	}
 	lines.push("");
 	if (nullMode) {
@@ -273,7 +303,16 @@ async function main() {
 	fs.mkdirSync(logDir, { recursive: true });
 
 	const recorded = spec.branch === "A-oracle" ? recordedAction(sourceDir, spec.call, point) : null;
-	const plan = planForks({ run: spec.runId, call: spec.call, branch: spec.branch, action: spec.action, replicates: spec.replicates }, recorded, { forceDir: logDir });
+	// A rejected plan is exit 2, the same code the supervisor's own fork preflight uses for
+	// "this fork must not start": an unforceable action class would otherwise deny every call
+	// of the run and the replicate would burn a full run whose report row looks ordinary.
+	let plan;
+	try {
+		plan = planForks({ run: spec.runId, call: spec.call, branch: spec.branch, action: spec.action, replicates: spec.replicates }, recorded, { forceDir: logDir });
+	} catch (err) {
+		console.error(`[fork] ${err?.message ?? err}`);
+		process.exit(2);
+	}
 
 	const sourceReqFile = path.join(sourceDir, "requests", `${String(spec.call).padStart(4, "0")}.json`);
 	if (!fs.existsSync(sourceReqFile)) usage(`${spec.runId}: no ${sourceReqFile} (this run has no captured request for call ${spec.call})`);
