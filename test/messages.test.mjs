@@ -17,7 +17,9 @@ test("who(): the three words that vary by pattern", () => {
 
 test("silent turn", () => {
 	assert.equal(solo.silentTurn(), '[SUPERVISOR] Your last turn produced text but called no tool, so nothing happened. If your implementation is complete and self-tested, send kind="done" via send_mail; otherwise keep working.');
-	assert.equal(orch.silentTurn(), '[SUPERVISOR] Your last turn produced text but called no tool, so nothing happened — no worker was briefed, no probe was run and no mail was sent. If the workspace already satisfies the specification, send kind="done"; otherwise probe it or brief a worker.');
+	// The orchestrator's copy disclaims itself: it is delivered during the turn after the
+	// silent one, which may already have sent the mail it says was never sent.
+	assert.equal(orch.silentTurn(), '[SUPERVISOR] Your last turn produced text but called no tool, so nothing happened — no worker was briefed, no probe was run and no mail was sent. If the workspace already satisfies the specification, send kind="done"; otherwise probe it or brief a worker. (If you have sent mail since, ignore this — it refers to an earlier turn.)');
 	assert.equal(dyad.silentTurn(), "[SUPERVISOR] Your last turn produced text but never called send_mail — nothing was sent to your counterpart, and they never saw it. You can only communicate via the send_mail tool. If you meant to say something, send it now.");
 });
 
@@ -70,7 +72,13 @@ test("oracle texts", () => {
 	assert.equal(solo.oracle.failedSolo("V", 3), "[SUPERVISOR] V Not done. Re-read the SPECIFICATION in your prompt — every error rule, every edge case it names — find what you missed, fix it, then send done again. (3 attempts left)");
 	assert.equal(dyad.oracle.failedBuilder("V", 3), "[SUPERVISOR] CRITIC approved your work. V Not done. Work with CRITIC to find what you missed, then claim done again. (3 approvals left)");
 	assert.equal(dyad.oracle.failedVerifier("V", 3), "[SUPERVISOR] You approved BUILDER's work. V Your approval was wrong. Find what you both missed; interrogate on inputs you have not yet asked about. (3 approvals left)");
-	assert.equal(orch.oracle.failedVerifier("V", 3), "[SUPERVISOR] Your done claim was wrong. V Find what was missed with probes and brief a worker on the fix. (3 claims left)");
+	// Not "find what was missed with probes": the oracle discloses no failing input and a
+	// probe compares the code against the orchestrator's own expectation, so that
+	// prescription named a method that cannot work.
+	assert.equal(
+		orch.oracle.failedVerifier("V", 3),
+		'[SUPERVISOR] Your done claim was wrong. V Beyond that verdict, nothing lists which inputs failed, and a probe only checks the code against your own expectation, so probing cannot recover them. Re-derive the corners the specification leaves under-specified — for each argument of each function, its degenerate inputs (the empty string, ".", "/", a trailing separator, a non-string) — and brief a worker on what you find. (3 claims left)',
+	);
 });
 
 test("idle nudge", () => {
@@ -94,7 +102,9 @@ test("kickoff texts", () => {
 	assert.equal(dyad.kickoff.critic(), "[SUPERVISOR] Session start. BUILDER is waiting. Open the conversation: tell BUILDER what they are building, at the level of a one-paragraph brief. Let them ask for details.");
 	assert.equal(dyad.kickoff.builder(), "[SUPERVISOR] Session start. Read README.md. CRITIC will mail you a brief shortly; you may also mail CRITIC first if you prefer.");
 	assert.equal(solo.kickoff.builder(), '[SUPERVISOR] Session start. Read README.md. The full specification is in your system prompt under SPECIFICATION. Implement it under src/, test it yourself, then send kind="done" to the supervisor.');
-	assert.equal(orch.kickoff.orchestrator(), '[SUPERVISOR] Session start. The specification is in your system prompt. Read README.md and src/, decide how to split the work, and start a worker with subagent_type "worker". Verify with kind="probe" before you claim kind="done".');
+	// The roster is per run, so the kickoff points at it instead of naming a subagent_type.
+	assert.equal(orch.kickoff.orchestrator(), '[SUPERVISOR] Session start. The specification is in your system prompt. Read README.md and src/, decide how to split the work, and start a worker (the subagent types your prompt\'s roster lists). Verify with kind="probe" before you claim kind="done".');
+	assert.doesNotMatch(orch.kickoff.orchestrator(), /subagent_type/);
 });
 
 test("time status lines", () => {

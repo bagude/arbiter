@@ -35,7 +35,7 @@ import { snapshotId } from "./lib/snapshot.mjs";
 import { contextTokensOf, decideCompaction, composeInstructions, ledgerLines } from "./lib/compaction.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 import { readJsonl } from "./lib/jsonl.mjs";
-import { argsKey as probeArgsKey, matchCase as matchProbeCase } from "./lib/probe-match.mjs";
+import { argsKey as probeArgsKey, isThrowsExpectation, matchCase as matchProbeCase } from "./lib/probe-match.mjs";
 import { forkSpec, truncateSessionEntries, truncateEntriesAt, rewriteSessionHeader, forkCounters, forkReplayOrder } from "./lib/fork.mjs";
 import { readSessionFile } from "./lib/context-trace.mjs";
 
@@ -1229,6 +1229,15 @@ function runProbe(msg, { auto = null } = {}) {
 
 		const withExpect = [];
 		const withoutExpect = [];
+		// Matched cases used to contribute nothing to the reply, so the throws lines below are
+		// pure growth on a message that already has a documented way of ending a run: probe
+		// bodies of 65 cases are real (run 2026-09-17T16-47-16), and PROBE_VALUE_MAX alone
+		// would allow ~100KB of them. A short per-line cap and a line cap keep the addition
+		// under about 7KB; an error message's first 300 characters are what the case was
+		// asking about anyway.
+		const MATCHED_THROWS_CHARS = 300;
+		const MATCHED_THROWS_MAX = 20;
+		const matchedThrows = [];
 		let matchCount = 0;
 		for (const res of results) {
 			const args = argsById.get(res.id);
@@ -1261,8 +1270,18 @@ function runProbe(msg, { auto = null } = {}) {
 				// key-order-insensitive comparison over the keys the expectation names.
 				// Never a raw JSON string compare — see lib/probe-match.mjs for what that did.
 				const { matched, detail } = matchProbeCase(res, expect);
-				if (matched) matchCount++;
-				else withExpect.push(`${line} — EXPECTED ${truncateForMail(JSON.stringify(expect))}, MISMATCH${detail ? ` (${truncateForMail(detail)})` : ""}`);
+				if (matched) {
+					matchCount++;
+					// A `{"throws": "..."}` expectation matches on the error text CONTAINING that
+					// string, so "matched" leaves the rest of the message unseen — and a `throws`
+					// case is usually asked precisely because the message matters. Run
+					// 2026-09-17T16-47-16 was shown "25/25 matched" and then re-read src/ to
+					// confirm an error-message prefix its own probe had already produced. Value
+					// cases are left out: for those, matching IS the value.
+					if (isThrowsExpectation(expect)) matchedThrows.push(truncateForMail(`${res.id}: (${argsStr}) → ${actualFull}`, MATCHED_THROWS_CHARS));
+				} else {
+					withExpect.push(`${line} — EXPECTED ${truncateForMail(JSON.stringify(expect))}, MISMATCH${detail ? ` (${truncateForMail(detail)})` : ""}`);
+				}
 			} else {
 				withoutExpect.push(line);
 			}
@@ -1272,6 +1291,14 @@ function runProbe(msg, { auto = null } = {}) {
 		const parts = [];
 		if (expectById.size > 0) {
 			parts.push(`${matchCount}/${expectById.size} matched ${whose} stated expectations.`);
+			if (matchedThrows.length) {
+				const shown = matchedThrows.slice(0, MATCHED_THROWS_MAX);
+				const more = matchedThrows.length - shown.length;
+				parts.push(
+					`Matched throws cases, with the error each one actually threw (the expectation checked only that the text contains what you named):\n${shown.join("\n")}` +
+						(more ? `\n(+${more} more matched throws case${more === 1 ? "" : "s"}, not shown)` : ""),
+				);
+			}
 			if (withExpect.length) parts.push(`Mismatches:\n${withExpect.join("\n")}`);
 		}
 		if (withoutExpect.length) parts.push(`${expectById.size > 0 ? "Other cases (no expectation given):\n" : ""}${withoutExpect.join("\n")}`);
@@ -1392,7 +1419,28 @@ function runOracle() {
 		log({ type: "oracle", msg: verdict });
 		timeline.push({ ts: Date.now(), from: "supervisor", to: "both", kind: "oracle", body: verdict });
 		if (total > 0 && pass === total) return finish("SUCCESS: oracle passed");
-		if (doneAttempts >= CAPS.doneAttempts) return finish(`done attempts exhausted (${doneAttempts})`);
+		// The last attempt's verdict used to reach nobody: this branch finished before the
+		// deliver() below, so audit.jsonl showed "Oracle run #5: 69/70 passed." followed by
+		// "FINISH: done attempts exhausted (5)" with no delivery line between them. In run
+		// 2026-09-17T16-47-16 that fifth verdict was the only one with directional signal —
+		// four runs at 68/70 and then 69/70, which said the last edit had moved something —
+		// and it is the one nobody, agent or reader, was told.
+		//
+		// It is not delivered: finish() writes the summary and kills the agent processes, so
+		// no inference follows and a prompt sent here would be generated into a dying
+		// process. The score goes into the finish reason instead, which is summary.reason,
+		// the transcript's Outcome line and the FINISH row in the audit.
+		if (doneAttempts >= CAPS.doneAttempts) {
+			// Deliberately NOT the verdict string again: tools/batch.mjs and tools/fork.mjs both
+			// scan audit.jsonl globally for /Oracle run #\d+: (\d+\/\d+)/, so repeating that
+			// prefix put the final score in the oracle column twice — six scores for five
+			// oracles, on exactly the capped runs case (f) is about, in exactly the
+			// docs/batch/*.md reports this audit came out of. The entry logged above already
+			// carries the score. (tools/decision-points.mjs takes the first oracle entry, and
+			// lib/memory.mjs reads the timeline, pushed once; both are unaffected either way.)
+			log({ type: "oracle", msg: `Run #${doneAttempts}'s verdict was not delivered to any agent: the attempt cap (${CAPS.doneAttempts}) ends the run here.` });
+			return finish(`done attempts exhausted (${doneAttempts}); final oracle ${pass}/${total} passed`);
+		}
 		if (SOLO) {
 			deliver("builder", M.oracle.failedSolo(verdict, CAPS.doneAttempts - doneAttempts), "oracle verdict");
 		} else {

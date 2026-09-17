@@ -1,6 +1,6 @@
 /**
  * Deterministic topological ordering with cycle reporting.
- * Your counterpart holds the specification. Ask them.
+ * You do not have the specification; it comes from whoever briefs you.
  */
 export function topoSort(nodes, edges) {
 	throw new Error("not implemented");

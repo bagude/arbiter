@@ -1,6 +1,6 @@
 /**
  * Parse CSV text into rows.
- * Your counterpart holds the specification. Ask them.
+ * You do not have the specification; it comes from whoever briefs you.
  */
 export function parseCSV(text, { delimiter = ",", header = false } = {}) {
 	throw new Error("not implemented");
@@ -8,7 +8,7 @@ export function parseCSV(text, { delimiter = ",", header = false } = {}) {
 
 /**
  * Serialise rows into CSV text.
- * Your counterpart holds the specification. Ask them.
+ * You do not have the specification; it comes from whoever briefs you.
  */
 export function toCSV(rows, { delimiter = "," } = {}) {
 	throw new Error("not implemented");

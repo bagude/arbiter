@@ -1,6 +1,6 @@
 /**
  * Semantic Versioning 2.0.0 parsing, comparison, and range matching.
- * Your counterpart holds the specification. Ask them.
+ * You do not have the specification; it comes from whoever briefs you.
  */
 
 export function parse(v) {
