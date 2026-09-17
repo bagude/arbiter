@@ -104,6 +104,8 @@ test("formatRows and formatRecords respect the character limits", () => {
 	const { dir, log, S } = fixture();
 	const p = buildIndex(dir, resolveLedger(log));
 	const text = formatRows(search(p, { query: "water", scopes: ["repo:dw"], snapshot: S }));
+	// A row is 200 characters unless the summary floor pushes it out (see the next test):
+	// these summaries are all shorter than the floor, so nothing is padded.
 	for (const line of text.split("\n")) assert.ok(line.length <= 200, line);
 	assert.match(text, /m_null · repo:dw · semantic · observed · verified · dw@aaaaaaaaaaaa · compatible · TX water_bbl is 100% NULL/);
 	assert.match(text, /m_design · repo:dw · semantic · observed · unverified/);
@@ -111,4 +113,23 @@ test("formatRows and formatRecords respect the character limits", () => {
 	const out = formatRecords([big, big, big], { perRecord: 1500, total: 4000 });
 	assert.ok(out.length <= 4000, `total ${out.length}`);
 	assert.match(out, /\(truncated; 3500 more chars\)/);
+});
+
+// The row that cost run 2026-09-17T16-47-16 its fix: a header over 80 characters left
+// the old `200 - head - tail` budget under 90, which cut the summary mid-expression and
+// dropped the clause naming the fix. The floor keeps that clause, and the tail stays on.
+test("formatRows floors the summary at 120 characters however long the header is", () => {
+	const { dir, log } = fixture();
+	const summary = 'Root cause in src/pathnorm.mjs relative(): const segs = (s) => (s maps normalised "." to ["."] instead of []. Fix: segs(".") === [].';
+	appendLog(log, [
+		makeRecord({ id: "m_8ed2e11cf03a", scope: "repo:dw", kind: "semantic", claim: "observed", source: "agent", evidence: ["run:r1", "oracle:r1#1"], ts: 1000, snapshot: "dw@aaaaaaaaaaaa", summary, text: `${summary} Seen on every relative() call whose first argument normalises to the current directory.` }),
+	]);
+	const p = buildIndex(dir, resolveLedger(log));
+	const [line] = formatRows(search(p, { query: "pathnorm", scopes: ["repo:dw"], snapshot: "dw@aaaaaaaaaaaa" })).split("\n");
+	const headLen = line.indexOf("Root cause");
+	assert.ok(headLen > 80, `header is ${headLen} chars, not the long-header case`);
+	assert.ok(headLen + 120 > 200, "this header must leave the old budget below the floor");
+	assert.ok(line.includes("instead of []"), `operative clause truncated away: ${line}`);
+	assert.match(line, / · 2 ev · \d{4}-\d{2}-\d{2}$/, `tail lost: ${line}`);
+	assert.ok(line.length > 200, `the floor must win over the 200-char cap: ${line.length}`);
 });

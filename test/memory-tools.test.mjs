@@ -76,14 +76,42 @@ test("a worker reserve keeps part of the budget out of the orchestrator's reach;
 	cfg.workerReserve = 1200;
 	const first = searchTool(cfg, { query: "water" }, "orchestrator"); // ~ hundreds of chars
 	assert.equal(first.refused, false);
-	const big = getTool(cfg, { ids: ["m_loader"] }, "orchestrator"); // ~1900 chars would cross 3000-1200
-	assert.equal(big.refused, true, "the orchestrator cannot spend into the worker reserve");
+	// One record out of the untouched reserve, once: ~1900 chars crosses 3000-1200, but no
+	// worker has spent anything yet, so this one is charged against the whole budget.
+	const allowed = getTool(cfg, { ids: ["m_loader"] }, "orchestrator");
+	assert.equal(allowed.refused, false, "the first record past the cap comes out of the untouched reserve");
+	assert.equal(allowed.records, 1);
+	const big = getTool(cfg, { ids: ["m_loader"] }, "orchestrator"); // the allowance is spent
+	assert.equal(big.refused, true, "the orchestrator cannot spend into the worker reserve again");
 	assert.match(big.text, /reserved for workers/);
-	const worker = getTool(cfg, { ids: ["m_loader"] }, "worker:z");
-	assert.equal(worker.refused, false, "a worker may spend the reserve");
+	const worker = getTool(cfg, { ids: ["m_null"] }, "worker:z");
+	assert.equal(worker.refused, false, "a worker may spend past the orchestrator's cap");
+	assert.ok(spent(ledger).chars > 1800, "the run has spent past the orchestrator's 3000-1200 cap");
 	assert.ok(spent(ledger).chars <= 3000);
 	assert.equal(readToolEnv({ ARBITER_MEMORY_INDEX: cfg.indexFile, ARBITER_MEMORY_WORKER_RESERVE: "2000" }).workerReserve, 2000);
 	assert.equal(readToolEnv({ ARBITER_MEMORY_INDEX: cfg.indexFile }).workerReserve, 0);
+});
+
+test("a get too wide for the budget falls back to its first record", () => {
+	const { cfg } = env(1900); // both records are 1955 chars; m_loader alone is 1708
+	const r = getTool(cfg, { ids: ["m_loader", "m_null"] }, "orchestrator");
+	assert.equal(r.refused, false);
+	assert.equal(r.records, 1);
+	assert.match(r.text, /### m_loader/);
+	assert.doesNotMatch(r.text, /### m_null/);
+});
+
+test("a get refused for budget names the ids it would have returned; a worker's spend closes the reserve allowance", () => {
+	const { cfg } = env(3000);
+	cfg.workerReserve = 1200;
+	assert.equal(getTool(cfg, { ids: ["m_null"] }, "worker:a").refused, false);
+	// The reserve is no longer untouched, so the orchestrator is held to its 1800 cap.
+	const refused = getTool(cfg, { ids: ["m_loader", "m_nope"] }, "orchestrator");
+	assert.equal(refused.refused, true);
+	assert.equal(refused.records, 0);
+	assert.match(refused.text, /The record it would have returned: m_loader/);
+	assert.match(refused.text, /not found: m_nope/);
+	assert.match(refused.text, /a worker you brief can fetch it/);
 });
 
 test("a get charges the number of records it delivered", () => {
