@@ -95,6 +95,15 @@ test("memory.extraScopes are read scopes, validated", () => {
 	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "glob", pattern: "solo", roles, memory: { mode: "search", extraScopes: ["agent:"] } }), env: SKIP }), /extraScopes/);
 });
 
+test("memory.readTask swaps the read task scope; validated; never the run's own task", () => {
+	const roles = { builder: { provider: "p", model: "m" }, critic: { provider: "p", model: "m" } };
+	const c = loadConfig({ configPath: tmpConfig({ task: "pathnorm", pattern: "solo", roles, memory: { mode: "search", readTask: "lru" } }), env: SKIP });
+	assert.equal(c.memory.readTask, "lru");
+	assert.equal(loadConfig({ configPath: tmpConfig({ task: "pathnorm", pattern: "solo", roles, memory: { mode: "search" } }), env: SKIP }).memory.readTask, undefined);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "pathnorm", pattern: "solo", roles, memory: { mode: "search", readTask: "pathnorm" } }), env: SKIP }), /own task/);
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ task: "pathnorm", pattern: "solo", roles, memory: { mode: "search", readTask: "../x" } }), env: SKIP }), /readTask/);
+});
+
 test("roles.<role>.thinking: absent by default, validated, the worker rejects max, env overrides", () => {
 	const roles = { orchestrator: { provider: "llama.cpp", model: "qwen3-27b" }, worker: { provider: "llama.cpp", model: "qwen3-27b" } };
 	const none = loadConfig({ configPath: tmpConfig({ task: "orbit", pattern: "orchestrator", roles }), env: SKIP });

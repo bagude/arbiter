@@ -217,7 +217,7 @@ const REMEMBER_FILE = path.join(RUN, "remember.jsonl");
 // this slice every worker shares the union of all specialists' agent scopes rather
 // than being confined to its own, since search rows already show scope so a tester
 // can tell a scout's record from its own.
-const MEMORY_SCOPES = [...new Set(["global", `task:${TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : []), ...(CONFIG.memory?.extraScopes ?? []), ...(CONFIG.workers?.specialists ?? []).map((s) => `agent:${s.memory}`)])];
+const MEMORY_SCOPES = [...new Set(["global", `task:${CONFIG.memory?.readTask ?? TASK_NAME}`, ...(CONFIG.repo ? [`repo:${CONFIG.repo}`] : []), ...(CONFIG.memory?.extraScopes ?? []), ...(CONFIG.workers?.specialists ?? []).map((s) => `agent:${s.memory}`)])];
 const RETRIEVAL_BUDGET = CONFIG.memory?.retrievalChars ?? 6000;
 const WORKER_RESERVE = CONFIG.memory?.workerReserveChars ?? 0;
 if (MEMORY_MODE === "inject") {
@@ -256,7 +256,7 @@ if (MEMORY_MODE === "inject") {
 	// records the seed pointed at (2026-09-17T01-41-50: seed 1692 of a 3000 share, get
 	// refused).
 	charge(MEMORY_LEDGER, { role: "supervisor", tool: "seed", chars: 0, detail: `seeded brief ${brief.chars} chars, ${brief.ids.length} of ${brief.matched} matches` });
-	log({ type: "memory_index", msg: `index ${MEMORY_REVISION} (${resolved.records.size} records); seed ${brief.chars} chars, ${brief.ids.length} rows; retrieval budget ${RETRIEVAL_BUDGET} (${WORKER_RESERVE} reserved for workers)` });
+	log({ type: "memory_index", msg: `index ${MEMORY_REVISION} (${resolved.records.size} records); scopes ${MEMORY_SCOPES.join(", ")}${CONFIG.memory.readTask ? ` (control: reading task:${CONFIG.memory.readTask} instead of task:${TASK_NAME})` : ""}; seed ${brief.chars} chars, ${brief.ids.length} rows; retrieval budget ${RETRIEVAL_BUDGET} (${WORKER_RESERVE} reserved for workers)` });
 	// Oracle children inherit these from the supervisor's environment; launch() sets
 	// them for every agent process explicitly.
 	Object.assign(process.env, { ARBITER_MEMORY_INDEX: MEMORY_INDEX, ARBITER_MEMORY_SCOPES: JSON.stringify(MEMORY_SCOPES), ARBITER_MEMORY_BUDGET: String(RETRIEVAL_BUDGET), ARBITER_MEMORY_WORKER_RESERVE: String(WORKER_RESERVE), ARBITER_MEMORY_LEDGER: MEMORY_LEDGER, ARBITER_SNAPSHOT: SNAPSHOT });
