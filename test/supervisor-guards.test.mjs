@@ -83,17 +83,26 @@ test("supervisor's fork mode restores the source run's workers", () => {
 	const block = src.slice(start + 1);
 	const fork = block.slice(0, block.indexOf("\n}\n"));
 	for (const [needle, why] of [
-		["manifestJoin(readManifest(FORK_SRC))", "the source run's workers.jsonl must be read in the fork block"],
+		["readManifest(FORK_SRC)", "the source run's workers.jsonl must be read in the fork block"],
 		["ensureWorker(state, row.wid)", "each source worker's agent state must be created the way a live spawn creates it"],
 		["tracker.bound.set(", "each source transcript must be pre-bound to its own wid, which is also the FIFO-bind exclusion"],
 		["tail.offset = fs.statSync(p).size", "an inherited tail must start at end-of-file so nothing pre-fork is counted"],
 		["FORK_SOURCE_WORKERS.push(", "each restored worker must be recorded for summary.fork.sourceWorkers"],
+		// A fork restores the world as of request `call` and nothing later, so both the
+		// manifest and the reports are folded over records at or before FORK_REQ.ts.
+		["readManifest(FORK_SRC).filter((r) => r.ts <= FORK_REQ.ts)", "only workers that existed at the fork instant may be restored"],
+		["fs.rmSync(p, { force: true })", "transcripts of workers spawned after the fork instant must be deleted, not left for FIFO binding"],
+		['ev: "worker:report"', "recorded reports must be replayed through the live lifecycle path so unreportedWorkers sees them"],
+		["readJsonl(reportsFile).filter((r) => r.ts <= FORK_REQ.ts)", "only reports filed at or before the fork instant may be replayed"],
+		["liveAtFork", "each restored worker must record whether it was still running at the fork instant"],
 	]) {
 		assert.ok(fork.includes(needle), `${why} (missing from the fork block: ${needle})`);
 	}
 	const summaryLine = src.split("\n").find((l) => l.includes("summary.fork ="));
 	assert.ok(summaryLine, "summary.fork assignment missing");
 	assert.ok(summaryLine.includes("sourceWorkers:"), `summary.fork must carry sourceWorkers; found:\n${summaryLine}`);
+	// liveAtFork travels into the summary on each sourceWorkers row, not just into the log.
+	assert.match(fork, /FORK_SOURCE_WORKERS\.push\(\{[^}]*\bliveAtFork\b[^}]*\}\)/, "each sourceWorkers row must carry liveAtFork");
 	// The old skip set is gone: an inherited transcript is now tailed, not ignored.
 	assert.ok(!src.includes("FORK_STALE_TRANSCRIPTS"), "the stale-transcript skip must be gone, replaced by the restoration");
 });
