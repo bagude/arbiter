@@ -85,7 +85,7 @@ export function extractRun(runDir) {
 	const summaryFile = path.join(runDir, "summary.json");
 	if (!fs.existsSync(summaryFile)) return null;
 	const summary = JSON.parse(fs.readFileSync(summaryFile, "utf8"));
-	if (summary.config?.pattern && summary.config.pattern !== "orchestrator") return null;
+	if (summary.config?.pattern !== "orchestrator") return null;
 	const trace = traceRun(runDir);
 	const oi = trace.agents.findIndex((a) => a.role !== "worker");
 	if (oi < 0) return null;
