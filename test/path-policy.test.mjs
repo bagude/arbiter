@@ -225,6 +225,49 @@ test("v3 bash: only a node in command position opens a body, and an escaped lite
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// Re-review C2: judgeLiteral read the literal's SOURCE text, but node opens its VALUE.
+// Every escape that changes a character defeated the name check and the existence check at
+// once, and each of these was denied before this guard grew a mask. Not the documented
+// runtime-assembly residual: one literal spells the whole path and the guard sees all of it.
+test("v3 bash: a literal is judged by its decoded value, not only its source text", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "path-policy-escape-"));
+	const taskDir = path.join(dir, "tasks", "pathnorm");
+	const root = path.join(taskDir, "ws-builder");
+	fs.mkdirSync(path.join(root, "src"), { recursive: true });
+	fs.mkdirSync(path.join(taskDir, "oracle"), { recursive: true });
+	fs.writeFileSync(path.join(taskDir, "oracle", "run.mjs"), "// hidden\n");
+	fs.mkdirSync(path.join(root, ".pi", "agents"), { recursive: true });
+	fs.writeFileSync(path.join(root, ".pi", "agents", "worker.md"), "# worker\n");
+	fs.writeFileSync(path.join(dir, "secret.txt"), "s\n");
+	const ev = (command) => decidePath({ root, tool: "bash", input: { command } });
+	const B = "\\"; // one backslash, as bash hands it to node
+
+	// Every spelling below decodes to a path the guard must refuse.
+	for (const [why, body] of [
+		["\\uXXXX", `readFileSync('../${B}u006fracle/run.mjs')`],
+		["an unrecognised escape just drops its backslash", `readFileSync('../ora${B}cle/run.mjs')`],
+		["\\xXX", `readFileSync('../${B}x6fracle/run.mjs')`],
+		["\\u{...}", `readFileSync('../${B}u{6f}racle/run.mjs')`],
+		["legacy octal, live in the sloppy mode node -e runs in", `readFileSync('../${B}157racle/run.mjs')`],
+		["a template literal", "readFileSync(`../" + B + "u006fracle/run.mjs`)"],
+		["an escaped .pi", `readFileSync('.${B}u0070i/agents/worker.md')`],
+		["a file outside the workspace", `readFileSync('../../../sec${B}u0072et.txt')`],
+	]) {
+		assert.equal(ev(`node -e "${body}"`).ok, false, why);
+	}
+
+	// The collapsed source spelling still has to be judged: `\\\\` is the pathnorm degenerate
+	// input, and as raw source it resolves to the drive root, which exists and is outside the
+	// workspace. Judging the decoded value alone would deny it.
+	assert.equal(ev(`node -e 'normalize("${B}${B}")'`).ok, true, "the backslash degenerate input");
+	assert.equal(ev(`node -e 'join(".", "..", "./", "../", "/")'`).ok, true, "the separator-only literals");
+	// Escapes that decode to something harmless stay data.
+	assert.equal(ev(`node -e "split('a${B}tb')"`).ok, true, "a tab escape");
+	assert.equal(ev(`node -e 'format("cost: $5")'`).ok, true, "literal dollar text");
+	assert.equal(ev(`node -e 'readFileSync("src/tasks/todo.json")'`).ok, true, "inside the workspace");
+	fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("v3 bash: the node -e existence check is injectable and decides both branches", () => {
 	const root = path.resolve("C:/work/runs/.ws-run/ws-builder");
 	const outside = path.resolve("C:/work/runs/.ws-run/secrets");
