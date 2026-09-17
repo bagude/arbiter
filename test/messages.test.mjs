@@ -77,7 +77,7 @@ test("oracle texts", () => {
 	// prescription named a method that cannot work.
 	assert.equal(
 		orch.oracle.failedVerifier("V", 3),
-		'[SUPERVISOR] Your done claim was wrong. V Which inputs failed is not disclosed, and a probe only checks the code against your own expectation, so probing cannot recover them. Re-derive the corners the specification leaves under-specified — for each argument of each function, its degenerate inputs (the empty string, ".", "/", a trailing separator, a non-string) — and brief a worker on what you find. (3 claims left)',
+		'[SUPERVISOR] Your done claim was wrong. V Beyond that verdict, nothing lists which inputs failed, and a probe only checks the code against your own expectation, so probing cannot recover them. Re-derive the corners the specification leaves under-specified — for each argument of each function, its degenerate inputs (the empty string, ".", "/", a trailing separator, a non-string) — and brief a worker on what you find. (3 claims left)',
 	);
 });
 

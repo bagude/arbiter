@@ -1229,6 +1229,14 @@ function runProbe(msg, { auto = null } = {}) {
 
 		const withExpect = [];
 		const withoutExpect = [];
+		// Matched cases used to contribute nothing to the reply, so the throws lines below are
+		// pure growth on a message that already has a documented way of ending a run: probe
+		// bodies of 65 cases are real (run 2026-09-17T16-47-16), and PROBE_VALUE_MAX alone
+		// would allow ~100KB of them. A short per-line cap and a line cap keep the addition
+		// under about 7KB; an error message's first 300 characters are what the case was
+		// asking about anyway.
+		const MATCHED_THROWS_CHARS = 300;
+		const MATCHED_THROWS_MAX = 20;
 		const matchedThrows = [];
 		let matchCount = 0;
 		for (const res of results) {
@@ -1270,7 +1278,7 @@ function runProbe(msg, { auto = null } = {}) {
 					// 2026-09-17T16-47-16 was shown "25/25 matched" and then re-read src/ to
 					// confirm an error-message prefix its own probe had already produced. Value
 					// cases are left out: for those, matching IS the value.
-					if (isThrowsExpectation(expect)) matchedThrows.push(`${res.id}: (${argsStr}) → ${truncateForMail(actualFull)}`);
+					if (isThrowsExpectation(expect)) matchedThrows.push(truncateForMail(`${res.id}: (${argsStr}) → ${actualFull}`, MATCHED_THROWS_CHARS));
 				} else {
 					withExpect.push(`${line} — EXPECTED ${truncateForMail(JSON.stringify(expect))}, MISMATCH${detail ? ` (${truncateForMail(detail)})` : ""}`);
 				}
@@ -1283,7 +1291,14 @@ function runProbe(msg, { auto = null } = {}) {
 		const parts = [];
 		if (expectById.size > 0) {
 			parts.push(`${matchCount}/${expectById.size} matched ${whose} stated expectations.`);
-			if (matchedThrows.length) parts.push(`Matched throws cases, with the error each one actually threw (the expectation checked only that the text contains what you named):\n${matchedThrows.join("\n")}`);
+			if (matchedThrows.length) {
+				const shown = matchedThrows.slice(0, MATCHED_THROWS_MAX);
+				const more = matchedThrows.length - shown.length;
+				parts.push(
+					`Matched throws cases, with the error each one actually threw (the expectation checked only that the text contains what you named):\n${shown.join("\n")}` +
+						(more ? `\n(+${more} more matched throws case${more === 1 ? "" : "s"}, not shown)` : ""),
+				);
+			}
 			if (withExpect.length) parts.push(`Mismatches:\n${withExpect.join("\n")}`);
 		}
 		if (withoutExpect.length) parts.push(`${expectById.size > 0 ? "Other cases (no expectation given):\n" : ""}${withoutExpect.join("\n")}`);
