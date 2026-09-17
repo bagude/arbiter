@@ -220,6 +220,7 @@ const JEV = (() => {
 	const cfg = raw === true ? { ...base, enabled: true } : raw && typeof raw === "object" ? { ...base, ...raw, enabled: raw.enabled !== false } : { ...base };
 	if (process.env.ARBITER_JEV === "1") cfg.enabled = true;
 	if (!["shadow", "nudge", "enforce"].includes(cfg.doneGuard)) cfg.doneGuard = "shadow";
+	if (cfg.doneGuard === "enforce") { console.error("[supervisor] jev.doneGuard \"enforce\" is not implemented yet — behaving as \"nudge\" (one hold per attempt)"); cfg.doneGuard = "nudge"; }
 	cfg.active = cfg.enabled && cfg.transcriptEgress !== false;
 	return cfg;
 })();
@@ -587,7 +588,7 @@ function launch(name) {
 			ARBITER_REQUESTS_DIR: PATTERN === "orchestrator" && name === "orchestrator" ? path.join(RUN, "requests") : "",
 			ARBITER_JEV_DIR: JEV_ON && JEV_KEY && PATTERN === "orchestrator" && name === "orchestrator" ? path.join(RUN, "jev") : "",
 			TYPESAFE_API_KEY: JEV_ON && JEV_KEY && PATTERN === "orchestrator" && name === "orchestrator" ? JEV_KEY : "",
-			ARBITER_JEV_REDACT: JEV.redactSecrets ? "1" : "",
+			ARBITER_JEV_REDACT: JEV_ON && JEV.redactSecrets ? "1" : "",
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -1356,6 +1357,7 @@ let jevHoldsIssued = 0;
 let jevHoldsThisAttempt = 0;
 const countJevHolds = () => jevHoldsIssued;
 let jevHold = null; // { id, issuedAt, toolsSince } while a nudge is outstanding
+let jevInFlight = false; // a check is awaiting Jev: a second done mail in that window is not a second claim
 function jevEvent(ev, data) {
 	try { fs.appendFileSync(LIFECYCLE, JSON.stringify({ ts: Date.now(), ev, data }) + "\n"); } catch { /* observability */ }
 }
@@ -1368,6 +1370,7 @@ function latestOrchestratorRequest() {
 }
 function jevDoneGate(msg) {
 	if (!JEV.active || !JEV_KEY || PATTERN !== "orchestrator") return runOracle();
+	if (jevInFlight) { log({ type: "jev", msg: "done mail while a check is in flight — ignored (the pending check decides)" }); return; }
 	const req = latestOrchestratorRequest();
 	if (!req?.payload?.messages) { log({ type: "jev", msg: "done check skipped: no captured orchestrator request" }); return runOracle(); }
 	const id = ++jevChecks;
@@ -1384,13 +1387,14 @@ function jevDoneGate(msg) {
 	};
 	let rendered = render(100_000);
 	const questions = jev.doneCheckQuestions();
-	boundaryPending = "jev done check";
+	jevInFlight = true;
 	(async () => {
 		let r = await jev.askJev({ state: rendered.state, questions, key: JEV_KEY });
 		if (!r.ok && r.errorType === "max_tokens_exceeded") {
 			rendered = render(Math.floor(rendered.state.length * 0.8));
 			r = await jev.askJev({ state: rendered.state, questions, key: JEV_KEY });
 		}
+		jevInFlight = false;
 		if (finished) return;
 		if (!r.ok) {
 			jevEvent("jev:done_check", { id, ok: false, status: r.status, error: r.errorType, ms: r.ms });
@@ -1405,9 +1409,10 @@ function jevDoneGate(msg) {
 		jevHoldsIssued += 1;
 		jevHold = { id, issuedAt: Date.now(), toolsSince: [] };
 		jevEvent("jev:nudge_issued", { id, targets: decision.targets, pEdge: decision.pEdge, attempt: doneAttempts + 1 });
-		deliver(VERIFIER, jev.nudgeText(decision, { attemptsLeft: CAPS.doneAttempts - doneAttempts }), "jev done hold");
+		deliver(VERIFIER, jev.nudgeText(decision, { attemptsLeft: CAPS.doneAttempts - doneAttempts, maxHolds: JEV.maxHolds }), "jev done hold");
 		boundaryPending = "jev hold (claim held once, not sent to the oracle)";
 	})().catch((err) => {
+		jevInFlight = false;
 		log({ type: "jev", msg: `done check #${id} threw (${err?.message ?? err}); claim passes` });
 		if (!finished) runOracle();
 	});

@@ -15,7 +15,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { askJev, renderState, DEFAULT_MAX_STATE_CHARS } from "../lib/jev.mjs";
+import { askJev, renderState, requestSeqFor } from "../lib/jev.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(here, "..");
@@ -100,7 +100,7 @@ async function main() {
 		const forkCall = summary?.fork?.call ?? null;
 		const pairs = pairClaims(points, audit, forkCall === null ? 0 : forkCall - 1).filter((p) => p.oracle);
 		for (const { point, oracle } of pairs) {
-			const reqFile = path.join(runDir, "requests", `${String(point.i + 1).padStart(4, "0")}.json`);
+			const reqFile = path.join(runDir, "requests", `${String(requestSeqFor(point.i, forkCall)).padStart(4, "0")}.json`);
 			if (!fs.existsSync(reqFile)) continue;
 			const pass = oracle.passed === oracle.total;
 			if (spec.dryRun) { console.log(`${runId} #${point.i + 1} done → oracle #${oracle.run} ${oracle.passed}/${oracle.total}`); rows.push({ pass }); continue; }

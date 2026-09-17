@@ -19,7 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { askWithRetry, scoreAnswers, summarise, formatSummary, renderState, DEFAULT_MAX_STATE_CHARS } from "../lib/jev.mjs";
+import { askWithRetry, scoreAnswers, summarise, formatSummary, renderState, requestSeqFor, DEFAULT_MAX_STATE_CHARS } from "../lib/jev.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(here, "..");
@@ -81,6 +81,8 @@ async function replayRun(runId, spec, key) {
 	const runDir = path.join(spec.runsDir, runId);
 	const points = readJsonl(path.join(runDir, "decisions.jsonl"));
 	if (!points.length) { console.error(`${runId}: no decisions.jsonl (run tools/decision-points.mjs first)`); return; }
+	const summaryFile = path.join(runDir, "summary.json");
+	const forkCall = fs.existsSync(summaryFile) ? (JSON.parse(fs.readFileSync(summaryFile, "utf8")).fork?.call ?? null) : null;
 	const outFile = path.join(runDir, "decisions-jev.jsonl");
 	if (spec.force && fs.existsSync(outFile)) fs.writeFileSync(outFile, "");
 	const existing = spec.force ? [] : readJsonl(outFile);
@@ -90,7 +92,9 @@ async function replayRun(runId, spec, key) {
 	for (const point of points) {
 		if (rows.length >= spec.limit) break;
 		if (have.has(point.i)) { rows.push(have.get(point.i)); continue; }
-		const reqFile = path.join(runDir, "requests", `${String(point.i + 1).padStart(4, "0")}.json`);
+		// A fork's inherited points have no request of their own (the source run made them).
+		if (forkCall && point.i < forkCall - 1) continue;
+		const reqFile = path.join(runDir, "requests", `${String(requestSeqFor(point.i, forkCall)).padStart(4, "0")}.json`);
 		if (!fs.existsSync(reqFile)) continue;
 		const payload = JSON.parse(fs.readFileSync(reqFile, "utf8")).payload;
 		if (spec.dryRun) {
@@ -98,7 +102,7 @@ async function replayRun(runId, spec, key) {
 			console.log(`${runId} #${String(point.i + 1).padStart(2)} ${String(point.action?.cls ?? "?").padEnd(10)} state ${r.state.length} chars ≈ ${Math.round(r.state.length / 4)} tokens${r.truncated ? ` (cut to ${(100 * r.kept).toFixed(0)}% of messages)` : ""}`);
 			continue;
 		}
-		const shadowFile = path.join(runDir, "jev", `${String(point.i + 1).padStart(4, "0")}.json`);
+		const shadowFile = path.join(runDir, "jev", `${String(requestSeqFor(point.i, forkCall)).padStart(4, "0")}.json`);
 		let r;
 		let source = "replay";
 		// A live shadow row asked the literal question over all nine classes (it has no mask at

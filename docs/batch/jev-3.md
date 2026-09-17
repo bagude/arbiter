@@ -1,27 +1,26 @@
-# Jev on the done claim (2026-09-17)
+# Jev on the done claim (2026-09-17) — RETRACTED result, corrected below
 
-Question: from the state the orchestrator sent its done claim from, can Jev predict what the hidden acceptance test will say? This is the judgment invariant at the tool edge: a `send_mail kind=done` that a cheap head says will fail is a claim the harness could hold back, or at least tag, before it burns one of five attempts. Tool: `tools/jev-done.mjs`.
+Question: from the state the orchestrator sent its done claim from, can Jev predict what the hidden acceptance test will say? Tool: `tools/jev-done.mjs`.
 
-## Method
+## What was first published, and why it was wrong
 
-- **Sample.** Every done claim with an oracle verdict in the captured runs: the six earlier pathnorm replay runs, the failing source run, and its fork replicates (claims from the fork's own points only). 17 claims: 6 passed, 11 failed. Pairing is by order through the audit's `[done]` mail lines, since decision and audit clocks have different zeroes.
-- **State.** The captured provider request at the done decision, rendered as plain text (system prompt + messages; late states cut to the newest ~80% of messages to fit the ~32k-token window). Nothing about the verdict is in it.
-- **Questions.** A truth value "the hidden acceptance test will pass on the current code"; a choice pass / edge (fails on an input the transcript never verified) / other; a truth value "every spec example and degenerate input was verified against the current code before this claim". ~400 ms per claim.
+The first measurement (17 claims, AUC 0.86, six of eleven failing claims caught with zero false alarms, the `edge` verdict right every time) was an artifact. For a fork run, `decisions.jsonl` carries the inherited history while `requests/` numbers from the fork's own first inference, so mapping decision `i` to request `i+1` read a state from well AFTER the claim — every one of the six fork rows contained the oracle's own `68/70` verdict and the "not done" message. Found by the branch review; fixed by `requestSeqFor(i, forkCall)` in `lib/jev.mjs`, used by both `jev-done` and `jev-replay`. The eleven non-fork rows were leak-free and gave AUC 0.80, but that is five failures against six passes.
 
-## Result
+## Corrected measurement
 
-| | value |
-|---|---|
-| AUC of the pass truth value | 0.864 |
-| flag at passes < 0.5 | caught 6 of 11 failing, 0 false alarms on 6 passing |
-| verdict ≠ pass | 6 flagged, all 6 truly failing; every flag was `edge` |
-| mean passes: failing vs passing claims | 0.42 vs 0.72 |
-| "covered" truth value | AUC 0.65; failing 0.35 vs passing 0.49 |
+Leak-free states, every done claim with a verdict across the captured runs (source runs and forks, claims from the fork's own points only): **48 claims, 25 failed, 23 passed.** Same questions as before (pass truth value, pass/edge/other verdict, coverage truth value), ~400 ms each.
 
-The three-way verdict is the useful output: when Jev says `edge`, the claim failed, every time. When it says `pass` it is right 6 of 11 times, so a low pass value is a warning, not a verdict. The "covered" question is weaker, which says the transcript does not make coverage legible even to a reader that is looking for it.
+| sample | n | fail / pass | AUC (pass value) | `edge` verdicts that were failures | mean p(pass): failing vs passing |
+|---|---|---|---|---|---|
+| all | 48 | 25 / 23 | **0.45** | 7 of 12 | 0.58 vs 0.54 |
+| non-fork runs | 11 | 5 / 6 | 0.80 | 3 of 3 | 0.48 vs 0.69 |
+| fork runs, first claim | 19 | 15 / 4 | 0.31 | 1 of 1 | 0.67 vs 0.54 |
+| fork runs, later claims | 18 | 5 / 13 | 0.59 | 3 of 8 | 0.39 vs 0.47 |
 
-**Caveats that matter.** Seventeen claims is small, and they are not independent: five of the failures are the source run's own repeated claims and six are its forks, all on the same missing case (`relative(".", "a")`); the six passes are from six distinct runs. The number to trust is the zero false alarms across six independent passing states plus the perfect precision of `edge`; the recall will move with more data.
+There is no usable signal. On the largest homogeneous group, the forks' first claims, Jev is confidently wrong: fifteen of nineteen failed and it rated them more likely to pass than the ones that passed. The `edge` verdict is right 7 of 12 times overall, which at a 52% base rate is chance. The non-fork AUC of 0.80 rests on five failures and is inside the noise of a sample that small.
 
-## What this buys
+## What this means for the guard
 
-A gate at the tool_call edge, `guard:done_check`: on a done mail, ask Jev the three questions (0.4 s, in parallel with nothing the model is waiting for); if the verdict is `edge` with confidence over a threshold, deliver "your claim is likely to fail on an unverified degenerate input; name the inputs you verified for each function, probe the ones you did not, then claim" instead of sending it to the oracle. On this sample it would have saved six of eleven failed attempts and delayed no passing claim. Not yet wired; the live shadow (`jev: true`) records these three answers at every inference from now on, so the sample grows for free.
+The done-claim guard was wired on the strength of the retracted number. It stays wired, because it is cheap and reversible and every step is recorded, but the live config ships it in **shadow** mode: the same questions are asked at every claim, the same events are logged, and nothing is held. Flipping `doneGuard` to `nudge` should wait for the shadow rows to show a signal on the runs that matter (the forks' first claims are the failure mode the whole day turned on, and that is where Jev is worst).
+
+Why it fails is consistent with jev-1's finding on resume: the answer depends on what the transcript does not make legible. Whether `relative(".", "a")` was verified is a fact about which probe cases were sent, buried in a 66-case JSON body inside a tool result; a reader judging from prose cues ("all tests pass", "25/25 matched") has no purchase. The deterministic version of this check, "does the probe history cover the spec's stated examples and the degenerate inputs per function", needs no model and is the fix the audit already named (case 7).

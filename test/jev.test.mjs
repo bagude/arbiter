@@ -135,7 +135,7 @@ test("comparisonTable joins the local head's substantive rows by index and total
 });
 
 // ---------- the done-claim check (docs/batch/jev-3.md) ----------
-import { redact, decideDoneNudge, nudgeText, doneCheckQuestions, DONE_TARGETS } from "../lib/jev.mjs";
+import { redact, decideDoneNudge, nudgeText, doneCheckQuestions, DONE_TARGETS, requestSeqFor } from "../lib/jev.mjs";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -179,7 +179,9 @@ test("decideDoneNudge holds once per attempt on an edge verdict over the thresho
 
 test("nudgeText names the targets, says the hold is single-use and states the attempts left", () => {
 	const t = nudgeText(decideDoneNudge(edgeAnswers, { mode: "nudge" }), { attemptsLeft: 4 });
-	assert.match(t, /^\[SUPERVISOR\] Your done claim is on hold, once/);
+	assert.match(t, /^\[SUPERVISOR\] Your done claim is on hold: a pre-commit check/);
+	assert.match(t, /run a probe on the edited code before claiming/, "an edit without a probe would be refused as stale, so the nudge says so");
+	assert.match(nudgeText(decideDoneNudge(edgeAnswers, { mode: "nudge" }), { maxHolds: 2 }), /at most 2 times per attempt/);
 	assert.ok(t.includes(DONE_TARGETS.dot) && t.includes(DONE_TARGETS.root));
 	assert.match(t, /at most once per attempt/);
 	assert.match(t, /4 attempts left/);
@@ -201,4 +203,19 @@ test("supervisor wires the Jev done check between the approval gate and the orac
 	assert.ok(src.includes("cfg.active = cfg.enabled && cfg.transcriptEgress !== false;"), "transcriptEgress: false turns everything off");
 	// The key never reaches a worker or the launch args: it is set only for the orchestrator's env entry.
 	assert.match(src, /TYPESAFE_API_KEY: JEV_ON && JEV_KEY && PATTERN === "orchestrator" && name === "orchestrator" \? JEV_KEY : ""/);
+});
+
+test("redact keeps code and paths that merely contain key words, and catches JSON-quoted keys and JWTs", () => {
+	assert.equal(redact("src/token_stream_normalizer_helper.mjs"), "src/token_stream_normalizer_helper.mjs");
+	assert.equal(redact("const TOKEN_PATTERN = /[A-Za-z0-9]+/;"), "const TOKEN_PATTERN = /[A-Za-z0-9]+/;");
+	assert.equal(redact('"api_key": "abc123def456ghi789jkl012"'), '"api_key": "[REDACTED]"');
+	assert.match(redact("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"), /Bearer \[REDACTED\]/);
+	assert.match(redact("token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"), /\[REDACTED JWT\]/);
+});
+
+test("requestSeqFor maps a decision index to its captured request, offset by the fork call for a fork", () => {
+	assert.equal(requestSeqFor(6), 7);
+	assert.equal(requestSeqFor(6, 7), 1, "a fork at call 7: its first own point (i=6) is request 1");
+	assert.equal(requestSeqFor(20, 21), 1);
+	assert.equal(requestSeqFor(25, 21), 6);
 });
