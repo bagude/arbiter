@@ -73,6 +73,12 @@ test("supervisor's fork mode preflights, re-seeds and records what it forked", (
 		// against a harness that has nothing to do with it, and nothing else would say so.
 		["FORK_SRC_SUMMARY.task !== TASK_NAME", "a fork must refuse a config whose task is not the source run's"],
 		["FORK_SRC_MODEL !== ROLES.orchestrator.model", "a fork must refuse a config whose orchestrator model is not the one the recorded request was sent to"],
+		// pi's loadExtension CATCHES a module-scope throw, records a diagnostic and runs on with
+		// the guard unregistered, and rpc mode surfaces no diagnostics — so the guard's own
+		// throw on an unreadable force file is invisible from here. An A branch that cannot arm
+		// itself has to be refused BEFORE any agent starts, or it runs silently like branch G.
+		["ARBITER_FORK_FORCE names a force file that cannot be read", "the fork preflight must read the force file itself, not trust the guard to fail loudly"],
+		['!force.cls', "a force spec with no action class denies every call of the run and must be refused"],
 	]) {
 		assert.ok(src.includes(needle), `${why} (missing: ${needle})`);
 	}

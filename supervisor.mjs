@@ -102,6 +102,27 @@ if (FORK) {
 	// every number in the report is meaningless and nothing else would say so.
 	const FORK_SRC_SUMMARY = JSON.parse(fs.readFileSync(path.join(FORK_SRC, "summary.json"), "utf8"));
 	if (FORK_SRC_SUMMARY.task !== TASK_NAME) { console.error(`fork: ${FORK.run} ran task "${FORK_SRC_SUMMARY.task}", this config's task is "${TASK_NAME}" — a fork must run the task it was recorded on`); process.exit(2); }
+	// The forcing spec, checked HERE because pi's extension loader swallows a module-scope
+	// throw: loadExtension catches it, records a diagnostic, and the process runs on with the
+	// guard unregistered (packages/coding-agent/src/core/extensions/loader.ts), and rpc mode
+	// surfaces no diagnostics at all — so ext/guards/fork-force.ts throwing on an unreadable
+	// force file, correct as it is, would be invisible from here. A-oracle ALWAYS uses the
+	// file form, so without this check a bad path gives a run labelled A-oracle that behaves
+	// exactly like the null branch G. A fork that cannot arm itself must not start.
+	const FORCE_RAW = (process.env.ARBITER_FORK_FORCE ?? "").trim();
+	if (FORCE_RAW) {
+		const from = FORCE_RAW.startsWith("@") ? FORCE_RAW.slice(1) : null;
+		let text = FORCE_RAW;
+		if (from) {
+			try { text = fs.readFileSync(from, "utf8"); } catch (err) { console.error(`fork: ARBITER_FORK_FORCE names a force file that cannot be read: ${from} (${err?.message ?? err})`); process.exit(2); }
+		}
+		let force = null;
+		try { force = JSON.parse(text); } catch (err) { console.error(`fork: ARBITER_FORK_FORCE${from ? ` file ${from}` : ""} is not JSON: ${err?.message ?? err}`); process.exit(2); }
+		// A force without a class would deny every call forever, which is the same silent
+		// burnt replicate by another route.
+		if (!force || typeof force !== "object" || !force.cls) { console.error(`fork: ARBITER_FORK_FORCE${from ? ` file ${from}` : ""} has no "cls" — a force spec without an action class denies every call of the run`); process.exit(2); }
+		if (FORK.branch === "G") { console.error(`fork: branch G is the null branch and must force nothing, but ARBITER_FORK_FORCE is set (cls ${force.cls})`); process.exit(2); }
+	}
 	// A fork reuses the SOURCE run's out-of-tree paths (see WSROOT/SESSIONS below), so
 	// only one run may hold them at a time. finish() removes both after archiving, which
 	// is what lets the runner start the next replicate.
