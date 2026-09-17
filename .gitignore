@@ -9,3 +9,4 @@ __pycache__/
 **/memory/index/
 **/memory/wiki/
 .worktrees/
+.env
