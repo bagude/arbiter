@@ -27,10 +27,11 @@
 // ARBITER_FORK_FORCE, which just points at it ("@<path>") — a recorded probe body can be
 // arbitrary JSON, and Windows caps a process's whole environment block at ~32 KB.
 //
-// A crashed replicate (non-zero supervisor exit, no summary.json, or a summary whose `reason`
-// begins "FORK:" — the supervisor refusing the fork itself, which still exits 0) is still
-// reported, but excluded from the null-gate reproduction counts: its numbers describe a run
-// that never finished, and a harness refusal is not the model failing to reproduce itself.
+// A crashed replicate (no summary.json, or a summary whose `reason` begins "FORK:" — the
+// supervisor refusing the fork itself, which still exits 0) is still reported, but excluded
+// from the null-gate reproduction counts: its numbers describe a run that never finished, and
+// a harness refusal is not the model failing to reproduce itself. The supervisor's own exit
+// code is reported and is NOT the crash signal — it is wrong in both directions (see forkRow).
 //
 // Report: docs/batch/fork-<runId>-<call>.md.
 import fs from "node:fs";
@@ -146,29 +147,41 @@ function guardKinds(guards, name, kinds) {
  * `sourceCls` (the source point's recorded action class), `decisions` (the fork run's
  * decisions.jsonl records), `oracle` (the joined "x/y" oracle-run scores from its
  * audit.jsonl), `summary` (its summary.json, or null when the run never wrote one). `runId` is
- * null when the fork produced no run at all. `exit` is the supervisor child's own exit code;
- * `crashed` is true when that exit was non-zero, `summary` is null, or the summary's `reason`
- * begins `FORK:` — either way, this replicate's numbers (oracle, probes, decoded, ...)
- * describe a run that did not finish normally and should not count toward a reproduction
- * rate. `decisionsMissing` is true when `tools/decision-points.mjs` failed on this run (so
- * `decisions` may be stale or empty even though the run itself did not crash).
+ * null when the fork produced no run at all. `exit` is the supervisor child's own exit code,
+ * reported but NOT the crash signal. `decisionsMissing` is true when
+ * `tools/decision-points.mjs` failed on this run (so `decisions` may be stale or empty even
+ * though the run itself did not crash).
  *
- * The `FORK:` reason is the case exit codes cannot see. The supervisor's finish() always
- * exits 0, including on the rejected-`continue` path, so a fork whose restored transcript
- * `Agent.continue()` refused writes an ordinary summary.json with reason "FORK: continue
- * rejected — ..." and exit 0. Counted as a normal run, three such replicates read as
- * "state match 0/3, recorded class reproduced 0/3, 0 crashed": a harness refusal depressing
- * the very gate the twelve real forks are conditioned on. It is shown, not hidden — the row
- * carries the reason — but it is out of the denominator.
+ * `crashed` — this replicate's numbers describe a run that did not finish, so they must not
+ * count toward a reproduction rate — is `summary === null` or a summary `reason` beginning
+ * `FORK:`. The summary is the evidence, because the exit code is wrong in BOTH directions:
+ *
+ * - Exit 0 with a complete summary can still be a fork that never started. finish() always
+ *   exits 0, including on the rejected-`continue` path, so a fork whose restored transcript
+ *   `Agent.continue()` refused writes an ordinary summary.json with reason "FORK: continue
+ *   rejected — ...". Counted as a normal run, three such replicates read as "state match 0/3,
+ *   recorded class reproduced 0/3, 0 crashed" — a harness refusal depressing the very gate the
+ *   twelve real forks are conditioned on.
+ * - Exit non-zero with a complete summary is a run that finished and then died on the way out.
+ *   Observed live: runs/2026-09-17T18-09-28 reached SUCCESS 70/70 and wrote its summary at
+ *   623.3 s, then an agent_end still in flight became a silent-turn nudge into a closed pipe
+ *   and the supervisor exited 1 (fixed in supervisor.mjs's send, but the rule must not depend
+ *   on that fix holding). Every number in that summary is real; excluding the row would throw
+ *   away a valid replicate of the gate.
+ *
+ * Either way the row is shown, not hidden — `exit` stays a column, and a non-zero exit over a
+ * complete summary is labelled `post-finish` so the reader sees it and knows why it counts.
  */
 export function forkRow({ branch, replicate, runId, compare, sourceCls, decisions = [], oracle = "", summary = null, exit = null, decisionsMissing = false }) {
 	const first = decisions[0] ?? null;
 	const firstAction = first ? { cls: first.action.cls, tool: first.action.tool, params: first.action.params } : null;
 	const forkAborted = String(summary?.reason ?? "").startsWith("FORK:");
-	const crashed = (exit !== null && exit !== 0) || summary === null || forkAborted;
+	const crashed = summary === null || forkAborted;
 	return {
 		branch, replicate, runId,
 		exit, crashed, forkAborted,
+		// The run finished and wrote its summary, then the supervisor died on the way out.
+		postFinishExit: summary !== null && exit !== null && exit !== 0,
 		forkReason: forkAborted ? String(summary.reason) : null,
 		stateMatch: compare?.equal ?? false,
 		firstDiff: compare?.firstDiff ?? null,
@@ -241,8 +254,11 @@ export function renderReport(source, rows, { nullMode = false } = {}) {
 		// A fork the harness refused exits 0 with an ordinary summary, so the reason is the
 		// only thing that separates it from a run the model simply lost. Say which it was.
 		const crashed = r.crashed ? (r.forkAborted ? `yes — ${r.forkReason.replace(/\s+/g, " ").slice(0, 80)}` : "yes") : "no";
+		// A non-zero exit over a complete summary is the run dying on its way out, after every
+		// number in the row was already written. Labelled rather than treated as a crash.
+		const exitCell = r.exit === null ? "—" : r.postFinishExit ? `${r.exit} (post-finish)` : String(r.exit);
 		const workers = r.sourceWorkers === null ? "—" : `${r.sourceWorkers} (${r.liveAtFork})`;
-		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${r.exit ?? "—"} | ${crashed} | ${sm} | ${settings} | ${fa} | ${rep} | ${forced} | ${topo} | ${workers} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
+		lines.push(`| ${r.branch} | ${r.replicate} | ${r.runId ?? "—"} | ${exitCell} | ${crashed} | ${sm} | ${settings} | ${fa} | ${rep} | ${forced} | ${topo} | ${workers} | ${r.oracle || "—"} | ${r.probes} | ${r.resumes} | ${r.decoded} | ${r.wallSec ?? "—"} |`);
 	}
 	lines.push("");
 	if (nullMode) {

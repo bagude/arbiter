@@ -183,9 +183,29 @@ test("forkRow: a fork that produced no run at all is crashed, and reports nulls 
 	assert.equal(row.decoded, 0);
 });
 
-test("forkRow: crashed when the supervisor's own exit code is non-zero, even if a summary exists", () => {
-	const row = forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: true, firstDiff: null }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 1 }, exit: 1 });
-	assert.equal(row.crashed, true);
+// The exit code is not the crash signal. Observed live: runs/2026-09-17T18-09-28 reached
+// SUCCESS 70/70 and wrote its summary at 623.3 s, then an agent_end still in flight became a
+// silent-turn nudge into a closed pipe and the supervisor exited 1. Every number in that
+// summary is real; excluding the row would throw away a valid replicate of the gate.
+test("forkRow: a run that finished and then died on the way out is NOT crashed", () => {
+	const summary = { wallSec: 623.3, reason: "SUCCESS: oracle passed" };
+	const row = forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: true, firstDiff: null }, sourceCls: "probe", decisions: [{ i: 7, action: { cls: "probe", tool: "send_mail", params: {} }, decoded: 5 }], oracle: "70/70", summary, exit: 1 });
+	assert.equal(row.crashed, false, "a complete summary is the evidence, not the exit code");
+	assert.equal(row.exit, 1, "the exit code is still reported");
+	assert.equal(row.postFinishExit, true);
+	assert.equal(row.reproduced, true);
+	// No summary and a non-zero exit is still a crash — the exit code just is not what decides.
+	assert.equal(forkRow({ branch: "G", replicate: 2, runId: "run-2", compare: { equal: false, firstDiff: "x" }, sourceCls: "probe", decisions: [], oracle: "", summary: null, exit: 1 }).postFinishExit, false);
+});
+
+test("renderReport labels a post-finish exit rather than hiding it", () => {
+	const source = { runId: "r1", call: 7, recordedCls: "probe", substantive: null, headPick: null };
+	const rows = [
+		forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: true, firstDiff: null }, sourceCls: "probe", decisions: [{ i: 7, action: { cls: "probe", tool: "send_mail", params: {} }, decoded: 5 }], oracle: "70/70", summary: { wallSec: 623.3, reason: "SUCCESS: oracle passed" }, exit: 1 }),
+	];
+	const report = renderReport(source, rows, { nullMode: true });
+	assert.match(report, /\| run-1 \| 1 \(post-finish\) \| no \|/);
+	assert.match(report, /null fork: state match 1\/1, recorded class reproduced 1\/1 \(0 crashed, excluded\)/, "it counts");
 });
 
 test("forkRow: crashed when summary.json is missing, even if exit was 0", () => {
