@@ -179,6 +179,52 @@ test("v3 bash: a node -e literal is data unless it names an existing place out o
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// Review C1: three ways the mask was defeated, each of which read the oracle, .pi or a file
+// outside the workspace, and each denied before this guard grew a mask. Two root causes —
+// NODE_EVAL matching `node … -e "` anywhere rather than in command position, and BODY_STRING
+// not recognising a shell-escaped `\"…\"` literal, which then fell into the "code between
+// literals" branch and was blanked without ever reaching judgeLiteral.
+test("v3 bash: only a node in command position opens a body, and an escaped literal is still a literal", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "path-policy-mask-"));
+	const taskDir = path.join(dir, "tasks", "pathnorm");
+	const root = path.join(taskDir, "ws-builder");
+	fs.mkdirSync(path.join(root, "src"), { recursive: true });
+	fs.mkdirSync(path.join(taskDir, "oracle"), { recursive: true });
+	fs.writeFileSync(path.join(taskDir, "oracle", "run.mjs"), "// hidden\n");
+	fs.mkdirSync(path.join(root, ".pi", "agents"), { recursive: true });
+	fs.writeFileSync(path.join(root, ".pi", "agents", "worker.md"), "# worker\n");
+	fs.writeFileSync(path.join(dir, "secret.txt"), "s\n");
+	const ev = (command) => decidePath({ root, tool: "bash", input: { command } });
+
+	// A `\"…\"` literal is how a double-quoted body carries a string at all.
+	assert.equal(ev(`node -e "require('fs').readFileSync(\\"../oracle/run.mjs\\")"`).ok, false, "escaped literal, oracle");
+	assert.equal(ev(`node -e "require('fs').readFileSync(\\".pi/agents/worker.md\\")"`).ok, false, "escaped literal, .pi");
+	// An inner escape must be carried, not dropped back into the blanked branch.
+	assert.equal(ev(`node -e "readFileSync(\\"../oracle\\tmp/run.mjs\\")"`).ok, false, "escaped literal with an inner escape");
+	// `-e` is a real cat/head flag, so these are commands, not bodies.
+	assert.equal(ev(`cat node -e "../oracle/run.mjs"`).ok, false, "cat, not node");
+	assert.equal(ev(`head -20 node -e "../../../secret.txt"`).ok, false, "head, not node");
+	// The fake body ran to the quote in the last echo and swallowed the real cat between them.
+	assert.equal(ev(`echo "node -e '" ; cat ../oracle/run.mjs ; echo "'"`).ok, false, "a fake body must not hide a real path");
+
+	// The wrapper allowance: roster/implementer.md asks for an explicit timeout, so these
+	// bodies must still be masked or the degenerate literals are denied all over again.
+	for (const cmd of [
+		`timeout 30 node -e 'console.log(relative(".", "a"), segs("/"), segs(".."))'`,
+		`timeout -k 5 30 node -e 'segs("..")'`,
+		`env FOO=1 node -e 'segs("/")'`,
+		`nice node -e 'segs("..")'`,
+		`FOO=1 node -e 'segs("..")'`,
+		`cd src && timeout 30 node -e 'segs("..")'`,
+	]) {
+		assert.equal(ev(cmd).ok, true, cmd);
+	}
+	// A wrapper cannot smuggle a path of its own: everything before the opening quote is
+	// still judged normally.
+	assert.equal(ev(`timeout ../oracle/run.mjs node -e "x"`).ok, false, "the wrapper's own argument");
+	fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("v3 bash: the node -e existence check is injectable and decides both branches", () => {
 	const root = path.resolve("C:/work/runs/.ws-run/ws-builder");
 	const outside = path.resolve("C:/work/runs/.ws-run/secrets");
