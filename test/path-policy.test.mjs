@@ -337,10 +337,11 @@ test("v3 bash: an unrecognised span is judged, not erased", () => {
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// The invariant, round 4: a template literal carrying a ${...} substitution is CODE, not one
-// path string. BODY_STRING matched it whole, so the braces glued onto the following ".." and
-// the span resolved back INSIDE the workspace, while a substitution placed inside the name
-// split it. The value node opens is the path either way.
+// Rounds 4 and 5. BODY_STRING matched a template literal whole, so the substitution's braces
+// glued onto the following ".." and the span resolved back INSIDE the workspace, while a
+// substitution placed inside the name split it — the value node opens is the path either way.
+// Eliding the substitutions closed six shapes and left three open, because a substitution is a
+// nesting grammar. So the rule is now that a template carrying a ${…} is refused outright.
 test("v3 bash: a template substitution does not hide a path", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "path-policy-tmpl-"));
 	const taskDir = path.join(dir, "tasks", "pathnorm");
@@ -372,13 +373,24 @@ test("v3 bash: a template substitution does not hide a path", () => {
 	assert.equal(ev("node -e 'readFileSync(String.raw`../oracle/run.mjs`)'").ok, false, "String.raw still denies");
 	assert.equal(ev(`node -e 'readFileSync(${T}src/pathnorm.mjs${T})'`).ok, true, "a workspace path is still data");
 	assert.equal(ev(`node -e 'join(${T}a${T}, ${T}b${T})'`).ok, true, "template data is still data");
-	// Documented residual, unchanged: a substitution computed at runtime is not recoverable
-	// from the literal's own text. Only a sandbox closes that.
-	assert.equal(ev(`node -e 'const d = f(); readFileSync(${T}\${d}oracle/run.mjs${T})'`).ok, true, "runtime assembly inside a template");
-	// Pre-existing and NOT introduced here (review M7, verified identical at d02524e): a
-	// substitution followed by a separator reads as shell env indirection, so this denies
+	// The three shapes the elision left open, all of which spell ../oracle/run.mjs and all of
+	// which were denied at d02524e. A backtick re-enters the template; braces nest.
+	assert.equal(ev(`node -e 'readFileSync(${T}../ora\${[].join${T}${T}}cle/run.mjs${T})'`).ok, false, "a backtick inside the substitution");
+	assert.equal(ev(`node -e 'readFileSync(${T}../ora\${{}.x ?? ""}cle/run.mjs${T})'`).ok, false, "nested braces");
+	assert.equal(ev(`node -e "readFileSync(${T}../ora\${{}.x ?? ''}cle/run.mjs${T})"`).ok, false, "nested braces, other quoting");
+	// Runtime assembly inside a template is refused too, now: the rule is the construct, not
+	// whether this particular spelling happens to be recoverable.
+	assert.equal(ev(`node -e 'const d = f(); readFileSync(${T}\${d}oracle/run.mjs${T})'`).ok, false, "a runtime substitution");
+	// The reason names the remedy, and is not REDIRECT's "use a workspace-relative path":
+	// nothing was opened and the path may be perfectly fine.
+	assert.match(ev(`node -e 'readFileSync(${T}\${d}x${T})'`).reason, /write the path as a plain string literal or build it outside -e/);
+	// Only a REAL template. A double-quoted literal interpolates nothing, so its value is its
+	// source and it is judged as any other literal — this one names nothing out of bounds.
+	assert.equal(ev(`node -e 'readFileSync("\${d}oracle/run.mjs")'`).ok, true, "not a template, so not the rule's business");
+	// Pre-existing and NOT introduced here (review M7, verified identical at d02524e): in any
+	// literal, a ${…} followed by a separator reads as shell env indirection and is denied
 	// although it opens nothing. Pinned so the status is recorded rather than drifting.
-	assert.equal(ev(`node -e 'const d = f(); readFileSync(${T}\${d}/run.mjs${T})'`).ok, false, "M7, pre-existing");
+	assert.equal(ev(`node -e 'readFileSync("\${d}/run.mjs")'`).ok, false, "M7, pre-existing, not a template rule");
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
