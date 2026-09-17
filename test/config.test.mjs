@@ -261,3 +261,14 @@ test("workers overrides go through model preflight", () => {
 		/model preflight: roles\.workers\.tester names "p\/zzz"/,
 	);
 });
+
+test("guards.topology: string mode, true, or { mode }; validated; off by default", () => {
+	const roles = { orchestrator: { provider: "llama.cpp", model: "qwen3-27b" } };
+	const workers = { default: { provider: "llama.cpp", model: "qwen3-27b" }, use: ["worker"] };
+	const base = { task: "pathnorm", pattern: "orchestrator", roles, workers };
+	assert.equal(loadConfig({ configPath: tmpConfig(base), env: SKIP }).guards.topology, null);
+	assert.deepEqual(loadConfig({ configPath: tmpConfig({ ...base, guards: { topology: "nudge" } }), env: SKIP }).guards.topology, { mode: "nudge" });
+	assert.deepEqual(loadConfig({ configPath: tmpConfig({ ...base, guards: { topology: true } }), env: SKIP }).guards.topology, { mode: "nudge" });
+	assert.deepEqual(loadConfig({ configPath: tmpConfig({ ...base, guards: { topology: { mode: "enforce" } } }), env: SKIP }).guards.topology, { mode: "enforce" });
+	assert.throws(() => loadConfig({ configPath: tmpConfig({ ...base, guards: { topology: "loud" } }), env: SKIP }), /guards\.topology mode must be "nudge" or "enforce"/);
+});

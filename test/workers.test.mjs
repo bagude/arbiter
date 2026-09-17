@@ -163,3 +163,16 @@ test("dropUnclaimedSubagentEntry removes only the entry for that tool call, and 
 	dropUnclaimedSubagentEntry(timeline, "c2");
 	assert.deepEqual(timeline.map((m) => m.toolCallId), ["c0"]);
 });
+
+test("guard events of kind waived and skipped are counted like denied and rewritten", () => {
+	const { tracker, audit } = replay([
+		{ ev: "guard:topology_denied", data: { role: "orchestrator", specialist: "implementer" } },
+		{ ev: "guard:topology_waived", data: { role: "orchestrator", specialist: "implementer" } },
+		{ ev: "guard:topology_skipped", data: { role: "orchestrator", specialist: "implementer" } },
+	]);
+	assert.deepEqual(tracker.guards.topology, { denied: { orchestrator: 1 }, waived: { orchestrator: 1 }, skipped: { orchestrator: 1 } });
+	assert.deepEqual(audit.map((a) => a.type), ["guard", "guard", "guard"]);
+	assert.match(audit[0].msg, /^topology denied: /);
+	assert.match(audit[1].msg, /^topology waived: /);
+	assert.match(audit[2].msg, /^topology skipped: /);
+});

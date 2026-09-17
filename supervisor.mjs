@@ -90,6 +90,11 @@ const GUARDS = [
 	path.join(here, "ext", "guards", "result-handles.ts"),
 	// Write/edit argument elision (registers nothing unless CONFIG.guards.call_args is set).
 	path.join(here, "ext", "guards", "call-args.ts"),
+	// Topology nudge on `subagent` (registers nothing unless CONFIG.guards.topology is
+	// set). Listed BEFORE pre-spawn-compact: pi returns the first blocking tool_call
+	// result, and when both would deny the same spawn the orchestrator needs this
+	// reason (spawn the tester first) before the compaction one.
+	path.join(here, "ext", "guards", "topology.ts"),
 	// Deny a fresh foreground `subagent` call while context is already large (registers
 	// nothing unless CONFIG.guards.pre_spawn_compact is set); only the orchestrator ever
 	// calls `subagent`, but every role loads it like every other guard here.
@@ -376,6 +381,9 @@ function launch(name) {
 			ARBITER_BASH_TIMEOUT_SEC: String(CAPS.bashTimeoutSec),
 			ARBITER_CALL_ARGS: CONFIG.guards.call_args ? JSON.stringify(CONFIG.guards.call_args) : "",
 			ARBITER_PRE_SPAWN_COMPACT: CONFIG.guards.pre_spawn_compact ? JSON.stringify(CONFIG.guards.pre_spawn_compact) : "",
+			ARBITER_TOPOLOGY: CONFIG.guards.topology
+				? JSON.stringify({ mode: CONFIG.guards.topology.mode, needs: Object.fromEntries((CONFIG.workers?.specialists ?? []).map((s) => [s.name, s.needs])) })
+				: "",
 			// context_usage tool: this role's context window from the model preflight
 			// (lib/config.mjs), "" when unknown. Workers spawned by pi-subagents inherit
 			// this process's env, so they report against the orchestrator's own window.
