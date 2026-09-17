@@ -198,7 +198,24 @@ const GUARDS = [
 	// Provider-request capture for the orchestrator (registers nothing unless
 	// ARBITER_REQUESTS_DIR is set; observability only, never blocks).
 	path.join(here, "ext", "replay-capture.ts"),
+	// Jev shadow head (registers nothing unless ARBITER_JEV_DIR and TYPESAFE_API_KEY are
+	// set): asks TypeSafe.ai the four decision questions at every orchestrator inference,
+	// in parallel with the decode, and writes the answers beside the captured request.
+	// Observability only — see lib/jev.mjs and tools/jev-replay.mjs.
+	path.join(here, "ext", "jev-shadow.ts"),
 ];
+// The shadow is on when the config says `jev: true` or ARBITER_JEV=1, and off otherwise; the
+// key comes from the environment or from .env in the repo root and is passed only to the
+// orchestrator's process (workers run inside it), never written anywhere.
+const JEV_ON = CONFIG.jev === true || process.env.ARBITER_JEV === "1";
+const JEV_KEY = (() => {
+	const env = (process.env.TYPESAFE_API_KEY ?? "").trim();
+	if (env || !JEV_ON) return env;
+	const f = path.join(here, ".env");
+	const m = fs.existsSync(f) ? fs.readFileSync(f, "utf8").match(/^TYPESAFE_API_KEY=(\S+)/m) : null;
+	return m ? m[1] : "";
+})();
+if (JEV_ON && !JEV_KEY) console.error("[supervisor] jev shadow requested but no TYPESAFE_API_KEY in the environment or .env — running without it");
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
 const startedAt = Date.now();
@@ -552,6 +569,8 @@ function launch(name) {
 			// Every provider request the orchestrator sends, verbatim (ext/replay-capture.ts):
 			// the state reference for tools/decision-replay.mjs.
 			ARBITER_REQUESTS_DIR: PATTERN === "orchestrator" && name === "orchestrator" ? path.join(RUN, "requests") : "",
+			ARBITER_JEV_DIR: JEV_ON && JEV_KEY && PATTERN === "orchestrator" && name === "orchestrator" ? path.join(RUN, "jev") : "",
+			TYPESAFE_API_KEY: JEV_ON && JEV_KEY && PATTERN === "orchestrator" && name === "orchestrator" ? JEV_KEY : "",
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
