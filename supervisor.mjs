@@ -35,7 +35,7 @@ import { snapshotId } from "./lib/snapshot.mjs";
 import { contextTokensOf, decideCompaction, composeInstructions, ledgerLines } from "./lib/compaction.mjs";
 import { sessionEntryToEvents } from "./lib/session-adapter.mjs";
 import { readJsonl } from "./lib/jsonl.mjs";
-import { argsKey as probeArgsKey, matchCase as matchProbeCase } from "./lib/probe-match.mjs";
+import { argsKey as probeArgsKey, isThrowsExpectation, matchCase as matchProbeCase } from "./lib/probe-match.mjs";
 import { forkSpec, truncateSessionEntries, truncateEntriesAt, rewriteSessionHeader, forkCounters, forkReplayOrder } from "./lib/fork.mjs";
 import { readSessionFile } from "./lib/context-trace.mjs";
 
@@ -1229,6 +1229,7 @@ function runProbe(msg, { auto = null } = {}) {
 
 		const withExpect = [];
 		const withoutExpect = [];
+		const matchedThrows = [];
 		let matchCount = 0;
 		for (const res of results) {
 			const args = argsById.get(res.id);
@@ -1261,8 +1262,18 @@ function runProbe(msg, { auto = null } = {}) {
 				// key-order-insensitive comparison over the keys the expectation names.
 				// Never a raw JSON string compare — see lib/probe-match.mjs for what that did.
 				const { matched, detail } = matchProbeCase(res, expect);
-				if (matched) matchCount++;
-				else withExpect.push(`${line} — EXPECTED ${truncateForMail(JSON.stringify(expect))}, MISMATCH${detail ? ` (${truncateForMail(detail)})` : ""}`);
+				if (matched) {
+					matchCount++;
+					// A `{"throws": "..."}` expectation matches on the error text CONTAINING that
+					// string, so "matched" leaves the rest of the message unseen — and a `throws`
+					// case is usually asked precisely because the message matters. Run
+					// 2026-09-17T16-47-16 was shown "25/25 matched" and then re-read src/ to
+					// confirm an error-message prefix its own probe had already produced. Value
+					// cases are left out: for those, matching IS the value.
+					if (isThrowsExpectation(expect)) matchedThrows.push(`${res.id}: (${argsStr}) → ${truncateForMail(actualFull)}`);
+				} else {
+					withExpect.push(`${line} — EXPECTED ${truncateForMail(JSON.stringify(expect))}, MISMATCH${detail ? ` (${truncateForMail(detail)})` : ""}`);
+				}
 			} else {
 				withoutExpect.push(line);
 			}
@@ -1272,6 +1283,7 @@ function runProbe(msg, { auto = null } = {}) {
 		const parts = [];
 		if (expectById.size > 0) {
 			parts.push(`${matchCount}/${expectById.size} matched ${whose} stated expectations.`);
+			if (matchedThrows.length) parts.push(`Matched throws cases, with the error each one actually threw (the expectation checked only that the text contains what you named):\n${matchedThrows.join("\n")}`);
 			if (withExpect.length) parts.push(`Mismatches:\n${withExpect.join("\n")}`);
 		}
 		if (withoutExpect.length) parts.push(`${expectById.size > 0 ? "Other cases (no expectation given):\n" : ""}${withoutExpect.join("\n")}`);

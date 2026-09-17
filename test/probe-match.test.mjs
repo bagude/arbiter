@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { argsKey, canonicalJson, deepDiff, matchCase } from "../lib/probe-match.mjs";
+import { argsKey, canonicalJson, deepDiff, isThrowsExpectation, matchCase } from "../lib/probe-match.mjs";
 
 test("canonicalJson sorts keys at every level and keeps array order", () => {
 	assert.equal(canonicalJson({ b: 1, a: { d: [3, { z: 1, y: 2 }], c: null } }), '{"a":{"c":null,"d":[3,{"y":2,"z":1}]},"b":1}');
@@ -41,4 +41,23 @@ test("matchCase handles throws expectations and unexpected throws", () => {
 	assert.equal(matchCase({ id: "a", ok: false, error: "RangeError: singularity" }, { throws: "invalid argument" }).matched, false);
 	assert.equal(matchCase({ id: "a", ok: true, value: 1 }, { throws: "invalid argument" }).matched, false);
 	assert.deepEqual(matchCase({ id: "a", ok: false, error: "TypeError: x" }, 5), { matched: false, detail: "threw instead of returning" });
+});
+
+// Case 11 of docs/batch/harness-text-audit-2026-09-17.md: a throws expectation matches on
+// the error text merely containing what was named, so "matched" hides the message that
+// was usually the point of the case. The supervisor prints the actual error for exactly
+// these cases; this is the predicate it selects them with.
+test("isThrowsExpectation picks out the throws shape and nothing else", () => {
+	assert.equal(isThrowsExpectation({ throws: "SyntaxError" }), true);
+	assert.equal(isThrowsExpectation({ throws: "" }), true);
+	assert.equal(isThrowsExpectation({ value: 1 }), false);
+	assert.equal(isThrowsExpectation(["throws"]), false);
+	assert.equal(isThrowsExpectation("throws"), false);
+	assert.equal(isThrowsExpectation(null), false);
+	assert.equal(isThrowsExpectation(undefined), false);
+	// The predicate and matchCase's own branch must agree on every shape.
+	for (const expect of [{ throws: "x" }, { value: 1 }, 5, null, ["x"]]) {
+		const res = { id: "a", ok: false, error: "TypeError: x" };
+		assert.equal(matchCase(res, expect).detail === "threw instead of returning", !isThrowsExpectation(expect), JSON.stringify(expect));
+	}
 });
