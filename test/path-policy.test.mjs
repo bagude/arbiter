@@ -337,6 +337,51 @@ test("v3 bash: an unrecognised span is judged, not erased", () => {
 	fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// The invariant, round 4: a template literal carrying a ${...} substitution is CODE, not one
+// path string. BODY_STRING matched it whole, so the braces glued onto the following ".." and
+// the span resolved back INSIDE the workspace, while a substitution placed inside the name
+// split it. The value node opens is the path either way.
+test("v3 bash: a template substitution does not hide a path", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "path-policy-tmpl-"));
+	const taskDir = path.join(dir, "tasks", "pathnorm");
+	const root = path.join(taskDir, "ws-builder");
+	fs.mkdirSync(path.join(root, "src"), { recursive: true });
+	fs.mkdirSync(path.join(taskDir, "oracle"), { recursive: true });
+	fs.writeFileSync(path.join(taskDir, "oracle", "run.mjs"), "// hidden\n");
+	fs.mkdirSync(path.join(root, ".pi", "agents"), { recursive: true });
+	fs.writeFileSync(path.join(root, ".pi", "agents", "worker.md"), "# worker\n");
+	fs.writeFileSync(path.join(dir, "secret.txt"), "s\n");
+	const ev = (command) => decidePath({ root, tool: "bash", input: { command } });
+	const T = String.fromCharCode(96); // a backtick, so this file can hold template bodies
+	const B = "\\";
+
+	// The substitution is the whole path, or junk in front of it.
+	assert.equal(ev(`node -e 'readFileSync(${T}\${"../oracle/run.mjs"}${T})'`).ok, false, "T2 the substitution is the path");
+	assert.equal(ev(`node -e 'readFileSync(${T}\${""}../oracle/run.mjs${T})'`).ok, false, "T1 junk prefix");
+	assert.equal(ev(`node -e 'readFileSync(${T}\${""}.pi/agents/worker.md${T})'`).ok, false, "T3 .pi");
+	assert.equal(ev(`node -e 'readFileSync(${T}\${""}../../../secret.txt${T})'`).ok, false, "T4 outside the workspace");
+	// The substitution splits the name, so no piece spells anything out of bounds.
+	assert.equal(ev(`node -e 'readFileSync(${T}../ora\${""}cle/run.mjs${T})'`).ok, false, "S1 split name");
+	assert.equal(ev(`node -e 'readFileSync(${T}.\${""}./oracle/run.mjs${T})'`).ok, false, "S2 split dots");
+	// A split name AND an escape spelling one of its characters is one shape, not two: the
+	// elided spelling is judged in both spellings, like every other literal.
+	assert.equal(ev(`node -e 'readFileSync(${T}../ora\${""}${B}u0063le/run.mjs${T})'`).ok, false, "split name plus an escape");
+
+	// Templates without a substitution keep their existing verdicts.
+	assert.equal(ev(`node -e 'readFileSync(${T}../oracle/run.mjs${T})'`).ok, false, "a plain template still denies");
+	assert.equal(ev("node -e 'readFileSync(String.raw`../oracle/run.mjs`)'").ok, false, "String.raw still denies");
+	assert.equal(ev(`node -e 'readFileSync(${T}src/pathnorm.mjs${T})'`).ok, true, "a workspace path is still data");
+	assert.equal(ev(`node -e 'join(${T}a${T}, ${T}b${T})'`).ok, true, "template data is still data");
+	// Documented residual, unchanged: a substitution computed at runtime is not recoverable
+	// from the literal's own text. Only a sandbox closes that.
+	assert.equal(ev(`node -e 'const d = f(); readFileSync(${T}\${d}oracle/run.mjs${T})'`).ok, true, "runtime assembly inside a template");
+	// Pre-existing and NOT introduced here (review M7, verified identical at d02524e): a
+	// substitution followed by a separator reads as shell env indirection, so this denies
+	// although it opens nothing. Pinned so the status is recorded rather than drifting.
+	assert.equal(ev(`node -e 'const d = f(); readFileSync(${T}\${d}/run.mjs${T})'`).ok, false, "M7, pre-existing");
+	fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("v3 bash: the node -e existence check is injectable and decides both branches", () => {
 	const root = path.resolve("C:/work/runs/.ws-run/ws-builder");
 	const outside = path.resolve("C:/work/runs/.ws-run/secrets");
