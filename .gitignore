@@ -7,4 +7,4 @@ tools/console.html
 tools/runs-data.json
 __pycache__/
 **/memory/index/
-tasks/*/store/memory/wiki/
+**/memory/wiki/

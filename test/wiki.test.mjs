@@ -151,3 +151,41 @@ test("lint flags observed findings whose title reads as a cause or a judgement, 
 	const page = buildPages({ records, runSummaries: new Map(), now: 100 * DAY }).get("scopes/repo-dw.md");
 	assert.match(page, /- \[interpreted · candidate\] Water missing because the loader maps a missing column \(\[\[runs\/r5\]\]\) — settles by: check the loader/);
 });
+
+test("an agent scope page counts the runs it appears in and drops the History section it can never fill", () => {
+	// retainFromRun files a run's episodic record under the run's task/repo scope, never
+	// under agent:<name>. Before the fix an agent page read "0 run(s) in history" and
+	// "(no runs retained)" while listing those very runs in the same sentence.
+	const records = foldLog([
+		rec({ id: "m_a1", status: "promoted", scope: "agent:implementer", kind: "procedural", text: "implementer ran on pathnorm (1 spawn(s): Implement pathnorm.mjs) — run passed", confidence: 0.7, source: "supervisor", evidence: ["run:r1", "oracle:r1#1", "applies_to:task:pathnorm"], ts: 10 }),
+		rec({ id: "m_a2", status: "candidate", scope: "agent:implementer", kind: "semantic", text: "memory_search located the row; memory_get read the body", confidence: 0.4, source: "agent", evidence: ["run:r2"], ts: 20 }),
+	]);
+	const pages = buildPages({ records, runSummaries: new Map([["r1", { runId: "r1", reason: "SUCCESS: oracle passed" }]]), now: 100 * DAY });
+	const page = pages.get(`${scopeFile("agent:implementer")}.md`);
+
+	assert.match(page, /1 fact\(s\), seen in 2 runs, 1 candidate\(s\)\./);
+	assert.doesNotMatch(page, /run\(s\) in history/, "an agent page must not count a history it cannot hold");
+	assert.doesNotMatch(page, /## History/, "the History section is structurally empty for agent scopes");
+	assert.doesNotMatch(page, /\(no runs retained\)/);
+	assert.match(page, /Runs: .*r1.*r2/, "the runs it appears in are still linked");
+	assert.match(page, /## Facts[\s\S]*implementer ran on pathnorm/);
+	assert.match(page, /## Candidates[\s\S]*memory_get read the body/);
+
+	// and the INDEX line for that scope gets its "last run" from run evidence
+	assert.match(pages.get("INDEX.md"), /## Agents[\s\S]*agent-implementer.*last run: r2/);
+});
+
+test("the orphaned-history rule is about the data, not the scope name: global gets it too, and a scope naming no runs keeps History", () => {
+	// global has the same shape as agent:<name> — retainFromRun never files an episodic
+	// record there — so it showed the same contradiction and gets the same treatment.
+	const withRuns = foldLog([rec({ id: "m_g1", status: "promoted", scope: "global", kind: "semantic", text: "llama.cpp omits bash timeouts", confidence: 0.6, source: "human", evidence: ["run:r9"], ts: 10 })]);
+	const globalPage = buildPages({ records: withRuns, runSummaries: new Map(), now: 100 * DAY }).get(`${scopeFile("global")}.md`);
+	assert.match(globalPage, /1 fact\(s\), seen in 1 run, 0 candidate\(s\)\./);
+	assert.doesNotMatch(globalPage, /## History/);
+
+	// A scope that names no run at all is not contradicting itself; it keeps History.
+	const noRuns = foldLog([rec({ id: "m_t1", status: "promoted", scope: "task:fresh", kind: "procedural", text: "a procedure", confidence: 0.7, source: "supervisor", evidence: [], ts: 10 })]);
+	const freshPage = buildPages({ records: noRuns, runSummaries: new Map(), now: 100 * DAY }).get(`${scopeFile("task:fresh")}.md`);
+	assert.match(freshPage, /1 fact\(s\), 0 run\(s\) in history, 0 candidate\(s\)\./);
+	assert.match(freshPage, /## History[\s\S]*\(no runs retained\)/);
+});
