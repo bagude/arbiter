@@ -210,6 +210,36 @@ test("a worker joined via subagents:started only (no created) picks up type from
 	assert.equal(worker.spawn.type, "tester");
 });
 
+test("a fresh worker claims its own started event, not an earlier worker's resume that is also in its window", () => {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-resume-join-"));
+	const orchFile = path.join(tmp, "sessions", "orchestrator", "orch.jsonl");
+	writeSessionFile(orchFile, "orch-session-1", [
+		{ startMs: 500, endIso: new Date(600).toISOString() },
+		{ startMs: 700, endIso: new Date(99000).toISOString() },
+	]);
+	writeSessionFile(path.join(tmp, "sessions", "orchestrator", "tasks", "impl.jsonl"), "impl-session-1", [{ startMs: 1500, endIso: new Date(2000).toISOString() }], { parentSession: "orch-session-1" });
+	writeSessionFile(path.join(tmp, "sessions", "orchestrator", "tasks", "test.jsonl"), "test-session-1", [{ startMs: 61000, endIso: new Date(62000).toISOString() }], { parentSession: "orch-session-1" });
+	fs.writeFileSync(
+		path.join(tmp, "lifecycle.jsonl"),
+		[
+			{ ts: 1000, ev: "subagents:started", data: { id: "sub-impl", type: "implementer", description: "Implement it" } },
+			{ ts: 3000, ev: "subagents:completed", data: { id: "sub-impl", type: "implementer", description: "Implement it" } },
+			// the implementer is resumed 20 s before the tester is spawned: both events
+			// sit inside the tester's 120 s join window, and the resume is the earlier one
+			{ ts: 40000, ev: "subagents:resuming", data: { id: "sub-impl", type: "implementer", description: "Implement it" } },
+			{ ts: 60000, ev: "subagents:started", data: { id: "sub-test", type: "tester", description: "Test it" } },
+		]
+			.map((e) => JSON.stringify(e))
+			.join("\n") + "\n",
+	);
+
+	const trace = traceRun(tmp);
+	const byId = new Map(trace.agents.map((a) => [a.sessionId, a]));
+	assert.equal(byId.get("impl-session-1").spawn.type, "implementer");
+	assert.equal(byId.get("test-session-1").spawn.type, "tester");
+	assert.equal(byId.get("test-session-1").spawn.description, "Test it");
+});
+
 test("traceRun throws when the run dir has no sessions/ directory", () => {
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-context-trace-nosessions-"));
 	assert.throws(() => traceRun(tmp));
