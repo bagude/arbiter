@@ -12,9 +12,20 @@ export function renderConsole(template, data) {
 	return template.replace("__RUNS_DATA__", () => data.replace(/<\/script/gi, "<\\/script"));
 }
 
+/** Keep only the newest `n` runs (ids sort chronologically); the artifact host caps a page at 16 MB. */
+export function newestRuns(runs, n) {
+	if (!Number.isFinite(n) || n <= 0) return runs;
+	const keep = new Set(Object.keys(runs).sort().slice(-n));
+	return Object.fromEntries(Object.entries(runs).filter(([id]) => keep.has(id)));
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	const template = fs.readFileSync(path.join(here, "console.template.html"), "utf8");
-	const data = fs.readFileSync(path.join(here, "runs-data.json"), "utf8");
-	fs.writeFileSync(path.join(here, "console.html"), renderConsole(template, data));
-	console.log("wrote tools/console.html");
+	const lastArg = process.argv.indexOf("--last");
+	const last = lastArg >= 0 ? Number(process.argv[lastArg + 1]) : 0;
+	let data = fs.readFileSync(path.join(here, "runs-data.json"), "utf8");
+	if (last > 0) data = JSON.stringify(newestRuns(JSON.parse(data), last));
+	const out = renderConsole(template, data);
+	fs.writeFileSync(path.join(here, "console.html"), out);
+	console.log(`wrote tools/console.html (${(out.length / 1048576).toFixed(1)} MB${last > 0 ? `, newest ${last} runs` : ""})`);
 }
