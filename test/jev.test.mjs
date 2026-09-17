@@ -219,3 +219,31 @@ test("requestSeqFor maps a decision index to its captured request, offset by the
 	assert.equal(requestSeqFor(20, 21), 1);
 	assert.equal(requestSeqFor(25, 21), 6);
 });
+
+// A suite written in test() blocks: every assertion must keep its own call site (the frame
+// numbers come from the rewritten file, whose test import becomes an arrow on line 1).
+import os from "node:os";
+import path from "node:path";
+import { truthFor } from "../tools/jev-tests.mjs";
+test("truthFor attributes each assertion in a test() block to its own line, with the reference as ground truth", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jev-block-"));
+	const suite = path.join(dir, "blocks.test.mjs");
+	fs.writeFileSync(suite, [
+		'import { test } from "node:test";',
+		'import assert from "node:assert/strict";',
+		'import { normalize } from "../pathnorm.mjs";',
+		"function eq(a, b, m) { assert.strictEqual(a, b, m); }",
+		'test("collapses", () => {',
+		'\teq(normalize("a//b"), "a/b", "collapses");',
+		'\teq(normalize("x//y"), "x_WRONG", "wrong on purpose");',
+		"});",
+		"",
+	].join("\n"));
+	const ref = fileURLToPath(new URL("../tasks/pathnorm/oracle/reference.mjs", import.meta.url));
+	const { records } = truthFor(suite, ref);
+	fs.rmSync(dir, { recursive: true, force: true });
+	assert.equal(records.length, 2);
+	assert.deepEqual(records.map((r) => [r.line, r.pass]), [[6, true], [7, false]]);
+	assert.match(records[1].source, /^eq\(normalize\("x\/\/y"\), "x_WRONG"/);
+	assert.throws(() => truthFor(suite, "C:/elsewhere/ref.mjs"), /pass --module/);
+});

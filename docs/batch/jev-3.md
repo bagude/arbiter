@@ -17,6 +17,8 @@ Leak-free states, every done claim with a verdict across the captured runs (sour
 | fork runs, first claim | 19 | 15 / 4 | 0.31 | 1 of 1 | 0.67 vs 0.54 |
 | fork runs, later claims | 18 | 5 / 13 | 0.59 | 3 of 8 | 0.39 vs 0.47 |
 
+Split once more by whether a PRIOR oracle verdict is visible in the state (a second or later claim): the 21 rows that can see one score 0.69, the 27 that cannot score 0.41 — so on clean first-claim states Jev is below chance and the pooled figure is flattered by the verdict-bearing rows.
+
 There is no usable signal. On the largest homogeneous group, the forks' first claims, Jev is confidently wrong: fifteen of nineteen failed and it rated them more likely to pass than the ones that passed. The `edge` verdict is right 7 of 12 times overall, which at a 52% base rate is chance. The non-fork AUC of 0.80 rests on five failures and is inside the noise of a sample that small.
 
 ## What this means for the guard

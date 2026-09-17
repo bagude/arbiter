@@ -71,14 +71,18 @@ export { assert as strict };
  * the caller's line is what we want, so the innermost frame inside the suite that is not the
  * helper definition wins: we take the LAST suite frame on the stack, which is the call site.
  */
-export function truthFor(suiteFile, referenceFile) {
+export function truthFor(suiteFile, referenceFile, { module = null } = {}) {
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "jev-tests-"));
 	const src = fs.readFileSync(suiteFile, "utf8");
 	const refUrl = pathToFileURL(path.resolve(referenceFile)).href;
 	const shimUrl = pathToFileURL(path.join(tmp, "assert-shim.mjs")).href;
 	// The module under test is named after the reference (reference.mjs stands in for
 	// src/<module>.mjs; the tester imports it as ../<module>.mjs or ./<module>.mjs).
-	const modName = path.basename(path.dirname(path.dirname(path.resolve(referenceFile)))); // tasks/<task>/oracle → <task>
+	// The module under test: --module, else the task directory name when the reference sits in
+	// tasks/<task>/oracle/ (the reference basename is always "reference", so it cannot be the name).
+	const refDir = path.dirname(path.resolve(referenceFile));
+	const modName = module ?? (path.basename(refDir) === "oracle" ? path.basename(path.dirname(refDir)) : null);
+	if (!modName) throw new Error("cannot infer the module under test from " + referenceFile + " — pass --module <name>");
 	const esc = modName.replace(/[.*+?^${}()|[\]\\]/g, (ch) => "\\" + ch);
 	const modRe = new RegExp("from\\s+[\"'](?:\\.\\./|\\./|\\.\\./src/)" + esc + "\\.m?js[\"']", "g");
 	const rewritten = src
@@ -94,6 +98,9 @@ export function truthFor(suiteFile, referenceFile) {
 	const r = spawnSync(process.execPath, [suiteCopy], { env: { ...process.env, SUITE_BASENAME: path.basename(suiteFile), RECORD_FILE: recordFile }, encoding: "utf8", timeout: 30000 });
 	const records = fs.existsSync(recordFile) ? JSON.parse(fs.readFileSync(recordFile, "utf8")) : [];
 	const lines = src.split(/\r?\n/);
+	// Frame numbers come from the REWRITTEN file; the rewrite is line-preserving, but the test
+	// import becomes an arrow on its own line, so the definition test must read rewritten lines.
+	const rlines = rewritten.split(/\r?\n/);
 	fs.rmSync(tmp, { recursive: true, force: true });
 	// The call site is the innermost suite frame that is not a helper definition or a
 	// test()/it()/describe() header (a suite in blocks would otherwise collapse every
@@ -104,7 +111,7 @@ export function truthFor(suiteFile, referenceFile) {
 		// Outermost first: the innermost frame is the helper's own body (assert.* inside eq), the
 		// outermost is a test() header when the suite is in blocks; the call site is the outermost
 		// frame that is neither.
-		const line = [...(x.lines ?? [])].reverse().find((n) => !isDefinition((lines[n - 1] ?? "").trim())) ?? null;
+		const line = [...(x.lines ?? [])].reverse().find((n) => !isDefinition((rlines[n - 1] ?? "").trim())) ?? null;
 		const source = line ? (lines[line - 1] ?? "").trim() : "";
 		// A multi-line assertion yields an unclosed fragment; it is kept for the count but
 		// carries no source, so it is never sent to Jev as if it were the whole assertion.
@@ -138,6 +145,7 @@ async function main() {
 		const a = argv[i];
 		if (a === "--spec") spec.specFile = path.resolve(argv[++i]);
 		else if (a === "--reference") spec.reference = path.resolve(argv[++i]);
+		else if (a === "--module") spec.module = argv[++i];
 		else if (a === "--limit") spec.limit = Number(argv[++i]);
 		else if (a === "--dry-run") spec.dryRun = true;
 		else if (a === "--list") spec.suites.push(...fs.readFileSync(path.resolve(argv[++i]), "utf8").split(/\r?\n/).filter(Boolean).map((p) => path.resolve(p)));
@@ -151,7 +159,7 @@ async function main() {
 
 	const bySource = new Map();
 	for (const suite of spec.suites) {
-		const { records, exit, stderr } = truthFor(suite, spec.reference);
+		const { records, exit, stderr } = truthFor(suite, spec.reference, { module: spec.module ?? null });
 		const withSource = records.filter((r) => r.source);
 		console.error(`${path.relative(ROOT, suite)}: ${records.length} assertions (${records.filter((r) => !r.pass).length} fail against the reference)${exit ? `, exit ${exit}` : ""}${!records.length && stderr ? `\n${stderr}` : ""}`);
 		for (const r of withSource) {
