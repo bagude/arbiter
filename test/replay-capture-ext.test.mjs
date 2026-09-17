@@ -1,0 +1,53 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+
+// Drives ext/replay-capture.ts through tsx with a fake pi: fires before_provider_request
+// as the orchestrator and as a worker, then reads what landed in ARBITER_REQUESTS_DIR.
+const PI = "C:/Users/user/open_harnessess/pi/pi";
+
+function run({ env = {}, calls }) {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "replay-capture-"));
+	const driver = path.join(os.tmpdir(), `replay-capture-driver-${process.pid}.mjs`);
+	fs.writeFileSync(driver, `
+		import { pathToFileURL } from "node:url";
+		const mod = await import(pathToFileURL(${JSON.stringify(path.resolve("ext/replay-capture.ts"))}).href);
+		const handlers = {};
+		mod.default({ on: (ev, fn) => { handlers[ev] = fn; }, events: { on() {} } });
+		const orch = { cwd: "C:/ws", sessionManager: { getSessionFile: () => "C:/ws/sessions/orchestrator/x.jsonl" } };
+		const worker = { cwd: "C:/ws", sessionManager: { getSessionFile: () => "C:/ws/sessions/orchestrator/x/tasks/w.jsonl" } };
+		for (const c of ${JSON.stringify(calls)}) if (handlers.before_provider_request) await handlers.before_provider_request({ type: "before_provider_request", payload: c.payload }, c.role === "worker" ? worker : orch);
+		console.log(JSON.stringify({ registered: Object.keys(handlers) }));
+	`);
+	const r = spawnSync(process.execPath, [`${PI}/node_modules/tsx/dist/cli.mjs`, driver], { encoding: "utf8", env: { ...process.env, AGENT_NAME: "orchestrator", NODE_PATH: `${PI}/node_modules`, ARBITER_REQUESTS_DIR: "", ...env } });
+	assert.equal(r.status, 0, r.stderr);
+	const files = fs.existsSync(dir) ? fs.readdirSync(dir).sort() : [];
+	return { ...JSON.parse(r.stdout.trim()), dir, files, read: (f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) };
+}
+
+test("registers nothing when ARBITER_REQUESTS_DIR is unset", () => {
+	const { registered, files } = run({ calls: [{ role: "orchestrator", payload: { a: 1 } }] });
+	assert.deepEqual(registered, []);
+	assert.deepEqual(files, []);
+});
+
+test("writes each orchestrator request verbatim with a 1-based sequence; worker requests are skipped", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "replay-capture-out-"));
+	const payload1 = { model: "qwen3-27b", messages: [{ role: "system", content: "sys" }, { role: "user", content: "hi" }], tools: [{ type: "function", function: { name: "read" } }], stream: true };
+	const payload2 = { ...payload1, messages: [...payload1.messages, { role: "assistant", content: "ok" }] };
+	const { registered, files, read } = run({
+		env: { ARBITER_REQUESTS_DIR: dir },
+		calls: [{ role: "orchestrator", payload: payload1 }, { role: "worker", payload: { skipped: true } }, { role: "orchestrator", payload: payload2 }],
+	});
+	assert.deepEqual(registered, ["before_provider_request"]);
+	const out = fs.readdirSync(dir).sort();
+	assert.deepEqual(out, ["0001.json", "0002.json"]);
+	const first = JSON.parse(fs.readFileSync(path.join(dir, "0001.json"), "utf8"));
+	assert.equal(first.seq, 1);
+	assert.deepEqual(first.payload, payload1);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "0002.json"), "utf8")).payload.messages.length, 3);
+	assert.deepEqual(files, [], "nothing lands in the unused default dir");
+});

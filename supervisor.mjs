@@ -104,6 +104,9 @@ const GUARDS = [
 	path.join(here, "ext", "report-ext.ts"),
 	// context_usage tool (always on; a tool, not a guard — the list name is historical).
 	path.join(here, "ext", "context-usage-ext.ts"),
+	// Provider-request capture for the orchestrator (registers nothing unless
+	// ARBITER_REQUESTS_DIR is set; observability only, never blocks).
+	path.join(here, "ext", "replay-capture.ts"),
 ];
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
@@ -353,6 +356,10 @@ function launch(name) {
 		"--system-prompt",
 		prompts[name],
 	];
+	// The exact prompt this role ran with, for replay and for reading a run later:
+	// the session file does not keep it (pi receives it on the command line).
+	fs.mkdirSync(path.join(RUN, "prompts"), { recursive: true });
+	fs.writeFileSync(path.join(RUN, "prompts", `${name}.md`), prompts[name]);
 	// The orchestrator is the only role that spawns children, so it is the only one
 	// that loads pi-subagents (which supplies the subagent/steer_subagent/
 	// get_subagent_result tools) and the bridge that forwards their lifecycle events
@@ -404,6 +411,9 @@ function launch(name) {
 			ARBITER_RESULTS_DIR: path.join(RUN, "results"),
 			ARBITER_CHECKPOINT_FILE: PATTERN === "orchestrator" && name === "orchestrator" ? CHECKPOINT_FILE : "",
 			ARBITER_REPORT_FILE: PATTERN === "orchestrator" && CONFIG.report ? REPORT_FILE : "",
+			// Every provider request the orchestrator sends, verbatim (ext/replay-capture.ts):
+			// the state reference for tools/decision-replay.mjs.
+			ARBITER_REQUESTS_DIR: PATTERN === "orchestrator" && name === "orchestrator" ? path.join(RUN, "requests") : "",
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
