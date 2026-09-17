@@ -99,7 +99,7 @@ if (FORK) {
 	// only one run may hold them at a time. finish() removes both after archiving, which
 	// is what lets the runner start the next replicate.
 	for (const p of [path.join(here, "runs", `.ws-${FORK.run}`), path.join(here, "runs", `.sessions-${FORK.run}`)]) {
-		if (fs.existsSync(p)) { console.error(`fork: ${p} already exists — a live run or another fork holds it; replicates must be serialised`); process.exit(2); }
+		if (fs.existsSync(p)) { console.error(`fork: ${p} already exists — a live run or another fork holds it; replicates must be serialised. If no run is live, a previous one died before archiving: remove it and retry.`); process.exit(2); }
 	}
 	FORK_REQ = JSON.parse(fs.readFileSync(path.join(FORK_SRC, "requests", `${String(FORK.call).padStart(4, "0")}.json`), "utf8"));
 	// ext/replay-capture.ts writes snapshot: null when it could not read the agent's cwd,
@@ -204,6 +204,26 @@ const PATHS_ID = FORK ? FORK.run : runId;
 const WSROOT = path.join(here, "runs", `.ws-${PATHS_ID}`);
 const SESSIONS = path.join(here, "runs", `.sessions-${PATHS_ID}`);
 const WS = { workspace: path.join(WSROOT, "ws-builder") };
+// Give up on a fork AFTER it has started creating directories. Because a fork holds the
+// source run's WSROOT/SESSIONS names, simply exiting would leave both on disk and every
+// later attempt — including the operator's corrected one — would fail the collision
+// preflight until someone removed them by hand. The likeliest fork error is a bad
+// `call`, so that dead end would be the common case. Releases both, then exits 2.
+function forkAbort(msg) {
+	console.error(`fork: ${msg}`);
+	// Drop the read-only mount junctions before removing WSROOT, exactly as finish() does:
+	// rmSync would otherwise recurse through a junction and delete the mounted source data.
+	// Every call site is below the installMounts line, so MOUNTS is always initialised here.
+	uninstallMounts(MOUNTS);
+	for (const dir of [WSROOT, SESSIONS]) {
+		try {
+			fs.rmSync(dir, { recursive: true, force: true });
+		} catch (err) {
+			console.error(`fork: could not remove ${dir} (${err?.message ?? err}); remove it before retrying`);
+		}
+	}
+	process.exit(2);
+}
 // A fork starts from the workspace as the model saw it at that inference (the
 // snapshot ext/replay-capture.ts copied beside the request, .pi/ excluded), not from
 // the task's seed; installWorkspaceExtension / writeRosterDefinitions below rebuild
@@ -1667,7 +1687,7 @@ if (FORK) {
 	const dstDir = path.join(SESSIONS, "orchestrator");
 	fs.cpSync(srcDir, dstDir, { recursive: true });
 	const own = fs.readdirSync(dstDir).filter((f) => f.endsWith(".jsonl")); // the orchestrator's file(s); workers live under <id>/tasks/
-	if (own.length !== 1) { console.error(`fork: expected one orchestrator session file, found ${own.length}`); process.exit(2); }
+	if (own.length !== 1) forkAbort(`expected one orchestrator session file in ${dstDir}, found ${own.length}`);
 	FORK_SESSION_FILE = path.join(dstDir, own[0]);
 	// The copy brought the source run's worker transcripts with it, under <stem>/tasks/.
 	// bindTranscript pairs files to lifecycle worker ids FIFO with no matching at all
@@ -1689,8 +1709,7 @@ if (FORK) {
 		// paths; the call is idempotent and kept so the invariant does not depend on that.
 		fs.writeFileSync(FORK_SESSION_FILE, rewriteSessionHeader(entries, { cwd: WS.workspace }).map((e) => JSON.stringify(e)).join("\n") + "\n");
 	} catch (err) {
-		console.error(`fork: ${err?.message ?? err}`);
-		process.exit(2);
+		forkAbort(err?.message ?? String(err));
 	}
 	// The recorded system prompt, verbatim — memory brief and roster section included, so
 	// the forked inference sees the same prefix the recorded one did. This deliberately
