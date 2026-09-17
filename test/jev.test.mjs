@@ -241,9 +241,9 @@ test("truthFor attributes each assertion in a test() block to its own line, with
 	].join("\n"));
 	const ref = fileURLToPath(new URL("../tasks/pathnorm/oracle/reference.mjs", import.meta.url));
 	const { records } = truthFor(suite, ref);
-	fs.rmSync(dir, { recursive: true, force: true });
 	assert.equal(records.length, 2);
 	assert.deepEqual(records.map((r) => [r.line, r.pass]), [[6, true], [7, false]]);
 	assert.match(records[1].source, /^eq\(normalize\("x\/\/y"\), "x_WRONG"/);
 	assert.throws(() => truthFor(suite, "C:/elsewhere/ref.mjs"), /pass --module/);
+	fs.rmSync(dir, { recursive: true, force: true });
 });
