@@ -23,7 +23,7 @@ import { installWorkspaceExtension, writeRosterDefinitions, workerPromptSuffix }
 import { rosterSection } from "./lib/roster.mjs";
 import { readMounts, installMounts, archiveFilter, uninstallMounts } from "./lib/mounts.mjs";
 import { childTranscriptDir, JsonlTailer, workerIdFromTranscript } from "./lib/child-transcripts.mjs";
-import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry, unreportedWorkers } from "./lib/workers.mjs";
+import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry, unreportedWorkers, ensureWorker } from "./lib/workers.mjs";
 import { appendManifest, transcriptManifestPath, readManifest, manifestJoin } from "./lib/worker-manifest.mjs";
 import { messages } from "./lib/messages.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
@@ -86,10 +86,10 @@ let FORK_SESSION_FILE = null;
 let FORK_CUT = null;
 let FORK_COUNTERS = null;
 let FORK_REQ = null;
-// The source run's worker transcripts, copied in with its session tree. pumpChildTranscripts
-// must never tail or bind these — see the comment at the skip, and the fork block that
-// fills this set.
-const FORK_STALE_TRANSCRIPTS = new Set();
+// The source run's workers, restored into this run's state so a resume of one is
+// attributed and counted — see the restoration in the fork block. Also written to
+// summary.fork.sourceWorkers, which is what tells an inherited worker from the fork's own.
+const FORK_SOURCE_WORKERS = [];
 if (FORK) {
 	if (PATTERN !== "orchestrator") { console.error("fork: only orchestrator runs can be forked"); process.exit(2); }
 	for (const p of [path.join(FORK_SRC, "requests", `${String(FORK.call).padStart(4, "0")}.json`), path.join(FORK_SRC, "sessions", "orchestrator"), path.join(FORK_SRC, "decisions.jsonl"), path.join(FORK_SRC, "prompts", "orchestrator.md")]) {
@@ -999,11 +999,9 @@ function pumpChildTranscripts() {
 	if (!dir || !fs.existsSync(dir)) return;
 	for (const f of fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"))) {
 		const p = path.join(dir, f);
-		// Fork: the source run's worker transcripts arrived with the copied session tree and
-		// are not this run's work. bindTranscript matches nothing — it hands the next file to
-		// the next unbound worker id — so tailing them would bind a dead run's transcript to
-		// this run's first spawn. Never tailed, never bound (the set is empty off fork).
-		if (FORK_STALE_TRANSCRIPTS.has(p)) continue;
+		// A fork's inherited transcripts are already in tracker.bound (see the restoration in
+		// the fork block), so this returns their own wid rather than pairing them with a
+		// waiting id, and their tailers are already positioned at the pre-fork end of file.
 		// A file with no lifecycle worker waiting for it is left alone until there is one
 		// (see bindTranscript for why inventing an id was worse).
 		const wid = bindTranscript(tracker, state, p);
@@ -1512,7 +1510,7 @@ function finish(reason) {
 	// What this run was forked from, null for an ordinary run. Assigned here rather than
 	// passed to buildSummary: that function destructures a fixed key set and returns a
 	// literal, so an unknown input key would be silently dropped.
-	summary.fork = FORK ? { ...FORK, sessionCut: FORK_CUT, counters: FORK_COUNTERS, sourceRequestHash: FORK_REQ.hash ?? null } : null;
+	summary.fork = FORK ? { ...FORK, sessionCut: FORK_CUT, counters: FORK_COUNTERS, sourceRequestHash: FORK_REQ.hash ?? null, sourceWorkers: FORK_SOURCE_WORKERS } : null;
 	summary.memory = {
 		mode: MEMORY_MODE,
 		recall: CONFIG.memory ? CONFIG.memory : null,
@@ -1690,14 +1688,40 @@ if (FORK) {
 	if (own.length !== 1) forkAbort(`expected one orchestrator session file in ${dstDir}, found ${own.length}`);
 	FORK_SESSION_FILE = path.join(dstDir, own[0]);
 	// The copy brought the source run's worker transcripts with it, under <stem>/tasks/.
-	// bindTranscript pairs files to lifecycle worker ids FIFO with no matching at all
-	// (lib/workers.mjs), so left in place they would bind to THIS run's first spawns and
-	// replay a dead run's tool calls into toolCalls, totals(), checkCaps() and the
-	// transcript. Recorded here and skipped outright by pumpChildTranscripts — not
-	// pre-bound to sentinel ids, which would invent workers that never terminate.
-	const staleDir = childTranscriptDir(dstDir);
-	if (staleDir && fs.existsSync(staleDir)) {
-		for (const f of fs.readdirSync(staleDir).filter((f) => f.endsWith(".jsonl"))) FORK_STALE_TRANSCRIPTS.add(path.join(staleDir, f));
+	// They are not ignorable: three of the planned forks resume a source worker, and
+	// pi-subagents resumes by session id and APPENDS to the very file that was copied —
+	// so a fork that skipped these files would lose the tool calls, tokens and binding of
+	// exactly the worker whose resume it is measuring. Instead each source worker is
+	// restored: its agent state recreated, its terminal status replayed, its transcript
+	// pre-bound to its own lifecycle id, and its tail started at end-of-file so nothing
+	// recorded before the fork is counted again. Pre-binding is also what keeps these
+	// files out of FIFO binding — bindTranscript returns early on a path it already holds,
+	// so the fork's own first spawn cannot be paired with an inherited transcript.
+	const tasksDir = childTranscriptDir(dstDir);
+	for (const row of manifestJoin(readManifest(FORK_SRC)).values()) {
+		// A worker whose `bound` record never arrived has no transcript to attribute.
+		if (!row.sessionId || !tasksDir) continue;
+		const p = path.join(tasksDir, `${row.sessionId}.jsonl`); // the basename IS the session id
+		if (!fs.existsSync(p)) continue;
+		// The manifest's last-one-wins `status` says "resumed" for a worker that was
+		// resumed, whatever the outcome; `outcome` carries the raw pi-subagents status.
+		// Same rule lib/workers.mjs applies to a live terminal event (TERMINAL_ERROR_STATUS
+		// there, kept in step with this list).
+		const failed = row.status === "failed" || ["error", "aborted", "stopped"].includes(row.outcome);
+		const w = ensureWorker(state, row.wid);
+		w.status = failed ? "failed" : "completed";
+		w.busy = false;
+		tracker.bound.set(p, row.wid);
+		const tail = new JsonlTailer(p);
+		tail.offset = fs.statSync(p).size; // everything already in the file is the source run's
+		childTails.set(p, tail);
+		// pumpChildTranscripts only appends a manifest record on a first bind it performs
+		// itself, which this pre-bind skips — so the fork's own workers.jsonl gets the
+		// inherited worker's rows here, `inheritedFrom` marking what a normal spawn lacks.
+		appendManifest(RUN, { ev: "started", wid: row.wid, description: row.description, background: row.background, type: row.type, inheritedFrom: FORK.run });
+		appendManifest(RUN, { ev: "bound", wid: row.wid, sessionId: row.sessionId, transcriptPath: transcriptManifestPath(SESSIONS, p) });
+		appendManifest(RUN, { ev: failed ? "failed" : "completed", wid: row.wid, status: row.status, outcome: row.outcome });
+		FORK_SOURCE_WORKERS.push({ wid: row.wid, type: row.type, description: row.description, sessionId: row.sessionId });
 	}
 	// truncateSessionEntries throws when the recorded session has fewer assistant entries
 	// than `call`, and rewriteSessionHeader when the file does not start with a header;
@@ -1715,7 +1739,7 @@ if (FORK) {
 	// the forked inference sees the same prefix the recorded one did. This deliberately
 	// overrides the fresh prompt assembled above, including a fresh memory seed.
 	prompts.orchestrator = fs.readFileSync(path.join(FORK_SRC, "prompts", "orchestrator.md"), "utf8");
-	log({ type: "fork", msg: `session truncated at entry ${FORK_CUT} of ${FORK.run}; ${FORK_STALE_TRANSCRIPTS.size} stale worker transcript(s) ignored; recorded system prompt restored` });
+	log({ type: "fork", msg: `session truncated at entry ${FORK_CUT} of ${FORK.run}; ${FORK_SOURCE_WORKERS.length} source worker(s) restored${FORK_SOURCE_WORKERS.length ? ` (${FORK_SOURCE_WORKERS.map((w) => `${w.wid} ${w.type ?? "?"}`).join(", ")})` : ""}; recorded system prompt restored` });
 }
 for (const role of Object.keys(AGENTS)) launch(role);
 for (const name of Object.keys(state)) send(name, { id: "hello", type: "get_state" });

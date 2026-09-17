@@ -52,9 +52,9 @@ test("supervisor carries fork mode: forkSpec, --session, fork:continue, guarded 
 
 // The fork's failure modes are the part a live run is least likely to exercise and most
 // likely to be silently broken by: a bad spec must exit rather than start a half-run, the
-// counters and the recorded prompt must actually be restored, the summary must record
-// what was forked, and the source run's worker transcripts must never be tailed.
-test("supervisor's fork mode preflights, re-seeds, records and skips stale transcripts", () => {
+// counters and the recorded prompt must actually be restored, and the summary must record
+// what was forked.
+test("supervisor's fork mode preflights, re-seeds and records what it forked", () => {
 	const here = path.dirname(fileURLToPath(import.meta.url));
 	const src = fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8");
 	for (const [needle, why] of [
@@ -63,13 +63,37 @@ test("supervisor's fork mode preflights, re-seeds, records and skips stale trans
 		["prompts.orchestrator = fs.readFileSync", "the recorded system prompt must be restored verbatim"],
 		["summary.fork =", "summary.json must record what this run was forked from"],
 		["FORK_REQ.snapshot", "the workspace snapshot must be preflighted and restored"],
-		// Bound FIFO with no matching: a stale transcript would attach to this run's first
-		// spawn and replay a dead run's tool calls into the totals and the caps.
-		["FORK_STALE_TRANSCRIPTS", "the source run's worker transcripts must be skipped, never tailed or bound"],
 	]) {
 		assert.ok(src.includes(needle), `${why} (missing: ${needle})`);
 	}
-	// The skip must be in the transcript pump itself, not merely collected somewhere.
-	const pump = src.slice(src.indexOf("function pumpChildTranscripts()"));
-	assert.ok(pump.slice(0, pump.indexOf("\n}\n")).includes("FORK_STALE_TRANSCRIPTS.has("), "pumpChildTranscripts must skip the stale transcript paths");
+});
+
+// Three of the planned forks resume a source worker, and pi-subagents resumes by session
+// id, appending to the transcript the session copy brought in. So the source run's workers
+// are restored rather than ignored: state recreated, transcript pre-bound to its own id,
+// tail started at end-of-file. Pre-binding is also the FIFO-bind exclusion — bindTranscript
+// returns early on a path tracker.bound already holds — so if the pre-bind went missing the
+// fork's own first spawn would silently adopt an inherited transcript.
+test("supervisor's fork mode restores the source run's workers", () => {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const src = fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8");
+	// Everything below must be in the fork block, not merely somewhere in the file.
+	const start = src.indexOf("\nif (FORK) {\n\t// Sessions:");
+	assert.ok(start >= 0, "could not locate the fork block in supervisor.mjs");
+	const block = src.slice(start + 1);
+	const fork = block.slice(0, block.indexOf("\n}\n"));
+	for (const [needle, why] of [
+		["manifestJoin(readManifest(FORK_SRC))", "the source run's workers.jsonl must be read in the fork block"],
+		["ensureWorker(state, row.wid)", "each source worker's agent state must be created the way a live spawn creates it"],
+		["tracker.bound.set(", "each source transcript must be pre-bound to its own wid, which is also the FIFO-bind exclusion"],
+		["tail.offset = fs.statSync(p).size", "an inherited tail must start at end-of-file so nothing pre-fork is counted"],
+		["FORK_SOURCE_WORKERS.push(", "each restored worker must be recorded for summary.fork.sourceWorkers"],
+	]) {
+		assert.ok(fork.includes(needle), `${why} (missing from the fork block: ${needle})`);
+	}
+	const summaryLine = src.split("\n").find((l) => l.includes("summary.fork ="));
+	assert.ok(summaryLine, "summary.fork assignment missing");
+	assert.ok(summaryLine.includes("sourceWorkers:"), `summary.fork must carry sourceWorkers; found:\n${summaryLine}`);
+	// The old skip set is gone: an inherited transcript is now tailed, not ignored.
+	assert.ok(!src.includes("FORK_STALE_TRANSCRIPTS"), "the stale-transcript skip must be gone, replaced by the restoration");
 });
