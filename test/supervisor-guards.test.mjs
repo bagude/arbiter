@@ -16,3 +16,14 @@ test("GUARDS lists topology.ts immediately before pre-spawn-compact.ts", () => {
 	assert.ok(t >= 0, `topology.ts missing from GUARDS: ${names.join(", ")}`);
 	assert.equal(names[t + 1], "pre-spawn-compact.ts");
 });
+
+// pi's extension runner returns the FIRST blocking tool_call result, so the fork's
+// forcing must be seen before the topology nudge on the same spawn.
+test("GUARDS lists fork-force.ts immediately before topology.ts", () => {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const src = fs.readFileSync(path.join(here, "..", "supervisor.mjs"), "utf8");
+	const names = [...src.matchAll(/path\.join\(here, "ext", (?:"guards", )?"([^"]+)"\)/g)].map((m) => m[1]);
+	const f = names.indexOf("fork-force.ts");
+	assert.ok(f >= 0, `fork-force.ts missing from GUARDS: ${names.join(", ")}`);
+	assert.equal(names[f + 1], "topology.ts");
+});

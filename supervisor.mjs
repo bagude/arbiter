@@ -90,6 +90,11 @@ const GUARDS = [
 	path.join(here, "ext", "guards", "result-handles.ts"),
 	// Write/edit argument elision (registers nothing unless CONFIG.guards.call_args is set).
 	path.join(here, "ext", "guards", "call-args.ts"),
+	// Fork-force nudge (registers nothing unless ARBITER_FORK_FORCE is set): forces the
+	// orchestrator's first tool call in an A branch of a fork to a recorded class or
+	// call. Listed BEFORE topology.ts: pi returns the first blocking tool_call result,
+	// and the fork's forcing must be seen before the topology nudge.
+	path.join(here, "ext", "guards", "fork-force.ts"),
 	// Topology nudge on `subagent` (registers nothing unless CONFIG.guards.topology is
 	// set). Listed BEFORE pre-spawn-compact: pi returns the first blocking tool_call
 	// result, and when both would deny the same spawn the orchestrator needs this
@@ -391,6 +396,9 @@ function launch(name) {
 			ARBITER_TOPOLOGY: CONFIG.guards.topology
 				? JSON.stringify({ mode: CONFIG.guards.topology.mode, needs: Object.fromEntries((CONFIG.workers?.specialists ?? []).map((s) => [s.name, s.needs])) })
 				: "",
+			// fork-force guard: the fork runner sets this in the supervisor's own env; the
+			// supervisor passes it through unchanged to whichever role the runner targets.
+			ARBITER_FORK_FORCE: process.env.ARBITER_FORK_FORCE ?? "",
 			// context_usage tool: this role's context window from the model preflight
 			// (lib/config.mjs), "" when unknown. Workers spawned by pi-subagents inherit
 			// this process's env, so they report against the orchestrator's own window.
