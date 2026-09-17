@@ -1,9 +1,10 @@
 /**
  * replay-capture — writes every provider request the orchestrator sends (the exact
  * system prompt, message list and tool schemas the model saw at that inference) to
- * <ARBITER_REQUESTS_DIR>/<n>.json, so tools/decision-replay.mjs can put the same
- * state in front of a cheap decision head and compare its answer with what the
- * generative orchestrator chose (docs: decision points, lib/causal-links.mjs).
+ * <ARBITER_REQUESTS_DIR>/<n>.json, with the workspace's src/ copied to <n>-ws/src at
+ * that instant, so tools/decision-replay.mjs can put the same state in front of a
+ * cheap decision head, and a fork can restart the run from exactly that point
+ * (docs: decision points, lib/causal-links.mjs).
  *
  * Opt-in per run: ARBITER_REQUESTS_DIR unset → registers nothing. Orchestrator only:
  * workers share the orchestrator's env, so the role check keeps their requests out
@@ -32,7 +33,19 @@ export default function (pi: ExtensionAPI) {
 		seq += 1;
 		try {
 			fs.mkdirSync(DIR, { recursive: true });
-			fs.writeFileSync(path.join(DIR, `${String(seq).padStart(4, "0")}.json`), JSON.stringify({ seq, ts: Date.now(), payload: event.payload }));
+			const stem = String(seq).padStart(4, "0");
+			// The workspace as the model sees it at this inference: src/ copied beside the
+			// request, so a fork can restore the exact files a decision was made against.
+			// src/ is small on every task here (KBs to tens of KBs); the copy is skipped,
+			// not failed, when it is absent.
+			const cwd = String((ctx as { cwd?: string })?.cwd ?? "");
+			const src = cwd ? path.join(cwd, "src") : "";
+			let snapshot: string | null = null;
+			if (src && fs.existsSync(src)) {
+				snapshot = path.join(DIR, `${stem}-ws`, "src");
+				fs.cpSync(src, snapshot, { recursive: true });
+			}
+			fs.writeFileSync(path.join(DIR, `${stem}.json`), JSON.stringify({ seq, ts: Date.now(), cwd, snapshot: snapshot ? path.relative(DIR, snapshot) : null, payload: event.payload }));
 		} catch {
 			// capture is observability, never a reason to fail a run
 		}
