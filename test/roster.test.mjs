@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { parseRosterFile, loadRoster, selectSpecialists, renderDefinition, rosterSection, ROSTER_TOOLS, ARTIFACTS } from "../lib/roster.mjs";
+import { parseRosterFile, loadRoster, selectSpecialists, renderDefinition, rosterSection, rosterOrder, ROSTER_TOOLS, ARTIFACTS } from "../lib/roster.mjs";
 
 // pi-subagents parses agent frontmatter with the real `yaml` package
 // (custom-agents.ts loadCustomAgents -> pi-coding-agent's parseFrontmatter), which
@@ -193,4 +193,41 @@ test("renderDefinition's output is YAML-safe: pi-subagents' own loadCustomAgents
 	const yaml = await import(pathToFileURL(`${PI}/node_modules/yaml/dist/index.js`).href);
 	const parsed = yaml.parse(fm);
 	assert.equal(parsed.description, roster.get("scout").description);
+});
+
+test("rosterOrder puts producers before consumers and keeps the config order for ties", () => {
+	const dir = tmpRoster({
+		"implementer.md": "---\nname: implementer\ndescription: I.\ntools: read\nneeds: api, tests\nproduces: code\n---\nb\n",
+		"tester.md": "---\nname: tester\ndescription: T.\ntools: read\nneeds: api\nproduces: tests\n---\nb\n",
+		"scout.md": "---\nname: scout\ndescription: S.\ntools: read\nproduces: map\n---\nb\n",
+	});
+	const roster = loadRoster(dir);
+	const order = rosterOrder(selectSpecialists(roster, ["implementer", "tester", "scout"])).map((s) => s.name);
+	assert.deepEqual(order, ["tester", "implementer", "scout"]);
+});
+
+test("rosterSection renders the derived order and the review rule when a specialist declares needs", () => {
+	const dir = tmpRoster({
+		"implementer.md": "---\nname: implementer\ndescription: I.\ntools: read\nneeds: api, tests\nproduces: code\n---\nb\n",
+		"tester.md": "---\nname: tester\ndescription: T.\ntools: read\nneeds: api\nproduces: tests\n---\nb\n",
+	});
+	const roster = loadRoster(dir);
+	const text = rosterSection(selectSpecialists(roster, ["implementer", "tester"]));
+	const expected = [
+		'- `subagent` (subagent_type "implementer"): I.',
+		'- `subagent` (subagent_type "tester"): T.',
+		"",
+		"Order for this roster: tester → implementer.",
+		"- tester needs the API from your brief (exports and signatures) and produces tests under src/__tests__/.",
+		"- implementer needs the API from your brief (exports and signatures) and tests under src/__tests__/; read the tests against the specification before you brief it, resume the tester for any obligation they miss, and name the test file in the brief. Produces code under src/.",
+		"",
+		"Workers do not have the specification — everything they know about the task comes from your brief. One worker runs at a time; a second one waits for the first to finish.",
+	].join("\n");
+	assert.equal(text, expected);
+});
+
+test("rosterSection with no declared needs renders exactly the pre-topology text", () => {
+	const dir = tmpRoster({ "worker.md": "---\nname: worker\ndescription: W.\ntools: read\n---\nb\n" });
+	const text = rosterSection(selectSpecialists(loadRoster(dir), ["worker"]));
+	assert.equal(text, '- `subagent` (subagent_type "worker"): W.\n\nWorkers do not have the specification — everything they know about the task comes from your brief. One worker runs at a time; a second one waits for the first to finish.');
 });
