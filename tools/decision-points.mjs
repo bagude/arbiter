@@ -22,6 +22,24 @@ const ROOT = path.resolve(here, "..");
 
 export const ACTION_CLASSES = ["spawn", "resume", "collect", "probe", "done", "inspect", "memory", "checkpoint", "answer"];
 export const SYMBOLS = Object.fromEntries(ACTION_CLASSES.map((c, i) => [c, String.fromCharCode(65 + i)]));
+// Two horizons for the same point. The literal label is the next tool call. The
+// substantive label skips information-gathering steps (inspect, memory, checkpoint,
+// a text answer) to the first control action that changes the run's state: a spawn,
+// resume, collect, probe or done. A head that says "spawn" where the orchestrator
+// read two files first may be right about the trajectory and wrong about the horizon.
+export const SUBSTANTIVE = new Set(["spawn", "resume", "collect", "probe", "done"]);
+export const modeOf = (cls) => (SUBSTANTIVE.has(cls) ? "act" : "gather");
+
+/** For each point, the next substantive action at or after it, and how many gather steps precede it. */
+export function substantiveHorizon(classes) {
+	const out = new Array(classes.length);
+	let next = null, at = -1;
+	for (let i = classes.length - 1; i >= 0; i--) {
+		if (SUBSTANTIVE.has(classes[i])) { next = classes[i]; at = i; }
+		out[i] = next ? { cls: next, symbol: SYMBOLS[next], gatherSteps: at - i } : { cls: null, symbol: null, gatherSteps: null };
+	}
+	return out;
+}
 
 /** Classify an assistant turn's first tool call (or its absence) into an action class + parameters. */
 export function classifyTurn(content) {
@@ -100,6 +118,7 @@ export function extractRun(runDir) {
 	const cfg = { use: summary.config?.workers?.use ?? ["worker"], memoryTools: summary.config?.memory?.mode === "search", topology: summary.config?.guards?.topology?.mode ?? null };
 
 	const state = { spawned: 0, completed: 0, backgroundOutstanding: 0, probes: 0, doneAttempts: 0 };
+	const horizon = substantiveHorizon(actions.map((a) => a.cls));
 	const out = [];
 	orch.calls.forEach((c, i) => {
 		const action = actions[i];
@@ -110,7 +129,8 @@ export function extractRun(runDir) {
 			run: path.basename(runDir), task: summary.task, cfg,
 			i, t: Math.round((c.startMs - trace.t0) / 10) / 100, ctx: c.context, cached: c.cached, fresh: c.fresh,
 			decoded: c.output, inferenceMs: Math.round(c.inferenceMs), stop: c.stopReason ?? null,
-			action: { cls: action.cls, symbol: SYMBOLS[action.cls], tool: action.tool, params: action.params },
+			action: { cls: action.cls, symbol: SYMBOLS[action.cls], tool: action.tool, params: action.params, mode: modeOf(action.cls) },
+			substantive: horizon[i],
 			valid, nValid: Object.values(valid).filter(Boolean).length,
 			state: { ...state },
 			children: children.map((l) => ({ agent: trace.agents[l.a].id, i: l.i, k: l.k, d: String(l.d ?? "").slice(0, 80) })),

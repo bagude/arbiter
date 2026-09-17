@@ -72,3 +72,31 @@ test("summarize builds the threshold curve with coverage, agreement, and the gen
 	assert.equal(at95.falseConfident[0].actual, "probe");
 	assert.equal(s.byClass.probe.agreement, 0);
 });
+
+test("mode B asks for thinking with a grammar that ends on one letter; the distribution comes from the last token", () => {
+	const payload = { model: "m", messages: [{ role: "user", content: "U" }], tools: [], chat_template_kwargs: { enable_thinking: true } };
+	const req = headRequest(payload, VALID_EARLY, { thinking: true });
+	assert.equal(req.chat_template_kwargs.enable_thinking, true);
+	assert.ok(req.max_tokens > 1);
+	assert.match(req.grammar, /<think>/);
+	assert.match(req.grammar, /\[A-I\]$/);
+	const choice = { message: { content: "<think>reasoning here</think>\n\nA" }, logprobs: { content: [
+		{ token: "<think>", logprob: 0, top_logprobs: [] }, { token: "reasoning", logprob: 0, top_logprobs: [] }, { token: "</think>", logprob: 0, top_logprobs: [] },
+		{ token: "A", logprob: Math.log(0.9), top_logprobs: [{ token: "A", logprob: Math.log(0.9) }, { token: "F", logprob: Math.log(0.1) }] },
+	] } };
+	const d = distributionFrom(choice);
+	assert.equal(d.sampled, "A");
+	assert.equal(d.thinkTokens, 3);
+	assert.equal(d.thought, "reasoning here");
+	assert.ok(Math.abs(d.raw.A - 0.9) < 1e-9 && Math.abs(d.raw.F - 0.1) < 1e-9);
+});
+
+test("scorePoint scores the substantive horizon and the gather-vs-act binary alongside the literal label", () => {
+	const point = { action: { cls: "inspect", symbol: "F", mode: "gather" }, substantive: { cls: "spawn", symbol: "A", gatherSteps: 2 }, valid: VALID_EARLY };
+	const s = scorePoint(point, { raw: { A: 0.7, B: 0, C: 0, D: 0, E: 0, F: 0.2, G: 0.05, H: 0.05, I: 0 }, other: 0 });
+	assert.equal(s.agree, false, "literal: the orchestrator inspected");
+	assert.equal(s.agreeSubstantive, true, "horizon: the next substantive action was the spawn the head predicted");
+	assert.ok(Math.abs(s.pAct - 0.7) < 1e-9);
+	assert.equal(s.modePick, "act");
+	assert.equal(s.agreeMode, false);
+});

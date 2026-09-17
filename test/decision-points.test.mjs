@@ -58,3 +58,11 @@ test("extractRun on the fixture: one point per orchestrator call, a spawn point 
 		assert.equal(p.nValid, Object.values(p.valid).filter(Boolean).length);
 	}
 });
+
+test("substantiveHorizon skips gather steps to the next state-changing action and counts them", async () => {
+	const { substantiveHorizon, modeOf } = await import("../tools/decision-points.mjs");
+	const h = substantiveHorizon(["inspect", "memory", "spawn", "inspect", "probe", "answer"]);
+	assert.deepEqual(h.map((x) => [x.cls, x.gatherSteps]), [["spawn", 2], ["spawn", 1], ["spawn", 0], ["probe", 1], ["probe", 0], [null, null]]);
+	assert.equal(modeOf("inspect"), "gather");
+	assert.equal(modeOf("probe"), "act");
+});

@@ -22,7 +22,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ACTION_CLASSES, SYMBOLS } from "./decision-points.mjs";
+import { ACTION_CLASSES, SYMBOLS, SUBSTANTIVE, modeOf } from "./decision-points.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(here, "..");
@@ -45,25 +45,35 @@ function routingQuestion(valid) {
 	return `[ROUTER] Before you continue: which kind of action will you take next? Reply with exactly one capital letter and nothing else.\n${lines.join("\n")}`;
 }
 
-export function headRequest(payload, valid) {
+// Mode A (default): thinking off, one decoded token. Mode B (`thinking: true`): the
+// model reasons first, then a grammar forces exactly one letter after </think>; the
+// distribution is read from that last token's logprobs. Same state, same alphabet, so
+// the two modes separate "the abstraction is wrong" from "it needed to reason".
+const THINK_GRAMMAR = String.raw`root ::= "<think>" ( [^<] | "<" [^/] )* "</think>" [ 
+]* [A-I]`;
+export function headRequest(payload, valid, { thinking = false } = {}) {
 	const messages = [...payload.messages, { role: "user", content: routingQuestion(valid) }];
 	return {
 		model: payload.model,
 		messages,
 		tools: payload.tools,
 		stream: false,
-		max_tokens: 1,
+		max_tokens: thinking ? 2048 : 1,
 		temperature: 0,
 		logprobs: true,
 		top_logprobs: 20,
 		cache_prompt: true,
-		chat_template_kwargs: { ...(payload.chat_template_kwargs ?? {}), enable_thinking: false },
+		...(thinking ? { grammar: THINK_GRAMMAR } : {}),
+		chat_template_kwargs: { ...(payload.chat_template_kwargs ?? {}), enable_thinking: thinking },
 	};
 }
 
 /** Distribution over the nine letters from a chat-completions logprobs block. */
 export function distributionFrom(choice) {
-	const top = choice?.logprobs?.content?.[0]?.top_logprobs ?? [];
+	const toks = choice?.logprobs?.content ?? [];
+	const last = toks[toks.length - 1];
+	const top = last?.top_logprobs ?? [];
+	const thinkTokens = Math.max(0, toks.length - 1);
 	const raw = Object.fromEntries(LETTERS.map((l) => [l, 0]));
 	let other = 0;
 	for (const t of top) {
@@ -71,7 +81,8 @@ export function distributionFrom(choice) {
 		const p = Math.exp(t.logprob);
 		if (tok in raw) raw[tok] += p; else other += p;
 	}
-	return { raw, other, sampled: String(choice?.message?.content ?? "").trim() };
+	const content = String(choice?.message?.content ?? "").trim();
+	return { raw, other, sampled: content.slice(-1), thinkTokens, thought: thinkTokens ? content.replace(/^<think>|<\/think>[\s\S]*$/g, "").trim().slice(0, 600) : null };
 }
 
 export function scorePoint(point, dist) {
@@ -83,9 +94,15 @@ export function scorePoint(point, dist) {
 	const chosenValid = validLetters.includes(chosen);
 	const pChosen = chosenValid ? pValid[chosen] : 0;
 	const entropy = -validLetters.reduce((s, l) => (pValid[l] > 0 ? s + pValid[l] * Math.log(pValid[l]) : s), 0);
+	// the two coarser horizons: next substantive action, and gather-vs-act as a binary
+	const substantive = point.substantive?.symbol ?? null;
+	const pAct = validLetters.filter((l) => SUBSTANTIVE.has(BY_LETTER[l])).reduce((s, l) => s + pValid[l], 0);
+	const modePick = pAct >= 0.5 ? "act" : "gather";
 	return {
 		pick: ranked[0], pickClass: BY_LETTER[ranked[0]], confidence: pValid[ranked[0]],
 		top2: ranked.slice(0, 2), agree: ranked[0] === chosen, agreeTop2: ranked.slice(0, 2).includes(chosen),
+		agreeSubstantive: substantive != null && ranked[0] === substantive,
+		pAct, modePick, agreeMode: modePick === (point.action.mode ?? modeOf(point.action.cls)),
 		chosenValid, pChosen, logLoss: -Math.log(Math.max(pChosen, 1e-6)), entropy, validMass: mass, pValid,
 	};
 }
@@ -98,7 +115,7 @@ async function ask(server, key, body) {
 	return { json, wallMs: Date.now() - t0 };
 }
 
-export async function replayRun(runId, { server, key, limit = Infinity, log = () => {} }) {
+export async function replayRun(runId, { server, key, limit = Infinity, thinking = false, log = () => {} }) {
 	const dir = path.join(ROOT, "runs", runId);
 	const decisionsFile = path.join(dir, "decisions.jsonl");
 	const reqDir = path.join(dir, "requests");
@@ -110,14 +127,14 @@ export async function replayRun(runId, { server, key, limit = Infinity, log = ()
 		const f = path.join(reqDir, `${String(p.i + 1).padStart(4, "0")}.json`);
 		if (!fs.existsSync(f)) { out.push({ ...p, head: null, skipped: "no captured request" }); continue; }
 		const { payload } = JSON.parse(fs.readFileSync(f, "utf8"));
-		const { json, wallMs } = await ask(server, key, headRequest(payload, p.valid));
+		const { json, wallMs } = await ask(server, key, headRequest(payload, p.valid, { thinking }));
 		const dist = distributionFrom(json.choices?.[0]);
 		const score = scorePoint(p, dist);
-		const head = { ...score, raw: dist.raw, other: dist.other, sampled: dist.sampled, wallMs, promptMs: json.timings?.prompt_ms ?? null, cachedTokens: json.usage?.prompt_tokens_details?.cached_tokens ?? null, promptTokens: json.usage?.prompt_tokens ?? null };
+		const head = { mode: thinking ? "B" : "A", ...score, raw: dist.raw, other: dist.other, sampled: dist.sampled, thinkTokens: dist.thinkTokens, thought: dist.thought, wallMs, promptMs: json.timings?.prompt_ms ?? null, predictedMs: json.timings?.predicted_ms ?? null, cachedTokens: json.usage?.prompt_tokens_details?.cached_tokens ?? null, promptTokens: json.usage?.prompt_tokens ?? null };
 		out.push({ ...p, head });
-		log(`${runId} #${String(p.i + 1).padStart(3)} ${p.action.cls.padEnd(10)} head ${score.pickClass.padEnd(10)} p=${score.confidence.toFixed(2)} ${score.agree ? "=" : "≠"}  ${Math.round(wallMs)} ms (cached ${head.cachedTokens}/${head.promptTokens})`);
+		log(`${runId} #${String(p.i + 1).padStart(3)} ${p.action.cls.padEnd(10)}→${String(p.substantive?.cls ?? "-").padEnd(8)} head ${score.pickClass.padEnd(10)} p=${score.confidence.toFixed(2)} ${score.agree ? "=" : score.agreeSubstantive ? "≈" : "≠"}${thinking ? ` think ${dist.thinkTokens}` : ""}  ${Math.round(wallMs)} ms (cached ${head.cachedTokens}/${head.promptTokens})`);
 	}
-	fs.writeFileSync(path.join(dir, "decisions-replay.jsonl"), out.map((r) => JSON.stringify(r)).join("\n") + "\n");
+	fs.writeFileSync(path.join(dir, thinking ? "decisions-replay-thinking.jsonl" : "decisions-replay.jsonl"), out.map((r) => JSON.stringify(r)).join("\n") + "\n");
 	return out;
 }
 
@@ -126,6 +143,11 @@ export function summarize(rows) {
 	const n = scored.length;
 	const agree = scored.filter((r) => r.head.agree).length;
 	const top2 = scored.filter((r) => r.head.agreeTop2).length;
+	const agreeSub = scored.filter((r) => r.head.agreeSubstantive).length;
+	const agreeMode = scored.filter((r) => r.head.agreeMode).length;
+	const gatherPts = scored.filter((r) => r.action.mode === "gather");
+	const gatherHeadSaysAct = gatherPts.filter((r) => r.head.modePick === "act").length;
+	const thinkTokens = scored.reduce((s, r) => s + (r.head.thinkTokens ?? 0), 0);
 	const logLoss = scored.reduce((s, r) => s + r.head.logLoss, 0) / Math.max(1, n);
 	const totalDecoded = scored.reduce((s, r) => s + r.decoded, 0);
 	const totalInfer = scored.reduce((s, r) => s + r.inferenceMs, 0);
@@ -146,11 +168,11 @@ export function summarize(rows) {
 	const byClass = {};
 	for (const r of scored) { const c = (byClass[r.action.cls] ??= { n: 0, agree: 0, meanP: 0 }); c.n++; c.agree += r.head.agree ? 1 : 0; c.meanP += r.head.pChosen; }
 	for (const c of Object.values(byClass)) { c.agreement = c.agree / c.n; c.meanP = c.meanP / c.n; delete c.agree; }
-	return { n, agreement: agree / Math.max(1, n), top2: top2 / Math.max(1, n), meanLogLoss: logLoss, meanHeadMs: scored.reduce((s, r) => s + r.head.wallMs, 0) / Math.max(1, n), totalDecoded, totalInferS: Math.round(totalInfer / 1000), buckets, curve, byClass };
+	return { n, agreement: agree / Math.max(1, n), top2: top2 / Math.max(1, n), agreementSubstantive: agreeSub / Math.max(1, n), agreementMode: agreeMode / Math.max(1, n), gatherPoints: gatherPts.length, gatherHeadSaysAct, thinkTokens, meanLogLoss: logLoss, meanHeadMs: scored.reduce((s, r) => s + r.head.wallMs, 0) / Math.max(1, n), totalDecoded, totalInferS: Math.round(totalInfer / 1000), buckets, curve, byClass };
 }
 
 function printSummary(s) {
-	console.log(`\n${s.n} decision points · agreement ${(s.agreement * 100).toFixed(1)}% · top-2 ${(s.top2 * 100).toFixed(1)}% · mean log loss ${s.meanLogLoss.toFixed(3)} · head ${Math.round(s.meanHeadMs)} ms/point · generative path: ${s.totalDecoded} decoded tokens, ${s.totalInferS} s inference`);
+	console.log(`\n${s.n} decision points · literal agreement ${(s.agreement * 100).toFixed(1)}% · top-2 ${(s.top2 * 100).toFixed(1)}% · next-substantive agreement ${(s.agreementSubstantive * 100).toFixed(1)}% · gather-vs-act agreement ${(s.agreementMode * 100).toFixed(1)}% (${s.gatherHeadSaysAct} of ${s.gatherPoints} gather points: head says act) · mean log loss ${s.meanLogLoss.toFixed(3)} · head ${Math.round(s.meanHeadMs)} ms/point${s.thinkTokens ? ` · head thought ${s.thinkTokens} tokens` : ""} · generative path: ${s.totalDecoded} decoded tokens, ${s.totalInferS} s inference`);
 	console.log("by actual class:", Object.entries(s.byClass).map(([k, v]) => `${k} n=${v.n} agree=${(v.agreement * 100).toFixed(0)}% p̄=${v.meanP.toFixed(2)}`).join("  "));
 	console.log("calibration:", s.buckets.map((b) => `${b.bucket}: n=${b.n}${b.agreement == null ? "" : ` agree=${(b.agreement * 100).toFixed(0)}%`}`).join("  "));
 	console.log("τ      coverage  agreement  decoded-avoided  infer-avoided  false-confident");
@@ -163,11 +185,12 @@ async function main() {
 	const server = opt("--server", "http://127.0.0.1:8080");
 	const keyFile = opt("--key", "C:/Users/user/Downloads/claude_playground/os/qwen-flash/.llama-api-key");
 	const limit = Number(opt("--limit", "Infinity"));
+	const thinking = args.includes("--thinking");
 	const key = fs.existsSync(keyFile) ? fs.readFileSync(keyFile, "utf8").trim() : "";
 	const ids = args.filter((a, i) => !a.startsWith("--") && !["--server", "--key", "--limit"].includes(args[i - 1]));
-	if (!ids.length) { console.error("usage: node tools/decision-replay.mjs <runId> [...] [--server url] [--key file] [--limit N]"); process.exit(1); }
+	if (!ids.length) { console.error("usage: node tools/decision-replay.mjs <runId> [...] [--server url] [--key file] [--limit N] [--thinking]"); process.exit(1); }
 	const all = [];
-	for (const id of ids) all.push(...(await replayRun(id, { server, key, limit, log: console.log })));
+	for (const id of ids) all.push(...(await replayRun(id, { server, key, limit, thinking, log: console.log })));
 	printSummary(summarize(all));
 }
 
