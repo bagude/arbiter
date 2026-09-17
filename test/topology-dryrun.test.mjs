@@ -12,7 +12,7 @@ import { initialState, noteToolCall, decideSpawn } from "../lib/policies/topolog
 // the pure policy with the real config and roster: implementer-first is nudged,
 // tester passes, tests written + read lets the implementer through, a resume is
 // never judged.
-test("orch-pathnorm-27b-topology.json: the intended sequence passes and the wrong one is nudged exactly once", () => {
+test("orch-pathnorm-27b-topology.json: the intended sequence passes and the wrong one is nudged once per failed check", () => {
 	const here = path.dirname(fileURLToPath(import.meta.url));
 	const c = loadConfig({ configPath: path.join(here, "..", "configs", "orch-pathnorm-27b-topology.json"), env: { ...process.env, ARBITER_SKIP_MODEL_PREFLIGHT: "1" } });
 	const needsFor = Object.fromEntries(c.workers.specialists.map((s) => [s.name, s.needs]));
