@@ -38,6 +38,10 @@ test("writes each orchestrator request verbatim with a 1-based sequence and a sr
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "replay-capture-out-"));
 	const ws = fs.mkdtempSync(path.join(os.tmpdir(), "replay-capture-ws-"));
 	fs.mkdirSync(path.join(ws, "src", "__tests__"), { recursive: true });
+	fs.mkdirSync(path.join(ws, ".pi", "agents"), { recursive: true });
+	fs.writeFileSync(path.join(ws, ".pi", "agents", "worker.md"), "harness-installed, never snapshotted");
+	fs.writeFileSync(path.join(ws, "README.md"), "# ws");
+	fs.writeFileSync(path.join(ws, "scratch.txt"), "notes");
 	fs.writeFileSync(path.join(ws, "src", "a.mjs"), "export const a = 1;\n");
 	fs.writeFileSync(path.join(ws, "src", "__tests__", "a.test.mjs"), "// t\n");
 	const payload1 = { model: "qwen3-27b", messages: [{ role: "system", content: "sys" }, { role: "user", content: "hi" }], tools: [{ type: "function", function: { name: "read" } }], stream: true };
@@ -53,9 +57,14 @@ test("writes each orchestrator request verbatim with a 1-based sequence and a sr
 	const first = JSON.parse(fs.readFileSync(path.join(dir, "0001.json"), "utf8"));
 	assert.equal(first.seq, 1);
 	assert.deepEqual(first.payload, payload1);
-	assert.equal(first.snapshot, path.join("0001-ws", "src"));
+	assert.equal(first.snapshot, "0001-ws");
 	assert.equal(fs.readFileSync(path.join(dir, "0001-ws", "src", "a.mjs"), "utf8"), "export const a = 1;\n");
 	assert.ok(fs.existsSync(path.join(dir, "0002-ws", "src", "__tests__", "a.test.mjs")), "nested files are copied");
+	assert.ok(fs.existsSync(path.join(dir, "0001-ws", "README.md")) && fs.existsSync(path.join(dir, "0001-ws", "scratch.txt")), "the whole observable workspace, not only src/");
+	assert.ok(!fs.existsSync(path.join(dir, "0001-ws", ".pi")), ".pi/ is harness-installed and guarded: not part of the snapshot");
+	assert.match(first.hash, /^[0-9a-f]{40}$/);
+	const second = JSON.parse(fs.readFileSync(path.join(dir, "0002.json"), "utf8"));
+	assert.equal(second.hash, first.hash, "nothing changed between the two requests, so the tree hashes are equal");
 	assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "0002.json"), "utf8")).payload.messages.length, 3);
 	assert.deepEqual(files, [], "nothing lands in the unused default dir");
 });
