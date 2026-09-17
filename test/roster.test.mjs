@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { parseRosterFile, loadRoster, selectSpecialists, renderDefinition, rosterSection, ROSTER_TOOLS } from "../lib/roster.mjs";
+import { parseRosterFile, loadRoster, selectSpecialists, renderDefinition, rosterSection, ROSTER_TOOLS, ARTIFACTS } from "../lib/roster.mjs";
 
 // pi-subagents parses agent frontmatter with the real `yaml` package
 // (custom-agents.ts loadCustomAgents -> pi-coding-agent's parseFrontmatter), which
@@ -105,6 +105,47 @@ test("rosterSection lists each specialist as `subagent_type` with its descriptio
 	assert.match(text, /^- `subagent` \(subagent_type "tester"\): Writes and runs tests against the spec\./m);
 	assert.ok(text.indexOf('"scout"') < text.indexOf('"tester"'));
 	assert.match(text, /One worker runs at a time/);
+});
+
+test("needs/produces: parsed as lists over ARTIFACTS, default [], bad names rejected", () => {
+	const dir = tmpRoster({
+		"tester.md": TESTER.replace("memory: tester\n", "memory: tester\nneeds: api\nproduces: tests\n"),
+		"plain.md": "---\nname: plain\ndescription: No topology.\ntools: read\n---\nb\n",
+		"bad.md": "---\nname: bad\ndescription: Bad artifact.\ntools: read\nneeds: api, coffee\n---\nb\n",
+	});
+	assert.deepEqual(ARTIFACTS, ["api", "tests", "code", "map", "review"]);
+	const tester = parseRosterFile(path.join(dir, "tester.md"));
+	assert.deepEqual(tester.needs, ["api"]);
+	assert.deepEqual(tester.produces, ["tests"]);
+	const plain = parseRosterFile(path.join(dir, "plain.md"));
+	assert.deepEqual(plain.needs, []);
+	assert.deepEqual(plain.produces, []);
+	assert.throws(() => parseRosterFile(path.join(dir, "bad.md")), /bad\.md: unknown artifact "coffee" in needs \(known: api, tests, code, map, review\)/);
+});
+
+test("selectSpecialists rejects a produces->needs cycle among the selected set and names it", () => {
+	const dir = tmpRoster({
+		"a.md": "---\nname: a\ndescription: A.\ntools: read\nneeds: tests\nproduces: code\n---\nb\n",
+		"b.md": "---\nname: b\ndescription: B.\ntools: read\nneeds: code\nproduces: tests\n---\nb\n",
+		"c.md": "---\nname: c\ndescription: C.\ntools: read\nproduces: tests\n---\nb\n",
+	});
+	const roster = loadRoster(dir);
+	assert.throws(() => selectSpecialists(roster, ["a", "b"]), /topology cycle among selected specialists: a -> b -> a/);
+	// the cycle is only among the selected set: c produces tests without needing code
+	assert.equal(selectSpecialists(roster, ["a", "c"]).length, 2);
+});
+
+test("the shipped roster declares the intended topology", () => {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const roster = loadRoster(path.join(here, "..", "roster"));
+	assert.deepEqual(roster.get("tester").needs, ["api"]);
+	assert.deepEqual(roster.get("tester").produces, ["tests"]);
+	assert.deepEqual(roster.get("implementer").needs, ["api", "tests"]);
+	assert.deepEqual(roster.get("implementer").produces, ["code"]);
+	assert.deepEqual(roster.get("scout").needs, []);
+	assert.deepEqual(roster.get("scout").produces, ["map"]);
+	assert.deepEqual(roster.get("worker").needs, []);
+	assert.deepEqual(roster.get("worker").produces, []);
 });
 
 test("ROSTER_TOOLS covers every tool the shipped roster files use, and the four shipped files parse", () => {
