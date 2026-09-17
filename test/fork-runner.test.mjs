@@ -244,6 +244,21 @@ test("forkRow: decisionsMissing passes through when tools/decision-points.mjs fa
 	const row = forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: true, firstDiff: null }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 1 }, exit: 0, decisionsMissing: true });
 	assert.equal(row.decisionsMissing, true);
 	assert.equal(row.crashed, false, "a run can finish normally even if the decision-point extraction step failed afterward");
+	// …but it cannot say whether the transition was reproduced, so it leaves that fraction.
+	const source = { runId: "r1", call: 7, recordedCls: "probe", substantive: null, headPick: null };
+	const ok = forkRow({ branch: "G", replicate: 2, runId: "run-2", compare: { equal: true, firstDiff: null }, sourceCls: "probe", decisions: [{ i: 7, action: { cls: "probe", tool: "send_mail", params: {} }, decoded: 1 }], oracle: "70/70", summary: { wallSec: 1 }, exit: 0 });
+	assert.match(renderReport(source, [row, ok], { nullMode: true }), /null fork: state match 1\/1, recorded class reproduced 1\/1/);
+});
+
+// The child-exit handler reaches finish() with "agent <name> exited unexpectedly (code n)" and
+// an ordinary summary: a --session file pi refuses to load looks like this. That is the
+// harness, not the model, so it counts as crashed exactly as a "FORK:" refusal does.
+test("forkRow: an orchestrator that exited unexpectedly is crashed, not a non-reproduction", () => {
+	const row = forkRow({ branch: "G", replicate: 1, runId: "run-1", compare: { equal: false, firstDiff: "no fork request" }, sourceCls: "probe", decisions: [], oracle: "", summary: { wallSec: 2, reason: "agent orchestrator exited unexpectedly (code 1)" }, exit: 0 });
+	assert.equal(row.crashed, true);
+	assert.equal(row.forkAborted, true);
+	const source = { runId: "r1", call: 7, recordedCls: "probe", substantive: null, headPick: null };
+	assert.match(renderReport(source, [row], { nullMode: true }), /state match 0\/0, recorded class reproduced 0\/0 \(1 crashed, excluded — 1 of them the harness/);
 });
 
 test("renderReport contains the source point and one row per replicate, with exit/crashed columns", () => {

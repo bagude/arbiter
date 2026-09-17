@@ -175,7 +175,12 @@ function guardKinds(guards, name, kinds) {
 export function forkRow({ branch, replicate, runId, compare, sourceCls, decisions = [], oracle = "", summary = null, exit = null, decisionsMissing = false }) {
 	const first = decisions[0] ?? null;
 	const firstAction = first ? { cls: first.action.cls, tool: first.action.tool, params: first.action.params } : null;
-	const forkAborted = String(summary?.reason ?? "").startsWith("FORK:");
+	// Two harness outcomes wear an ordinary summary: the fork preflight/continue refusing the
+	// fork (reason "FORK: …") and the orchestrator process dying before it did anything
+	// (reason "agent … exited unexpectedly …", written by the child-exit handler). Neither is
+	// the model failing to reproduce itself, so both leave the null-gate denominators.
+	const reason = String(summary?.reason ?? "");
+	const forkAborted = reason.startsWith("FORK:") || /^agent \S+ exited unexpectedly/.test(reason);
 	const crashed = summary === null || forkAborted;
 	return {
 		branch, replicate, runId,
@@ -187,6 +192,9 @@ export function forkRow({ branch, replicate, runId, compare, sourceCls, decision
 		firstDiff: compare?.firstDiff ?? null,
 		settings: compare?.settings ?? null,
 		firstAction,
+		// A failed decision-point extraction leaves no first action; that is a tooling gap, not
+		// a non-reproduction, so the row is excluded from the reproduction fraction (see the
+		// nullMode counts in renderReport) while its oracle and wall columns stand.
 		reproduced: firstAction ? firstAction.cls === sourceCls : null,
 		oracle,
 		probes: decisions.filter((p) => p.action?.cls === "probe").length,
@@ -262,7 +270,7 @@ export function renderReport(source, rows, { nullMode = false } = {}) {
 	}
 	lines.push("");
 	if (nullMode) {
-		const included = rows.filter((r) => !r.crashed);
+		const included = rows.filter((r) => !r.crashed && !r.decisionsMissing);
 		const crashedCount = rows.length - included.length;
 		const n = included.length;
 		const stateMatches = included.filter((r) => r.stateMatch).length;
