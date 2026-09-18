@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-state.mjs";
 import { readLedger, appendLedger, recordOutcome } from "../lib/manage/ledger.mjs";
-import { INSTRUCTION_VERBS, validateInstruction, executeInstruction, controlAppend, NotYetImplemented } from "../lib/manage/instructions.mjs";
+import { INSTRUCTION_VERBS, validateInstruction, executeInstruction, controlAppend, NotYetImplemented, batchCeiling, settledBatches } from "../lib/manage/instructions.mjs";
 
 const RUN_ID = "2026-09-18T01-02-03";
 
@@ -304,7 +304,7 @@ function forkFixture({ manage = true, captured = true, budget, live = false } = 
 	if (captured) fs.writeFileSync(path.join(reqDir, "0004.json"), JSON.stringify({ payload: {}, ts: 1 }));
 	fs.writeFileSync(path.join(f.runsDir, RUN_ID, "decisions.jsonl"), JSON.stringify({ i: CALL - 1, action: { cls: "inspect", tool: "read" } }) + "\n");
 	const config = path.join(f.dir, "config.json");
-	fs.writeFileSync(config, JSON.stringify({ task: "x", manage: manage ? { enabled: true } : undefined }));
+	fs.writeFileSync(config, JSON.stringify({ task: "x", caps: { wallSec: 60 }, manage: manage ? { enabled: true } : undefined }));
 	return { ...f, config, checkpoint: `run:${RUN_ID}#${CALL}` };
 }
 
@@ -386,7 +386,9 @@ test("restore: refused while a run is live or a batch is in flight, unless paral
 	const { launchBatch } = recorder();
 	executeInstruction({ taskDir: f.dir, runsDir: f.runsDir, launchBatch, packet: packetFor(f.task), instr: instr({ verb: "restore", args: { checkpoint: f.checkpoint, approach: { config: f.config } } }) });
 	const after = loadTask(f.dir);
-	assert.deepEqual(after.current.activeBranches, [{ batchId: 1, kind: "restore", checkpoint: f.checkpoint, launchedAt: after.current.activeBranches[0].launchedAt }]);
+	// One branch × one replicate × the fixture config's 60 s cap: the batch says how long it may
+	// legitimately take, and batchCeiling reads it so a long batch is not called stale mid-work.
+	assert.deepEqual(after.current.activeBranches, [{ batchId: 1, kind: "restore", checkpoint: f.checkpoint, launchedAt: after.current.activeBranches[0].launchedAt, expectedMs: 60_000 }]);
 	const second = v(f, {}, after, "p7-v5");
 	assert.equal(second.code, "precondition");
 	assert.match(second.refusal, /batch 1 is still in flight/);
@@ -453,6 +455,51 @@ test("a pending batch older than staleBatchMs stops counting, and is dropped as 
 	const note = readLedger(f.dir).find((x) => x.kind === "batch_stale");
 	assert.ok(note, "dropping a batch nobody closed is a fact about the task, not bookkeeping");
 	assert.equal(note.batchId, 1);
+});
+
+// The row goes down before the act, so an executor whose compare-and-swap loses leaves a row
+// saying `verified: true` for an instruction that never ran — and findByKey would then refuse
+// its honest retry as a duplicate of something that never happened. `save` is injected because
+// the losing window (load → save) is microseconds wide and cannot be hit from one process.
+test("an executor that loses the compare-and-swap refuses stale_version, retracts its row, and frees the key", () => {
+	const { dir, runsDir, task } = fixture();
+	const packet = packetFor(task);
+	// The other executor: it answered its own packet and saved while this one was deciding.
+	const loser = (d, t, opts) => {
+		saveTask(d, setCurrent(loadTask(d), { checkpoint: "ck-0009" }));
+		return saveTask(d, t, opts);
+	};
+
+	const r = executeInstruction({ taskDir: dir, runsDir, packet, instr: instr(), launchBatch: spawnsNothing, save: loser });
+	assert.equal(r.executed, false);
+	assert.equal(r.code, "stale_version");
+	assert.equal(r.reversed, true);
+	assert.deepEqual(control(runsDir), [], "nothing outside the task directory moved: no grant, no decision");
+	assert.equal(loadTask(dir).budget.wallSec.used, 0, "and the grant was not charged");
+
+	const rows = readLedger(dir);
+	assert.equal(rows[0].verified, true, "the row is not edited — the ledger is append-only");
+	assert.deepEqual({ kind: rows.at(-1).kind, forSeq: rows.at(-1).forSeq, reason: rows.at(-1).reason }, { kind: "reversed", forSeq: rows[0].seq, reason: "stale_version" });
+
+	// The key is free again: the honest retry against the version that won executes.
+	const now = loadTask(dir);
+	const retry = executeInstruction({ taskDir: dir, runsDir, packet: packetFor(now), instr: instr({ basedOnStateVersion: now.stateVersion }), launchBatch: spawnsNothing });
+	assert.equal(retry.executed, true, retry.refusal);
+	assert.equal(loadTask(dir).budget.wallSec.used, 300);
+});
+
+test("a batch is not stale while its own shape says it should still be running", () => {
+	const { task } = fixture();
+	const hour = 60 * 60 * 1000;
+	// A 2 × 3 compare at the 1800 s cap: six sequential runs, three hours of legitimate work,
+	// against a default ceiling of two. The batch's own expectedMs is what saves it.
+	const batch = { batchId: 1, kind: "compare", expectedMs: 2 * 3 * 1800 * 1000 };
+	assert.equal(batchCeiling(task, batch), 6 * hour);
+	const at = (ms) => settledBatches({ ...task, current: { ...task.current, activeBranches: [{ ...batch, launchedAt: Date.now() - ms }] } }, null);
+	assert.deepEqual(at(3 * hour), [], "still working, three hours in");
+	assert.equal(at(7 * hour)[0]?.why, "stale");
+	// A config that caps nothing bounds nothing: the task's own setting is all there is.
+	assert.equal(batchCeiling(task, { batchId: 2, expectedMs: 0 }), 2 * hour);
 });
 
 test("compare: replicates must be a whole number — the budget is charged branches × replicates", () => {

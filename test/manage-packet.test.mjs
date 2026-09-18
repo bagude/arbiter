@@ -256,3 +256,26 @@ test("bounding ladder drops tail, then chain, in order, and the FINAL rendered p
 	assert.deepEqual(tight.bounded, ["tail", "chain"]);
 	assert.ok(JSON.stringify(tight).length <= 8000, "the size check must include packet.bounded itself, not just the pre-assignment render");
 });
+
+// §2 puts task.json in the packet verbatim, and `current.activeBranches` keeps a finished batch
+// until some later instruction saves — the executor is task.json's only writer. The manager's
+// only view is this packet, and "is work already running?" is the question restore and compare
+// turn on, so the derived list sits in options, where budgetLeft already says what the harness
+// worked out.
+test("options.pendingBatches is the live list, while task stays verbatim", () => {
+	const taskDir = mkTaskDir();
+	const runDir = mkRunDir();
+	const hour = 60 * 60 * 1000;
+	const branches = [
+		{ batchId: 1, kind: "compare", launchedAt: Date.now() },              // in flight
+		{ batchId: 2, kind: "restore", launchedAt: Date.now() },              // finished, marker below
+		{ batchId: 3, kind: "compare", launchedAt: Date.now() - 5 * hour },   // nobody ever closed it
+	];
+	saveTask(taskDir, { ...loadTask(taskDir), current: { ...loadTask(taskDir).current, activeBranches: branches } });
+	fs.mkdirSync(path.join(taskDir, "compares", "2"), { recursive: true });
+	fs.writeFileSync(path.join(taskDir, "compares", "2", "done.json"), JSON.stringify({ batchId: 2, status: "ready", ts: Date.now() }));
+
+	const p = assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended", runId: "r1" } });
+	assert.deepEqual(p.options.pendingBatches.map((b) => b.batchId), [1], "the finished one and the stale one are not in flight");
+	assert.deepEqual(p.task.current.activeBranches.map((b) => b.batchId), [1, 2, 3], "and the record itself is untouched — §7 replays what was written");
+});
