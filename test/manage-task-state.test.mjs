@@ -30,6 +30,16 @@ test("saveTask increments the version atomically and refuses a changed acceptanc
 	assert.ok(!fs.existsSync(path.join(dir, "task.json.tmp")), "no temp file left behind");
 });
 
+test("saveTask refuses a self-consistent hash for weaker criteria — acceptance is immutable against the persisted task, not just against itself", () => {
+	const dir = mk();
+	createTask({ dir, taskId: "t1", goal: "g", criteria, milestones: [{ id: "m1", title: "x", criteria: ["c1"] }], budget: {} });
+	const before = fs.readFileSync(path.join(dir, "task.json"), "utf8");
+	const weaker = [{ id: "c1", text: "only 1 of 70 oracle cases must pass", check: "oracle:tasks/pathnorm/oracle" }];
+	const t = loadTask(dir);
+	assert.throws(() => saveTask(dir, { ...t, acceptance: { criteria: weaker, hash: acceptanceHash(weaker) } }), /acceptance/);
+	assert.equal(fs.readFileSync(path.join(dir, "task.json"), "utf8"), before, "the file on disk is untouched");
+});
+
 test("spendBudget charges and refuses past the total", () => {
 	const dir = mk();
 	const t = createTask({ dir, taskId: "t1", goal: "g", criteria, milestones: [{ id: "m1", title: "x", criteria: ["c1"] }], budget: { runs: 2 } });

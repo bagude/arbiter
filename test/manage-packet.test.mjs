@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createTask, loadTask, saveTask, spendBudget } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
+import { appendFinding } from "../lib/manage/ledger.mjs";
 
 const criteria = [{ id: "c1", text: "all 70 oracle cases pass", check: "oracle:tasks/pathnorm/oracle" }];
 const milestones = [{ id: "m1", title: "pass", criteria: ["c1"] }];
@@ -79,7 +80,45 @@ test("assemblePacket builds the §2 shape, redacts secrets, bounds size, and num
 	assert.deepEqual(p.options.verbsAllowed, ["continue", "correct", "restore", "compare", "accept", "escalate"]);
 	assert.equal(writePacket(taskDir, p), path.join(taskDir, "packets", "1.json"));
 	const p2 = assemblePacket({ taskDir, runDir, trigger: { kind: "oracle_failed_repeatedly", runId: "r1", detail: { attempts: 2 } }, verbsAllowed: ["continue"] });
-	assert.equal(p2.packetId, 2, "numbers by counting packets/*.json + 1, and only 1.json exists on disk yet");
+	assert.equal(p2.packetId, 2, "numbers by the max numeric id on disk + 1, and only 1.json exists yet");
+});
+
+test("packet numbering survives a gap and a stray non-numeric file, and writePacket refuses to overwrite an id already on disk", () => {
+	const taskDir = mkTaskDir();
+	const runDir = mkRunDir();
+	const packetsDir = path.join(taskDir, "packets");
+	fs.mkdirSync(packetsDir, { recursive: true });
+	fs.writeFileSync(path.join(packetsDir, "1.json"), "{}");
+	fs.writeFileSync(path.join(packetsDir, "3.json"), "{}"); // 2.json deleted — a gap
+	fs.writeFileSync(path.join(packetsDir, "notes.json"), "{}"); // stray, non-numeric-stem file
+
+	const p = assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended", runId: "r1" } });
+	assert.equal(p.packetId, 4, "max numeric id (3) + 1, not count-of-files (3) + 1, and notes.json is ignored");
+	assert.equal(writePacket(taskDir, p), path.join(packetsDir, "4.json"));
+
+	assert.throws(() => fs.writeFileSync(path.join(packetsDir, "3.json"), "overwritten", { flag: "wx" }), /EEXIST/, "sanity: 'wx' is exclusive-create on this platform");
+	assert.throws(() => writePacket(taskDir, { ...p, packetId: 3 }), /EEXIST/, "writePacket must never silently overwrite an id already on disk");
+	assert.equal(fs.readFileSync(path.join(packetsDir, "3.json"), "utf8"), "{}", "the existing packet is untouched");
+});
+
+test("a blanket redact() pass catches secrets outside the targeted fields: a finding's claim and a trigger's detail", () => {
+	const taskDir = mkTaskDir();
+	const runDir = mkRunDir();
+	appendFinding(taskDir, {
+		id: "f1",
+		scope: "harness:pathnorm",
+		claim: "leaked during a compare run: TOKEN=apikey_finding9876543210abcdef",
+		settlement_criterion: "reproduces on a second run",
+	});
+	const p = assemblePacket({
+		taskDir,
+		runDir,
+		trigger: { kind: "oracle_failed_repeatedly", runId: "r1", detail: { note: "captured from the transcript: apikey_trigger1234567890abcdef" } },
+	});
+	assert.equal(p.history.settledFindings.length, 1, "the candidate finding travels into the packet");
+	const rendered = JSON.stringify(p);
+	assert.ok(!rendered.includes("apikey_finding9876543210"), "settledFindings.claim is redacted, not just the targeted fields");
+	assert.ok(!rendered.includes("apikey_trigger1234567890"), "trigger.detail is redacted too");
 });
 
 test("default verbsAllowed prunes accept off milestone_candidate/comparison_ready, and prunes compare/restore once fork and run budget are both spent", () => {
