@@ -32,6 +32,13 @@ test("kind=memory from any role in any pattern is a memory candidate, never rela
 	assert.deepEqual(routeMail("solo", m("builder", "supervisor", "memory")), { action: "memory", from: "builder" });
 	assert.deepEqual(routeMail("orchestrator", m("orchestrator", "supervisor", "memory")), { action: "memory", from: "orchestrator" });
 });
+test("kind=escalate from the verifying role asks the manager for a decision; from anyone else it is ordinary mail", () => {
+	assert.deepEqual(routeMail("orchestrator", m("orchestrator", "supervisor", "escalate")), { action: "escalate" });
+	assert.deepEqual(routeMail("dyad", m("critic", "builder", "escalate")), { action: "escalate" });
+	// Not the verifier: it falls through to the ordinary paths, exactly as any unknown kind does.
+	assert.deepEqual(routeMail("dyad", m("builder", "critic", "escalate")), { action: "deliver", to: "critic" });
+	assert.deepEqual(routeMail("solo", m("builder", "supervisor", "escalate")), { action: "solo_ack", to: "builder" });
+});
 test("unknown recipients are dropped", () => {
 	assert.deepEqual(routeMail("dyad", m("builder", "nobody", "question")), { action: "drop" });
 });

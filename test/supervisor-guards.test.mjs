@@ -218,3 +218,90 @@ test("the attempt-cap audit line does not add a second Oracle run # score", () =
 	// And the verdict itself is still logged exactly once, before it.
 	assert.ok(src.includes("log({ type: \"oracle\", msg: verdict });"), "the verdict must still be its own audit entry");
 });
+
+// ---------- management interface (spec §4) ----------
+// The point of the MANAGE gate is that a run without a `manage` block behaves exactly as it did
+// before any of this existed. That is a property of the SOURCE, not of a test run: there is no
+// way to assert "byte-identical" from the outside, so every site management touches is pinned
+// here as sitting behind the gate.
+test("MANAGE is null unless the config turns it on, and carries the four documented defaults", () => {
+	const src = supervisorSource();
+	const at = src.indexOf("\nconst MANAGE = (() => {");
+	assert.ok(at >= 0, "the MANAGE block is missing from supervisor.mjs");
+	const body = src.slice(at + 1);
+	const block = body.slice(0, body.indexOf("\n})();"));
+	assert.ok(block.includes("const raw = CONFIG.manage;"), "MANAGE must come from the config block loadConfig passes through");
+	assert.ok(block.includes("raw.enabled !== true) return null"), "anything but enabled:true must leave MANAGE null");
+	assert.ok(block.includes("raw.failThreshold ?? 2"), "failThreshold defaults to 2");
+	assert.ok(block.includes("raw.budgetFraction ?? 0.75"), "budgetFraction defaults to 0.75");
+	assert.ok(block.includes("raw.timeoutMs ?? 120_000"), "the decision timeout defaults to 120 000 ms (spec §4)");
+	assert.ok(block.includes("process.env.MANAGE_DECISION_TIMEOUT_MS"), "MANAGE_DECISION_TIMEOUT_MS must override the configured timeout");
+	assert.ok(block.includes("taskDir"), "the task directory travels on MANAGE");
+});
+
+test("every management site is behind the MANAGE gate", () => {
+	const src = supervisorSource();
+	// manageTrigger, pumpControl and the budget check refuse outright without it…
+	const trig = src.slice(src.indexOf("\nfunction manageTrigger("));
+	assert.ok(trig.slice(0, trig.indexOf("\n}\n")).includes("if (!MANAGE) return false;"), "manageTrigger must be a no-op without MANAGE");
+	const pump = src.slice(src.indexOf("\nfunction pumpControl("));
+	assert.ok(pump.slice(0, pump.indexOf("\n}\n")).includes("if (!MANAGE || finished) return;"), "pumpControl must be a no-op without MANAGE, and after finish()");
+	const budget = src.slice(src.indexOf("\nfunction manageBudgetCheck("));
+	assert.ok(budget.slice(0, budget.indexOf("\n}\n")).includes("if (!MANAGE || budgetThresholdFired) return;"), "the budget trigger must be gated and fire once");
+	// …and every call site is guarded too, so a manage-free run never reaches one.
+	assert.ok(src.includes("if (MANAGE) manageBudgetCheck(t);"), "checkCaps must call the budget check only under MANAGE");
+	assert.ok(src.includes("if (MANAGE) setInterval(pumpControl, 2000);"), "the control tailer is only polled under MANAGE");
+	assert.ok(src.includes('const controlTail = MANAGE ? new JsonlTailer(path.join(RUN, "control.jsonl")) : null;'), "the control file is runs/<id>/control.jsonl, tailed like every other run file");
+	assert.ok(src.includes('ARBITER_MANAGE: MANAGE && PATTERN === "orchestrator" && name === "orchestrator" ? "1" : "",'), "the escalate kind must only exist in the orchestrator's tool when management is on");
+	assert.ok(src.includes("if (!MANAGE) { deliver(VERIFIER, M.ack()"), "an escalate mail with no manager configured is acknowledged, not dropped");
+	// The supervisor requests a packet; it never assembles one, and never executes an instruction.
+	const imports = src.split("\n").filter((l) => /^import .* from "/.test(l));
+	assert.ok(!imports.some((l) => /manage\/(instructions|packet|ledger|task-state)\.mjs/.test(l)), `the supervisor must import only the pure trigger policy from lib/manage; found:\n${imports.filter((l) => l.includes("manage/")).join("\n")}`);
+	assert.ok(imports.some((l) => l.includes('import { decideTrigger } from "./lib/manage/triggers.mjs";')), "the trigger policy is decideTrigger's, imported from the pure module");
+});
+
+// The orchestrator is blocked on this verdict anyway, so holding it costs nothing and buys the
+// manager a say before the next attempt starts. What is deferred is the whole block: if only
+// the deliver() moved, boundaryPending would still be set at the old moment and the working
+// context would name a boundary the orchestrator has not been told about yet.
+test("the failed verdict and its boundary are deferred together when the trigger pauses", () => {
+	const src = supervisorSource();
+	const at = src.indexOf("const deliverVerdict = (correction) => {");
+	assert.ok(at >= 0, "the failed-verdict delivery must be wrapped in a thunk the pause can hold");
+	const thunk = src.slice(at, src.indexOf("};", at));
+	assert.ok(thunk.includes("M.oracle.failedVerifier(verdict"), "the held delivery is the failed verdict");
+	assert.ok(thunk.includes("boundaryPending = `oracle failed"), "the working-context boundary must move with it");
+	assert.ok(thunk.indexOf("correction") < thunk.indexOf("M.oracle.failedVerifier"), "a correction delivered with the decision must land before the verdict");
+	const after = src.slice(at, at + 1400);
+	assert.ok(after.includes("decideTrigger({ oracleFails: doneAttempts, failThreshold: MANAGE.failThreshold })"), "the pause decision is decideTrigger's, not a second copy of the threshold rule");
+	assert.ok(after.includes("if (!paused) deliverVerdict(null);"), "an unpaused run must deliver exactly as it always did");
+});
+
+test("a decision releases the held delivery; a silent manager defaults after the timeout", () => {
+	const src = supervisorSource();
+	const pump = src.slice(src.indexOf("\nfunction pumpControl("));
+	const body = pump.slice(0, pump.indexOf("\n}\n"));
+	assert.ok(body.includes("fs.existsSync(controlTail.filePath)"), "control.jsonl does not exist until an executor writes it, and readNew() stats it unguarded");
+	for (const t of ["grant", "correct", "decision"]) assert.ok(body.includes(`entry.type === "${t}"`), `pumpControl must handle ${t} entries`);
+	assert.ok(body.includes("CAPS.wallSec += Number(entry.wallSec)"), "a grant raises the wall cap for the rest of the run");
+	assert.ok(body.includes("CAPS.toolCalls += Number(entry.toolCalls)"), "a grant raises the tool-call cap for the rest of the run");
+	assert.ok(body.includes("M.manage.correction(entry.message)"), "a correction is delivered through the pinned message text");
+	assert.ok(body.includes("unknown type"), "an unrecognised control entry is logged and ignored, never acted on");
+	assert.ok(body.includes("Date.now() >= managePause.deadline"), "the deadline must be checked on the same poll");
+	assert.ok(body.includes('jevEvent("manage:defaulted"'), "a timed-out decision must be recorded as manage:defaulted");
+	// The deadline itself is set once, where the pause is stored.
+	assert.ok(src.includes("deadline: Date.now() + MANAGE.timeoutMs"), "the pause carries its own deadline");
+	assert.ok(src.includes("if (managePause) {"), "a second trigger while a decision is owed must not pause again");
+});
+
+test("a trigger writes a lifecycle event and an audit line, and asks for a packet rather than building one", () => {
+	const src = supervisorSource();
+	assert.ok(src.includes('jevEvent("manage:trigger", { kind, pauses: Boolean(pauses), packetRequest: { runId, detail } });'), "manage:trigger carries kind, pauses and the packet request");
+	assert.ok(src.includes('log({ type: "manage"'), "triggers are audited under type manage");
+	// The run's own ending is a trigger, but never a pause: finish() kills the processes.
+	const fin = src.slice(src.indexOf("\nfunction finish(reason) {"));
+	const body = fin.slice(0, fin.indexOf("\n\tconst t = totals();"));
+	assert.ok(body.includes("decideTrigger({ runEnded: { reason, accepted } })"), "finish() must emit the run-ended trigger");
+	assert.ok(body.indexOf("decideTrigger") < body.indexOf("finished = true"), "the trigger is recorded before the teardown begins");
+	assert.ok(body.includes("t0.pauses, null)"), "nothing can be held at the end of a run — there is no delivery left to withhold");
+});

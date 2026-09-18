@@ -26,6 +26,9 @@ import { childTranscriptDir, JsonlTailer, workerIdFromTranscript } from "./lib/c
 import { createTracker, applyLifecycleEvent, bindTranscript, dropUnclaimedSubagentEntry, unreportedWorkers, ensureWorker } from "./lib/workers.mjs";
 import { appendManifest, transcriptManifestPath, readManifest, manifestJoin } from "./lib/worker-manifest.mjs";
 import { messages } from "./lib/messages.mjs";
+// Trigger policy only (pure, §4). The instruction contract and the ledger deliberately stay on
+// the executor's side of the boundary — the supervisor never imports lib/manage/instructions.mjs.
+import { decideTrigger } from "./lib/manage/triggers.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, retainSpecialists, lastOracleRunNumber, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { resolveLedger, buildIndex } from "./lib/memory-index.mjs";
@@ -233,6 +236,25 @@ const JEV_KEY = (() => {
 	return m ? m[1] : "";
 })();
 if (JEV_ON && !JEV_KEY) console.error("[supervisor] jev shadow requested but no TYPESAFE_API_KEY in the environment or .env — running without it");
+// Management interface (docs/superpowers/specs/2026-09-18-management-interface-design.md).
+//   manage: { enabled, failThreshold, budgetFraction, timeoutMs, taskDir }
+// null unless the config turns it on, and EVERY manage site below is behind `if (!MANAGE)` or
+// `if (MANAGE)` — a run without the block behaves exactly as it did before this existed.
+// The supervisor's whole part is: notice a trigger, say so in the lifecycle file, and hold one
+// delivery while a decision is owed. It never assembles a packet, calls a manager or reads the
+// ledger; that is the executor's side (tools/manage.mjs, lib/manage/instructions.mjs), which
+// reaches back through runs/<id>/control.jsonl alone.
+const MANAGE = (() => {
+	const raw = CONFIG.manage;
+	if (!raw || typeof raw !== "object" || raw.enabled !== true) return null;
+	const envTimeout = Number(process.env.MANAGE_DECISION_TIMEOUT_MS ?? "");
+	return {
+		failThreshold: Number(raw.failThreshold ?? 2),
+		budgetFraction: Number(raw.budgetFraction ?? 0.75),
+		timeoutMs: Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : Number(raw.timeoutMs ?? 120_000),
+		taskDir: raw.taskDir ?? null,
+	};
+})();
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
 const startedAt = Date.now();
@@ -589,6 +611,10 @@ function launch(name) {
 			ARBITER_JEV_DIR: JEV_ON && JEV_KEY && PATTERN === "orchestrator" && name === "orchestrator" ? path.join(RUN, "jev") : "",
 			TYPESAFE_API_KEY: JEV_ON && JEV_KEY && PATTERN === "orchestrator" && name === "orchestrator" ? JEV_KEY : "",
 			ARBITER_JEV_REDACT: JEV_ON && JEV.redactSecrets ? "1" : "",
+			// Management on: the orchestrator's send_mail gains kind="escalate" (ext/mail-ext.ts).
+			// Empty otherwise, so the tool description — part of the stable prefix — is byte-
+			// identical in a run with no manager.
+			ARBITER_MANAGE: MANAGE && PATTERN === "orchestrator" && name === "orchestrator" ? "1" : "",
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -898,6 +924,20 @@ function pumpBus() {
 				deliver(route.to, M.probeBounced(), "probe bounced");
 				break;
 			case "solo_done": runOracle(); break;
+			case "escalate": {
+				// The orchestrator asked the manager for a decision it cannot make. It is
+				// blocked on the reply, so this is the second place a run pauses (§4). With no
+				// manager configured the kind does not exist in its tool at all; if one arrives
+				// anyway, it is acknowledged like any other mail rather than silently dropped.
+				const ackEscalation = (correction) => {
+					if (correction) deliver(VERIFIER, correction, "manager correction");
+					else deliver(VERIFIER, M.manage.escalationDefaulted(), "escalation defaulted");
+				};
+				if (!MANAGE) { deliver(VERIFIER, M.ack(), "escalation with no manager configured"); break; }
+				const t = decideTrigger({ escalateMail: true });
+				if (!manageTrigger(t.kind, { mail: msg.n, body: msg.body.slice(0, 500) }, t.pauses, ackEscalation)) ackEscalation(null);
+				break;
+			}
 			case "solo_ack":
 				// routeMail sends the orchestrator's non-probe, non-done mail here too, so
 				// this is one of the texts that must not describe a counterpart the run
@@ -1388,6 +1428,90 @@ let jevInFlight = false; // a check is awaiting Jev: a second done mail in that 
 function jevEvent(ev, data) {
 	try { fs.appendFileSync(LIFECYCLE, JSON.stringify({ ts: Date.now(), ev, data }) + "\n"); } catch { /* observability */ }
 }
+
+// ---------- management interface (spec §4) ----------
+// One pause at a time, holding one delivery the orchestrator is already blocked on. A second
+// trigger while paused is logged and not re-paused: the manager has one packet open, and
+// stacking held deliveries would mean the orchestrator gets two answers to one question.
+let managePause = null; // { kind, deliver: () => void, deadline, correction: string|null }
+let budgetThresholdFired = false;
+const controlTail = MANAGE ? new JsonlTailer(path.join(RUN, "control.jsonl")) : null;
+
+/**
+ * Records a trigger and, when it pauses, holds `pending` until a decision lands or the
+ * deadline passes. `packetRequest` is a REQUEST, not a packet: the executor side assembles the
+ * packet (tools/manage.mjs packet), so no packet code runs in the supervisor.
+ */
+function manageTrigger(kind, detail, pauses, pending) {
+	if (!MANAGE) return false;
+	jevEvent("manage:trigger", { kind, pauses: Boolean(pauses), packetRequest: { runId, detail } });
+	log({ type: "manage", msg: `trigger ${kind}${pauses ? " (orchestrator paused)" : ""}: ${JSON.stringify(detail).slice(0, 200)}` });
+	if (!pauses || !pending) return false;
+	if (managePause) {
+		log({ type: "manage", msg: `${kind} arrived while a ${managePause.kind} decision is still owed; not paused again` });
+		return false;
+	}
+	managePause = { kind, deliver: pending, deadline: Date.now() + MANAGE.timeoutMs, correction: null };
+	return true;
+}
+
+/** Releases the held delivery, attaching any correction that arrived with the decision. */
+function releasePause(why) {
+	if (!managePause) return;
+	const held = managePause;
+	managePause = null;
+	log({ type: "manage", msg: `releasing the held ${held.kind} delivery (${why})` });
+	try {
+		held.deliver(held.correction);
+	} catch (err) {
+		log({ type: "manage", msg: `held delivery threw: ${err?.stack ?? err}`.slice(0, 400) });
+	}
+}
+
+/**
+ * The executor's channel into a live run. Entries are appended by tools/manage.mjs after the
+ * ledger row is down, in order: the grant/correct first, the `decision` last — so a batch read
+ * here already has the correction that belongs to the decision that releases the pause.
+ *
+ * A `decision` releases whatever pause is open. It is deliberately not matched against a
+ * packetId: the supervisor never learns the id (it requests a packet, it does not assemble
+ * one), and "one pause at a time" makes the match unnecessary — the id is logged instead.
+ */
+function pumpControl() {
+	if (!MANAGE || finished) return;
+	// control.jsonl does not exist until an executor writes to it, and JsonlTailer.readNew()
+	// stats the file unguarded.
+	if (fs.existsSync(controlTail.filePath)) {
+		for (const entry of controlTail.readNew()) {
+			lastActivity = Date.now();
+			if (entry.type === "grant") {
+				if (entry.wallSec) CAPS.wallSec += Number(entry.wallSec);
+				if (entry.toolCalls) CAPS.toolCalls += Number(entry.toolCalls);
+				log({ type: "manage", msg: `grant from packet ${entry.packetId}: +${entry.wallSec ?? 0}s wall, +${entry.toolCalls ?? 0} tool calls (now ${CAPS.wallSec}s / ${CAPS.toolCalls})` });
+			} else if (entry.type === "correct") {
+				const text = M.manage.correction(entry.message);
+				// Held back if a pause is open: the correction is meant to arrive WITH the
+				// verdict the manager was answering, not a beat before it in its own turn.
+				if (managePause) managePause.correction = text;
+				else deliver(VERIFIER, text, "manager correction");
+				log({ type: "manage", msg: `correction from packet ${entry.packetId}${managePause ? " (held for the paused delivery)" : ""}` });
+			} else if (entry.type === "decision") {
+				log({ type: "manage", msg: `decision on packet ${entry.packetId}: ${entry.verb}` });
+				releasePause(`decision ${entry.verb}`);
+			} else {
+				log({ type: "manage", msg: `control entry ignored: unknown type ${JSON.stringify(entry.type)}` });
+			}
+		}
+	}
+	// A slow or absent manager must degrade to today's behaviour, never deadlock the run: on
+	// timeout the default instruction is a continue with a zero grant, which is exactly
+	// "deliver what was held and carry on" (spec §4).
+	if (managePause && Date.now() >= managePause.deadline) {
+		jevEvent("manage:defaulted", { kind: managePause.kind, afterMs: MANAGE.timeoutMs });
+		log({ type: "manage", msg: `no decision within ${MANAGE.timeoutMs}ms — defaulting to continue with a zero grant` });
+		releasePause("decision timeout");
+	}
+}
 function latestOrchestratorRequest() {
 	const dir = path.join(RUN, "requests");
 	if (!fs.existsSync(dir)) return null;
@@ -1570,8 +1694,21 @@ function runOracle() {
 				// The orchestrator did not approve someone else's work — it claimed the
 				// workspace was done and was wrong. Its remedy is its own two instruments,
 				// probes and a worker, not interrogating a counterpart that does not exist.
-				deliver(VERIFIER, M.oracle.failedVerifier(verdict, CAPS.doneAttempts - doneAttempts), "oracle verdict");
-				boundaryPending = `oracle failed (${pass}/${total})`;
+				//
+				// Under management this whole block — the delivery AND the working-context
+				// boundary it sets — is what gets withheld while the manager decides (spec §4:
+				// the orchestrator is blocked on this verdict anyway, so nothing in the
+				// workspace moves). A correction that arrives with the decision is delivered
+				// first, so the manager's words and the verdict land in the same turn.
+				const deliverVerdict = (correction) => {
+					if (correction) deliver(VERIFIER, correction, "manager correction");
+					deliver(VERIFIER, M.oracle.failedVerifier(verdict, CAPS.doneAttempts - doneAttempts), "oracle verdict");
+					boundaryPending = `oracle failed (${pass}/${total})`;
+				};
+				// Below N failed attempts decideTrigger returns null and nothing changes.
+				const t = MANAGE ? decideTrigger({ oracleFails: doneAttempts, failThreshold: MANAGE.failThreshold }) : null;
+				const paused = t?.kind === "oracle_failed_repeatedly" ? manageTrigger(t.kind, { attempts: doneAttempts, pass, total, verdict }, t.pauses, deliverVerdict) : false;
+				if (!paused) deliverVerdict(null);
 			}
 		}
 	} catch (err) {
@@ -1590,9 +1727,32 @@ function totals() {
 		wallSec: (Date.now() - startedAt) / 1000,
 	};
 }
+/**
+ * The first crossing of `budgetFraction` on ANY cap, once per run. Caps whose total is falsy
+ * are skipped, the same convention lib/manage/task-state.mjs spendBudget uses: an unset cap is
+ * unbounded, not a ceiling of zero. The run is not paused for it — the instruction arrives at
+ * the next turn boundary like any other delivery (§4).
+ */
+function manageBudgetCheck(t) {
+	if (!MANAGE || budgetThresholdFired) return;
+	const used = [
+		["toolCalls", t.toolCalls, CAPS.toolCalls],
+		["wallSec", t.wallSec, CAPS.wallSec],
+		["usd", t.cost, CAPS.usd],
+		["doneAttempts", doneAttempts, CAPS.doneAttempts],
+	].filter(([, , cap]) => cap);
+	const fractions = used.map(([name, v, cap]) => [name, v / cap]);
+	const worst = fractions.reduce((a, b) => (b[1] > a[1] ? b : a), ["none", 0]);
+	const trig = decideTrigger({ capsUsedFraction: worst[1], budgetFraction: MANAGE.budgetFraction, budgetThresholdFired });
+	if (trig?.kind !== "budget_threshold") return;
+	budgetThresholdFired = true;
+	manageTrigger(trig.kind, { cap: worst[0], fraction: Number(worst[1].toFixed(3)), caps: Object.fromEntries(fractions.map(([n, f]) => [n, Number(f.toFixed(3))])) }, trig.pauses, null);
+}
+
 function checkCaps() {
 	if (finished) return;
 	const t = totals();
+	if (MANAGE) manageBudgetCheck(t);
 	if (t.toolCalls >= CAPS.toolCalls) return finish(`CAP: tool calls ${t.toolCalls} >= ${CAPS.toolCalls}`);
 	if (t.cost >= CAPS.usd) return finish(`CAP: cost $${t.cost.toFixed(2)} >= $${CAPS.usd}`);
 	if (CAPS.tokens && t.tokens >= CAPS.tokens) return finish(`CAP: tokens ${t.tokens} >= ${CAPS.tokens}`);
@@ -1717,6 +1877,16 @@ function killTree(child) {
 }
 function finish(reason) {
 	if (finished) return;
+	// The run's ending is a trigger too (§4), but never a pause: finish() kills the agent
+	// processes a few lines below, so there is no delivery left to withhold and nothing that
+	// could act on an instruction. Recorded here, before the summary is written, so the
+	// lifecycle file carries it whatever happens on the way out.
+	if (MANAGE) {
+		const accepted = /^SUCCESS/.test(reason);
+		const t0 = decideTrigger({ runEnded: { reason, accepted } });
+		if (t0) manageTrigger(t0.kind, { reason, doneAttempts }, t0.pauses, null);
+		if (managePause) log({ type: "manage", msg: `run ended with a ${managePause.kind} decision still owed; the held delivery is dropped` });
+	}
 	finished = true;
 	const t = totals();
 	// summary.json and transcript.md are built from plain data in lib/transcript.mjs,
@@ -2111,4 +2281,8 @@ setInterval(tickCompaction, 500); // fallback: the checkpoint deadline needs a c
 setInterval(pumpChildTranscripts, 500);
 setInterval(checkIdle, 5000);
 setInterval(checkCaps, 5000);
+// The manager's channel back into the run: grants, corrections and decisions, plus the clock
+// the decision timeout needs. Only started when management is on — a run without it has no
+// control file and no pause to release.
+if (MANAGE) setInterval(pumpControl, 2000);
 setInterval(checkBashTimeout, 5000);

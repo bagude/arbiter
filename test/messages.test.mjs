@@ -30,6 +30,14 @@ test("mail routing texts", () => {
 	assert.equal(solo.ack(), '[SUPERVISOR] Acknowledged, but nobody will answer this — there is no counterpart in this run. When your implementation is complete and self-tested, send kind="done".');
 });
 
+// The manager's words reach the orchestrator verbatim behind one prefix — the supervisor adds
+// no advice of its own, and the text is identical in every pattern.
+test("manager correction and the defaulted escalation acknowledgement", () => {
+	assert.equal(orch.manage.correction("the tester's suite is the gate"), "[SUPERVISOR] From the manager: the tester's suite is the gate");
+	assert.equal(dyad.manage.correction("x"), orch.manage.correction("x"));
+	assert.equal(orch.manage.escalationDefaulted(), "[SUPERVISOR] Your escalation was recorded but no decision came back in time. Nothing about the task has changed — carry on with the criteria and budget you already have.");
+});
+
 test("probe texts", () => {
 	assert.equal(dyad.probe.unsupported("glob"), '[SUPERVISOR] This task has no probe runner — kind="probe" isn\'t supported for "glob".');
 	assert.equal(dyad.probe.noSrc(), "[SUPERVISOR] Probe failed: BUILDER's src/ does not exist yet.");

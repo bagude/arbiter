@@ -293,3 +293,14 @@ test("loadConfig passes the jev block through unchanged (the supervisor normalis
 	assert.equal(loadConfig({ configPath: f, env: { ARBITER_SKIP_MODEL_PREFLIGHT: "1" } }).jev, null, "absent → null, so the supervisor's default (off) applies");
 	fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("loadConfig passes the manage block through unchanged; absent is null (management off)", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-manage-"));
+	const f = path.join(dir, "c.json");
+	const manage = { enabled: true, failThreshold: 1, budgetFraction: 0.75, timeoutMs: 120000, taskDir: "tasks-live/raid-2026-09-18" };
+	fs.writeFileSync(f, JSON.stringify({ task: "pathnorm", pattern: "orchestrator", roles: { orchestrator: { provider: "llama.cpp", model: "m" } }, workers: { default: { provider: "llama.cpp", model: "m" } }, manage }));
+	assert.deepEqual(loadConfig({ configPath: f, env: { ARBITER_SKIP_MODEL_PREFLIGHT: "1" } }).manage, manage);
+	fs.writeFileSync(f, JSON.stringify({ task: "pathnorm", pattern: "orchestrator", roles: { orchestrator: { provider: "llama.cpp", model: "m" } }, workers: { default: { provider: "llama.cpp", model: "m" } } }));
+	assert.equal(loadConfig({ configPath: f, env: { ARBITER_SKIP_MODEL_PREFLIGHT: "1" } }).manage, null, "absent → null, so no manage site in the supervisor is reachable");
+	fs.rmSync(dir, { recursive: true, force: true });
+});

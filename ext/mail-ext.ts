@@ -57,6 +57,17 @@ const PROBE_HINT =
 			"— a block lifts as soon as src/ changes."
 		: "";
 
+// Escalation exists only in a run that has a manager behind it (supervisor.mjs's MANAGE block
+// sets ARBITER_MANAGE for the orchestrator's process). Gated rather than always present for two
+// reasons: a kind whose answer nobody can give is a trap for a small model, and this description
+// is part of the orchestrator's stable prefix — an extra clause in every run would change the
+// cached prefix of every run that has no manager at all.
+const MANAGE_ON = process.env.ARBITER_MANAGE === "1" && ME === "orchestrator";
+const ESCALATE_KIND = MANAGE_ON ? ["escalate"] : [];
+const ESCALATE_HINT = MANAGE_ON
+	? 'kind="escalate" asks the manager for a decision you cannot make (a criterion looks wrong, you are blocked, you need budget); say what you need.'
+	: "";
+
 // Memory is addressed to future runs, not to anyone here: the supervisor stores the
 // observation as a candidate that a later human or paired run may promote. Saying
 // so in the tool description keeps a model from waiting for a reply to it.
@@ -74,12 +85,12 @@ export default function (pi: ExtensionAPI) {
 				: SOLO
 					? `Send a message to the supervisor (to="supervisor"). There is no counterpart agent in this run. `
 					: `Send a message to your counterpart "${PEER}". This is your ONLY channel to them. `) +
-			`Body is capped at ${MAX_BODY} characters. ${DONE_HINT}${PROBE_HINT ? ` ${PROBE_HINT}` : ""} ${MEMORY_HINT}`,
+			`Body is capped at ${MAX_BODY} characters. ${DONE_HINT}${PROBE_HINT ? ` ${PROBE_HINT}` : ""} ${MEMORY_HINT}${ESCALATE_HINT ? ` ${ESCALATE_HINT}` : ""}`,
 		parameters: Type.Object({
 			to: Type.String({ description: `Recipient. Must be "${PEER}".` }),
 			kind: Type.Union(
 				(ME === "orchestrator"
-					? ["status", "done", "probe", "memory"]
+					? ["status", "done", "probe", "memory", ...ESCALATE_KIND]
 					: ["question", "answer", "proposal", "status", "done", ...(PROBE_KIND.length ? ["probe"] : []), "memory"]
 				).map((k) => Type.Literal(k)),
 				{ description: "What this message is doing." },

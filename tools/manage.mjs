@@ -1,19 +1,23 @@
-// tools/manage.mjs — CLI skeleton over lib/manage/*: create a task, assemble+write an
-// observation packet from an existing run's records, and print the ledger. No network; no
-// supervisor or orchestrator side effects — this only reads and writes the task directory
-// and existing run records under runs/.
+// tools/manage.mjs — CLI over lib/manage/*: create a task, assemble+write an observation
+// packet from an existing run's records, execute one manager instruction, and print the
+// ledger. No network. `execute` is the only command with an effect outside the task
+// directory, and even that reaches a live run through one appended file
+// (runs/<id>/control.jsonl) which the supervisor tails — this process never touches an
+// agent, a workspace or the oracle.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createTask } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
 import { readLedger, readFindings } from "../lib/manage/ledger.mjs";
+import { executeInstruction } from "../lib/manage/instructions.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 const USAGE = `usage:
   node tools/manage.mjs init <taskDir> --task <id> --goal "<text>" --criteria <json> --milestones <json> [--budget <json>]
   node tools/manage.mjs packet <taskDir> <runId> --trigger <kind> [--detail <json>] [--runs <dir>]
+  node tools/manage.mjs execute <taskDir> <instruction.json> [--packet <n|file>] [--runs <dir>]
   node tools/manage.mjs ledger <taskDir>`;
 
 /** Splits argv into --flag value pairs and the remaining positionals, in order. */
@@ -71,6 +75,40 @@ function cmdPacket(argv) {
 	console.log(`${file} (${JSON.stringify(packet).length} chars)`);
 }
 
+/**
+ * Executes one instruction against a task. The packet it answers is loaded from
+ * packets/<packetId>.json (or --packet, which takes an id or a path) so the verbs the harness
+ * pruned and the state the manager actually saw are the ones checked — never re-derived here.
+ * Exit 3 on a refusal, 0 on execution or on a duplicate acknowledgement.
+ */
+function cmdExecute(argv) {
+	const { flags, positionals } = splitArgs(argv);
+	const [taskDir, instrFile] = positionals;
+	if (!taskDir || !instrFile) return usageExit();
+	const instr = JSON.parse(fs.readFileSync(instrFile, "utf8"));
+	const packetArg = flags.packet ?? String(instr.packetId ?? "");
+	const packetFile = packetArg && /^\d+$/.test(packetArg) ? path.join(taskDir, "packets", `${packetArg}.json`) : packetArg;
+	if (!packetFile || !fs.existsSync(packetFile)) {
+		console.error(`no packet for this instruction (looked for ${packetFile || "nothing"}); pass --packet <n|file>`);
+		process.exit(2);
+	}
+	const packet = JSON.parse(fs.readFileSync(packetFile, "utf8"));
+	const runsDir = flags.runs ?? path.join(here, "..", "runs");
+	const result = executeInstruction({ taskDir, instr, packet, runsDir });
+	if (result.executed) {
+		console.log(JSON.stringify(result.ledgerRow));
+		return;
+	}
+	if (result.duplicate) {
+		console.log(`already executed: ${result.refusal}`);
+		console.log(JSON.stringify(result.ledgerRow));
+		return;
+	}
+	console.error(`refused (${result.code}): ${result.refusal}`);
+	console.error(JSON.stringify(result.ledgerRow));
+	process.exit(3);
+}
+
 function cmdLedger(argv) {
 	const { positionals } = splitArgs(argv);
 	const [taskDir] = positionals;
@@ -83,6 +121,7 @@ export function main(argv = process.argv.slice(2)) {
 	const [cmd, ...rest] = argv;
 	if (cmd === "init") return cmdInit(rest);
 	if (cmd === "packet") return cmdPacket(rest);
+	if (cmd === "execute") return cmdExecute(rest);
 	if (cmd === "ledger") return cmdLedger(rest);
 	return usageExit();
 }
