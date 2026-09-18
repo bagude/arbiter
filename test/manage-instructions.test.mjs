@@ -649,6 +649,27 @@ test("an ended run is charged the wall seconds and tool calls it actually spent,
 	assert.equal(loadTask(dir).budget.wallSec.used, 1800, "a re-fold cannot double-charge");
 });
 
+test("an ordinary run that never paused is charged too — the charge is the ended trigger, not the fold", () => {
+	// The review's own scenario: six runs that end normally. None of them fires a live trigger
+	// (nothing paused mid-flight), so none of them was ever in activeRuns — and a charge that hung
+	// off the fold transition would skip every one of them and leave `used` at 0.
+	const { dir, runsDir } = fixture({ activeRuns: [] });
+	mkRun(runsDir, RUN_ID);
+	fs.writeFileSync(path.join(runsDir, RUN_ID, "summary.json"), JSON.stringify({ runId: RUN_ID, reason: "SUCCESS: oracle passed", wallSec: 1800, toolCalls: { orchestrator: 20 } }));
+
+	const saved = registerRunForTrigger(dir, { kind: "milestone_candidate", runId: RUN_ID, detail: {} }, { runsDir });
+	assert.equal(saved.budget.wallSec.used, 1800);
+	assert.equal(saved.budget.toolCalls.used, 20);
+	const row = readLedger(dir).at(-1);
+	assert.equal(row.folded, false, "nothing to fold: it was never registered");
+	assert.deepEqual(row.charged, { wallSec: 1800, toolCalls: 20 });
+
+	// A second ended trigger for the same run — a comparison_ready naming it — charges nothing.
+	const again = registerRunForTrigger(dir, { kind: "comparison_ready", runId: RUN_ID, detail: {} }, { runsDir });
+	assert.equal(again, null);
+	assert.equal(loadTask(dir).budget.wallSec.used, 1800, "the ledger is the guard, not the fold");
+});
+
 test("a run that wrote no summary is charged nothing, and the ledger says its cost is unknown", () => {
 	const { dir, runsDir } = fixture({ activeRuns: [] });
 	mkRun(runsDir, RUN_ID); // audit only: killed before finish() wrote a summary

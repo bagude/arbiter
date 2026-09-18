@@ -670,10 +670,11 @@ async function cmdServe(argv) {
 		once: "once" in flags,
 		adopt: valueFlag(flags, "run") ? [flags.run] : [],
 	});
-	// A loop that answered nothing because another one holds the lock is not a successful run of
-	// this command, and an operator who started a second one by mistake must be told at the exit
-	// code, not only in a log line.
-	if (out?.refused === "locked") process.exit(3);
+	// A loop that answered nothing is not a successful run of this command, whichever reason it
+	// had: another loop holds the lock, or the task is paused or complete and only a human can
+	// move it. An operator who started it by mistake must be told at the exit code, not only in a
+	// log line they may not be watching.
+	if (out?.refused) process.exit(3);
 }
 
 function cmdLedger(argv) {

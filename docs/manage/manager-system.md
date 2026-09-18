@@ -39,10 +39,11 @@ an instruction that breaks one is refused and recorded, not executed.
 - `options.pendingRuns` — runs the harness still believes are alive. `continue` and `correct`
   are refused for any run not in this list.
 - `options.pendingBatches` — comparison or restore batches still in flight. While a run or a
-  batch is pending, `restore` and `compare` are **left out of `verbsAllowed`**: there is a single
-  model server, and two batches contend for it. `args.parallel: true` is the deliberate opt-in
-  when you judge the second piece of work worth that contention — it is not free, because the
-  fork runner abandons one of the two after its whole budget has been charged.
+  batch is pending, `restore` and `compare` are **left out of `verbsAllowed`** and there is no way
+  to ask for them: there is a single model server, two batches contend for it, and the fork runner
+  abandons one of them after its whole budget has been charged. When work in flight is the wrong
+  work, say so with `correct`, or `escalate`. The verbs come back in the next packet, once
+  `pendingRuns` and `pendingBatches` are empty.
 
 ## The six verbs
 

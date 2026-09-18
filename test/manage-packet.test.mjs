@@ -348,7 +348,9 @@ test("a packet that cannot be redacted is refused by name, not thrown as a bare 
 	// its own captured prefix — so the guard is exercised by making the parse fail on purpose.
 	const bad = () => { throw new SyntaxError("Unexpected token } in JSON at position 12"); };
 	const real = JSON.parse;
-	JSON.parse = new Proxy(real, { apply: (t, self, args) => (args[0]?.includes?.('"packetId"') ? bad() : Reflect.apply(t, self, args)) });
+	// Only the final render carries `bounded`, so this cannot fire on a ledger row or a summary
+	// the assembler parses on the way — those carry a packetId but never this field.
+	JSON.parse = new Proxy(real, { apply: (t, self, args) => (args[0]?.includes?.('"bounded"') ? bad() : Reflect.apply(t, self, args)) });
 	try {
 		assert.throws(
 			() => assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended", runId: "r1" } }),
