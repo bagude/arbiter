@@ -7,15 +7,28 @@ import { appendLedger, readLedger, findByKey, appendFinding, readFindings, settl
 
 const mk = () => fs.mkdtempSync(path.join(os.tmpdir(), "ledger-"));
 
-test("appendLedger numbers rows, stamps ts, and findByKey finds an idempotency key", () => {
+test("appendLedger numbers rows, stamps ts, and findByKey finds an executed idempotency key", () => {
 	const dir = mk();
-	const a = appendLedger(dir, { packetId: 1, stateVersion: 3, trigger: "run_ended", instruction: { idempotencyKey: "p1-v3", verb: "continue" } });
-	const b = appendLedger(dir, { packetId: 2, stateVersion: 4, trigger: "budget_threshold", instruction: { idempotencyKey: "p2-v4", verb: "correct" } });
+	const a = appendLedger(dir, { packetId: 1, stateVersion: 3, trigger: "run_ended", instruction: { idempotencyKey: "p1-v3", verb: "continue" }, verified: true });
+	const b = appendLedger(dir, { packetId: 2, stateVersion: 4, trigger: "budget_threshold", instruction: { idempotencyKey: "p2-v4", verb: "correct" }, verified: true });
 	assert.deepEqual([a.seq, b.seq], [1, 2]);
 	assert.ok(a.ts <= b.ts);
 	assert.equal(readLedger(dir).length, 2);
 	assert.equal(findByKey(dir, "p2-v4").seq, 2);
 	assert.equal(findByKey(dir, "nope"), null);
+});
+
+// Only an execution can be duplicated. A refusal under a key must leave that key usable, or the
+// manager can never correct the instruction the harness just told it was wrong — it would get
+// "already executed" about something that never ran.
+test("findByKey ignores refusal rows by default, and sees them when asked", () => {
+	const dir = mk();
+	appendLedger(dir, { packetId: 3, instruction: { idempotencyKey: "p3-v9", verb: "correct" }, verified: false, refused: "precondition" });
+	assert.equal(findByKey(dir, "p3-v9"), null, "a refused key is free to be retried");
+	assert.equal(findByKey(dir, "p3-v9", { executedOnly: false }).refused, "precondition", "the audit question still has an answer");
+	// Once the corrected instruction runs under that key, the key IS taken.
+	appendLedger(dir, { packetId: 3, instruction: { idempotencyKey: "p3-v9", verb: "correct" }, verified: true });
+	assert.equal(findByKey(dir, "p3-v9").verified, true);
 });
 
 test("findings are claims with a settlement criterion; settleFinding updates status and verifiedOn", () => {

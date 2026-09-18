@@ -36,6 +36,17 @@ test("a run that ended without acceptance triggers but cannot pause — there is
 	assert.equal(decideTrigger({ runEnded: { reason: "SUCCESS: oracle passed", accepted: true } }), null);
 });
 
+// A run whose oracle passed also ends with no `accept` having happened, so both conditions hold
+// at once. The candidate is the useful reading: it is the trigger that ASKS the manager to
+// accept. `accepted` is true only once an accept instruction has marked the milestone — the
+// supervisor never infers acceptance from a run that ended in SUCCESS, because that would have
+// the harness answer the one question the manager exists to decide.
+test("a passing oracle beats the run's own ending: the candidate is what the manager is asked about", () => {
+	assert.equal(decideTrigger({ oraclePassed: true, runEnded: { reason: "SUCCESS: oracle passed", accepted: false } }).kind, "milestone_candidate");
+	assert.equal(decideTrigger({ oraclePassed: false, runEnded: { reason: "SUCCESS: oracle passed", accepted: false } }).kind, "run_ended_without_acceptance");
+	assert.equal(decideTrigger({ runEnded: { reason: "whatever", accepted: true } }), null, "an accepted milestone is not a trigger");
+});
+
 test("a finished compare batch is comparison_ready", () => {
 	assert.deepEqual(decideTrigger({ comparisonReady: true }), { kind: "comparison_ready", pauses: false });
 });
