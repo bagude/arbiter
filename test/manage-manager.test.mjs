@@ -717,6 +717,16 @@ test("the packet records the trigger index the loop names, and the last of that 
 	const out = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
 	assert.equal(out.handled[0].packet.trigger.index, 0, "the loop answers them in order and says which");
 	assert.deepEqual(answeredTriggers(dir), [{ runId: RUN_ID, index: 0, packetId: 1 }]);
+
+	// A packet from before packets carried an index (a hand-run `packet` on an older tree) still
+	// answered a trigger: with a runsDir its index is recomputed as the last of its kind, so the
+	// loop does not answer that trigger a second time under a fresh key.
+	const legacy = JSON.parse(fs.readFileSync(path.join(dir, "packets", "1.json"), "utf8"));
+	delete legacy.trigger.index;
+	legacy.trigger.kind = "oracle_failed_repeatedly";
+	fs.writeFileSync(path.join(dir, "packets", "7.json"), JSON.stringify(legacy));
+	assert.deepEqual(answeredTriggers(dir).map((a) => a.packetId), [1], "without a runsDir an index-less packet marks nothing");
+	assert.deepEqual(answeredTriggers(dir, { runsDir }).sort((a, b) => a.packetId - b.packetId), [{ runId: RUN_ID, index: 0, packetId: 1 }, { runId: RUN_ID, index: 2, packetId: 7 }]);
 });
 
 test("a paused task answers no trigger: §3's escalate stops the loop, not just the executor", async () => {

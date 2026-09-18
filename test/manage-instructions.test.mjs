@@ -679,6 +679,15 @@ test("a run that wrote no summary is charged nothing, and the ledger says its co
 	const row = readLedger(dir).at(-1);
 	assert.equal(row.charged, null);
 	assert.match(row.note, /no summary\.json/);
+
+	// "Unknown" does not latch. Every ended trigger reaches lifecycle.jsonl before finish() writes
+	// the summary, so a poll that lands in that window records null; once the summary exists the
+	// next ended trigger for the run charges it, and only then is the run accounted for.
+	fs.writeFileSync(path.join(runsDir, RUN_ID, "summary.json"), JSON.stringify({ runId: RUN_ID, reason: "SUCCESS", wallSec: 600, toolCalls: { orchestrator: 7 } }));
+	const later = registerRunForTrigger(dir, { kind: "comparison_ready", runId: RUN_ID, detail: {} }, { runsDir });
+	assert.equal(later.budget.wallSec.used, 600, "a null row is not a charge");
+	assert.deepEqual(readLedger(dir).at(-1).charged, { wallSec: 600, toolCalls: 7 });
+	assert.equal(registerRunForTrigger(dir, { kind: "comparison_ready", runId: RUN_ID, detail: {} }, { runsDir }), null, "and the charged row is the guard");
 });
 
 test("a run that overran the task's budget is charged what is left, and the overrun is named", () => {
