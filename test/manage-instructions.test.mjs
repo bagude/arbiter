@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-state.mjs";
 import { readLedger, appendLedger, recordOutcome } from "../lib/manage/ledger.mjs";
-import { INSTRUCTION_VERBS, NOT_YET_IMPLEMENTED, validateInstruction, executeInstruction, controlAppend, NotYetImplemented, batchCeiling, settledBatches, registerRunForTrigger, pendingRuns, settledRuns } from "../lib/manage/instructions.mjs";
+import { INSTRUCTION_VERBS, NOT_YET_IMPLEMENTED, claimCompareDir, validateInstruction, executeInstruction, controlAppend, NotYetImplemented, batchCeiling, settledBatches, registerRunForTrigger, pendingRuns, settledRuns } from "../lib/manage/instructions.mjs";
 import { snapshotCheckpoint } from "../lib/manage/checkpoint.mjs";
 import { runBatchSpec } from "../tools/manage.mjs";
 
@@ -86,6 +86,21 @@ test("an instruction based on an older state version is refused as stale, not ex
 	assert.equal(r.ok, false);
 	assert.equal(r.code, "stale_version");
 	assert.match(r.refusal, /version 3.*at 4/);
+});
+
+test("a compare directory is claimed, not guessed: the second writer takes the next id", () => {
+	const { dir } = fixture();
+	const first = claimCompareDir(dir);
+	assert.equal(first.compareId, 1);
+	fs.writeFileSync(path.join(first.dir, "spec.json"), JSON.stringify({ compareId: 1, branches: ["mine"] }));
+	// Two executors answering two packets at once both computed max + 1. With a recursive mkdir
+	// both got directory 1, the loser's spec.json overwrote the winner's, and the winner's
+	// detached child then ran the loser's branches under the winner's ledger row and key.
+	const second = claimCompareDir(dir);
+	assert.equal(second.compareId, 2);
+	assert.notEqual(second.dir, first.dir);
+	assert.deepEqual(JSON.parse(fs.readFileSync(path.join(first.dir, "spec.json"), "utf8")).branches, ["mine"], "the first spec is untouched");
+	assert.deepEqual(fs.readdirSync(second.dir), [], "and the second is a fresh directory");
 });
 
 test("a paused task accepts escalate and refuses every other verb", () => {

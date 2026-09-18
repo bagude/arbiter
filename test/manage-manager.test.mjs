@@ -8,10 +8,10 @@ import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-state.mjs";
 import { appendLedger, readLedger } from "../lib/manage/ledger.mjs";
 import { executeInstruction } from "../lib/manage/instructions.mjs";
-import { writePacket } from "../lib/manage/packet.mjs";
+import { writePacket, triggerIndexOf } from "../lib/manage/packet.mjs";
 import {
 	DEFAULT_MANAGER_MODEL, DEFAULT_TIMEOUT_MS, INSTRUCT_TOOL, MAX_DECISION_TOKENS, MESSAGES_URL,
-	SUPERVISOR_DEADLINE_MS, UNSUPPORTED_MODEL, acquireServeLock, agrees, decide, decisionShape,
+	SUPERVISOR_DEADLINE_MS, UNSUPPORTED_MODEL, acquireServeLock, agrees, answeredTriggers, decide, decisionShape,
 	defaultInstruction, driverTimeoutMs, executedFor, fillInstruction, lockFile, pidAlive, replay,
 	requestBody, runsForTask, serve, supervisorDeadlineMs, systemPrompt, triggerEvents,
 	unsupportedModelReason,
@@ -672,6 +672,51 @@ test("a refusal that is not stale is recorded and left: asking again would only 
 	assert.equal(out.handled[0].result.executed, false);
 	assert.equal(fetchImpl.calls.length, 1);
 	assert.match(fs.readFileSync(path.join(dir, "serve.log"), "utf8"), /refused \((precondition|verb_not_allowed)\)/);
+});
+
+test("a trigger a hand-run packet already answered is not answered again by the loop", async () => {
+	// The sequence the live checks actually used: a controller drives `packet` + `execute` by
+	// hand, then starts the loop. serve.state.json knows nothing about the hand-run packet, so
+	// before the packets themselves became the record the loop walked from zero, assembled a
+	// SECOND packet for the same trigger, got a new id and therefore a new idempotency key, sailed
+	// past the duplicate check and launched the same compare twice.
+	const { dir, runsDir } = fixture({
+		lifecycle: [{ ts: 2, ev: "manage:trigger", data: { kind: "oracle_failed_repeatedly", packetRequest: { runId: RUN_ID, detail: { attempts: 2 } } } }],
+	});
+	const byHand = spawnSync(process.execPath, [CLI, "packet", dir, RUN_ID, "--trigger", "oracle_failed_repeatedly", "--runs", runsDir], { encoding: "utf8" });
+	assert.equal(byHand.status, 0, byHand.stderr);
+	const handPacket = JSON.parse(fs.readFileSync(path.join(dir, "packets", "1.json"), "utf8"));
+	assert.equal(handPacket.trigger.index, 0, "a hand-run packet records which trigger it answers");
+
+	const fetchImpl = fakeFetch(toolUse("continue", { runId: RUN_ID, milestone: "m1", budgetGrant: { wallSec: 0, toolCalls: 0 } }));
+	const out = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
+	assert.equal(out.handled.length, 0);
+	assert.equal(fetchImpl.calls.length, 0, "no manager is asked about a trigger that already has a packet");
+	assert.deepEqual(fs.readdirSync(path.join(dir, "packets")), ["1.json"], "and no second packet is written");
+	assert.match(fs.readFileSync(path.join(dir, "serve.log"), "utf8"), /already has packet 1/);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "serve.state.json"), "utf8")).handled[RUN_ID], 1);
+});
+
+test("the packet records the trigger index the loop names, and the last of that kind otherwise", async () => {
+	const { dir, runsDir } = fixture({
+		lifecycle: [
+			{ ts: 1, ev: "manage:trigger", data: { kind: "budget_threshold", packetRequest: { runId: RUN_ID, detail: {} } } },
+			{ ts: 2, ev: "manage:trigger", data: { kind: "oracle_failed_repeatedly", packetRequest: { runId: RUN_ID, detail: { attempts: 2 } } } },
+			{ ts: 3, ev: "manage:trigger", data: { kind: "oracle_failed_repeatedly", packetRequest: { runId: RUN_ID, detail: { attempts: 3 } } } },
+		],
+	});
+	const runDir = path.join(runsDir, RUN_ID);
+	// Two triggers of one kind in a run is ordinary; with no explicit index the packet is about
+	// the one that just happened.
+	assert.equal(triggerIndexOf(runDir, "oracle_failed_repeatedly"), 2);
+	assert.equal(triggerIndexOf(runDir, "budget_threshold"), 0);
+	assert.equal(triggerIndexOf(runDir, "escalation"), null);
+	assert.equal(triggerIndexOf(runDir, "oracle_failed_repeatedly", 1), 1, "an explicit index wins");
+
+	const fetchImpl = fakeFetch(toolUse("continue", { runId: RUN_ID, milestone: "m1", budgetGrant: { wallSec: 0, toolCalls: 0 } }));
+	const out = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
+	assert.equal(out.handled[0].packet.trigger.index, 0, "the loop answers them in order and says which");
+	assert.deepEqual(answeredTriggers(dir), [{ runId: RUN_ID, index: 0, packetId: 1 }]);
 });
 
 test("a paused task answers no trigger: §3's escalate stops the loop, not just the executor", async () => {
