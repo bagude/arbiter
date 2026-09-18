@@ -255,6 +255,12 @@ const MANAGE = (() => {
 		taskDir: raw.taskDir ?? null,
 	};
 })();
+// A threshold at or above the attempt cap can never pause: the attempt that would reach it is
+// the one runOracle returns early from (`doneAttempts >= CAPS.doneAttempts`), which delivers
+// nothing, so there is no verdict to withhold and the run ends instead. That reads as a broken
+// feature rather than a misconfiguration, so it is said out loud at startup, like jev's key.
+if (MANAGE && (MANAGE.failThreshold <= 0 || MANAGE.failThreshold >= CAPS.doneAttempts))
+	console.error(`[supervisor] manage.failThreshold ${MANAGE.failThreshold} against caps.doneAttempts ${CAPS.doneAttempts} — the oracle_failed_repeatedly pause can never fire (it needs 0 < failThreshold < doneAttempts)`);
 fs.writeFileSync(BUS, "");
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
 const startedAt = Date.now();
@@ -939,10 +945,12 @@ function pumpBus() {
 				};
 				if (!MANAGE) { deliver(VERIFIER, M.ack(), "escalation with no manager configured"); break; }
 				const t = decideTrigger({ escalateMail: true });
-				// Not paused means a decision is already owed on an earlier trigger, so none is
-				// coming for this one either: the orchestrator is told so at once rather than
-				// left waiting on a reply that has no manager behind it.
-				if (!manageTrigger(t.kind, { mail: msg.n, body: msg.body.slice(0, 500) }, t.pauses, ackEscalation)) ackEscalation(null, true);
+				// Not paused means a decision is already owed on an earlier trigger, so no
+				// answer is coming for this one: the orchestrator is told at once rather than
+				// left waiting. Not the defaulted text, which says a decision was solicited and
+				// timed out — this escalation was never put to anyone, and the trigger is in the
+				// lifecycle file either way.
+				if (!manageTrigger(t.kind, { mail: msg.n, body: msg.body.slice(0, 500) }, t.pauses, ackEscalation)) ackEscalation(null, false);
 				break;
 			}
 			case "solo_ack":
@@ -1442,6 +1450,7 @@ function jevEvent(ev, data) {
 // stacking held deliveries would mean the orchestrator gets two answers to one question.
 let managePause = null; // { kind, deliver: () => void, deadline, correction: string|null }
 let budgetThresholdFired = false;
+let milestoneCandidateFired = false; // the oracle passed: this run ends as a candidate, not unaccepted
 const controlTail = MANAGE ? new JsonlTailer(path.join(RUN, "control.jsonl")) : null;
 
 /**
@@ -1472,6 +1481,9 @@ function releasePause(why, { defaulted = false } = {}) {
 	if (!managePause) return;
 	const held = managePause;
 	managePause = null;
+	// The wait was not idleness, and the turn that follows is fresh work: without this the
+	// whole pause counts against idleNudgeSec the moment the pause lifts.
+	lastActivity = Date.now();
 	log({ type: "manage", msg: `releasing the held ${held.kind} delivery (${why})` });
 	try {
 		held.deliver(held.correction, defaulted);
@@ -1670,7 +1682,19 @@ function runOracle() {
 		if (jevChecks) jevEvent("jev:oracle_verdict", { afterCheck: jevChecks, attempt: doneAttempts, pass, total });
 		log({ type: "oracle", msg: verdict });
 		timeline.push({ ts: Date.now(), from: "supervisor", to: "both", kind: "oracle", body: verdict });
-		if (total > 0 && pass === total) return finish("SUCCESS: oracle passed");
+		if (total > 0 && pass === total) {
+			// §4's first row. The run still ends here — a milestone candidate is evidence for
+			// the manager's `accept`, not something the orchestrator acts on — but the trigger
+			// has to be recorded before finish(), or the one signal that says "this milestone
+			// is ready to accept" never reaches the ledger at all. Never pauses: there is
+			// nothing left to hold.
+			if (MANAGE) {
+				const t = decideTrigger({ oraclePassed: true });
+				if (t) manageTrigger(t.kind, { attempt: doneAttempts, pass, total }, t.pauses, null);
+				milestoneCandidateFired = true;
+			}
+			return finish("SUCCESS: oracle passed");
+		}
 		// The last attempt's verdict used to reach nobody: this branch finished before the
 		// deliver() below, so audit.jsonl showed "Oracle run #5: 69/70 passed." followed by
 		// "FINISH: done attempts exhausted (5)" with no delivery line between them. In run
@@ -1764,11 +1788,13 @@ function manageBudgetCheck(t) {
 function checkCaps() {
 	if (finished) return;
 	const t = totals();
-	if (MANAGE) manageBudgetCheck(t);
 	if (t.toolCalls >= CAPS.toolCalls) return finish(`CAP: tool calls ${t.toolCalls} >= ${CAPS.toolCalls}`);
 	if (t.cost >= CAPS.usd) return finish(`CAP: cost $${t.cost.toFixed(2)} >= $${CAPS.usd}`);
 	if (CAPS.tokens && t.tokens >= CAPS.tokens) return finish(`CAP: tokens ${t.tokens} >= ${CAPS.tokens}`);
 	if (t.wallSec >= CAPS.wallSec) return finish(`CAP: wall ${t.wallSec.toFixed(0)}s >= ${CAPS.wallSec}s`);
+	// After the cap tests, deliberately: the poll that ends the run would otherwise put a
+	// budget_threshold packet request in the ledger for a run that is already over.
+	if (MANAGE) manageBudgetCheck(t);
 }
 // Solo runs: the terminal signal is host-derived, not only mail-based. Six earlier
 // local-model runs never sent done when a counterpart was waiting on it; here
@@ -1799,6 +1825,14 @@ function maybeQuiescentOracle() {
 }
 function checkIdle() {
 	if (finished) return;
+	// A run holding a manager decision is waiting, not idle. The orchestrator is blocked on a
+	// delivery the supervisor is deliberately withholding, nothing refreshes lastActivity while
+	// it waits, and idleNudgeSec (120 s) is the same order as the decision timeout (120 000 ms).
+	// Without this the nudge tells a settled orchestrator to send done; runOracle increments
+	// doneAttempts unconditionally and delivers that verdict at once, while the held one arrives
+	// on release — two verdicts for one claim, and an attempt burnt on the very question the
+	// manager was being asked about.
+	if (managePause) return;
 	const agents = Object.values(state);
 	if (!agents.every((a) => a.ready && !a.busy)) return;
 	// An orchestrator run has the same host-derived terminal signal a solo run does:
@@ -1894,8 +1928,14 @@ function finish(reason) {
 	// could act on an instruction. Recorded here, before the summary is written, so the
 	// lifecycle file carries it whatever happens on the way out.
 	if (MANAGE) {
-		const accepted = /^SUCCESS/.test(reason);
-		const t0 = decideTrigger({ runEnded: { reason, accepted } });
+		// `accepted` is never inferred from the finish reason. Acceptance is an `accept`
+		// instruction's act on task.json (§6), which the supervisor neither performs nor reads;
+		// a passing oracle is a milestone CANDIDATE, and reading SUCCESS as acceptance would
+		// have the harness answer, from inside the run, the one question the manager exists to
+		// decide. So: always false here, and a run whose oracle passed has already said so
+		// through milestone_candidate — emitting run_ended_without_acceptance after it would
+		// put two contradictory readings of the same ending in the ledger.
+		const t0 = milestoneCandidateFired ? null : decideTrigger({ runEnded: { reason, accepted: false } });
 		if (t0) manageTrigger(t0.kind, { reason, doneAttempts }, t0.pauses, null);
 		if (managePause) log({ type: "manage", msg: `run ended with a ${managePause.kind} decision still owed; the held delivery is dropped` });
 	}

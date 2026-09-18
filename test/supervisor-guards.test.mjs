@@ -306,19 +306,73 @@ test("a decision releases the held delivery; a silent manager defaults after the
 	assert.ok(body.includes("unknown type"), "an unrecognised control entry is logged and ignored, never acted on");
 	assert.ok(body.includes("Date.now() >= managePause.deadline"), "the deadline must be checked on the same poll");
 	assert.ok(body.includes('jevEvent("manage:defaulted"'), "a timed-out decision must be recorded as manage:defaulted");
-	// The deadline itself is set once, where the pause is stored.
-	assert.ok(src.includes("deadline: Date.now() + MANAGE.timeoutMs"), "the pause carries its own deadline");
-	assert.ok(src.includes("if (managePause) {"), "a second trigger while a decision is owed must not pause again");
+	// The deadline is set once, where the pause is stored, and the second-trigger guard belongs
+	// to manageTrigger — both sliced to their own function rather than matched file-wide.
+	const trig = src.slice(src.indexOf("\nfunction manageTrigger("));
+	const trigBody = trig.slice(0, trig.indexOf("\n}\n"));
+	assert.ok(trigBody.includes("deadline: Date.now() + MANAGE.timeoutMs"), "the pause carries its own deadline");
+	assert.ok(trigBody.includes("if (managePause) {"), "a second trigger while a decision is owed must not pause again");
+	// The wait was not idleness: the clock the nudge reads restarts when the pause lifts.
+	const rel = src.slice(src.indexOf("\nfunction releasePause("));
+	assert.ok(rel.slice(0, rel.indexOf("\n}\n")).includes("lastActivity = Date.now();"), "releasing a pause must refresh lastActivity");
+});
+
+// The orchestrator is blocked on a delivery the supervisor is deliberately withholding, and
+// nothing refreshes lastActivity while it waits. idleNudgeSec (120 s) and the decision timeout
+// (120 000 ms) are the same order, so the nudge fires inside the pause window: it would tell a
+// settled orchestrator to send done, runOracle would increment doneAttempts and deliver that
+// verdict at once, and the held one would arrive on release — two verdicts for one claim, and
+// an attempt burnt on the very question the manager was being asked about.
+test("a run holding a manager decision is not idle", () => {
+	const src = supervisorSource();
+	const at = src.indexOf("\nfunction checkIdle() {");
+	assert.ok(at >= 0, "could not locate checkIdle in supervisor.mjs");
+	const body = src.slice(at + 1);
+	const fn = body.slice(0, body.indexOf("\n}\n"));
+	assert.ok(fn.includes("if (managePause) return;"), `checkIdle must treat a held decision as waiting, not idleness; found:\n${fn.slice(0, 400)}`);
+	assert.ok(fn.indexOf("if (managePause) return;") < fn.indexOf("a.ready && !a.busy"), "the guard must precede the readiness test that would otherwise call the run idle");
+});
+
+// §4's first row, and the one trigger that asks the manager to accept a milestone. It has to be
+// recorded before finish(), which tears the run down.
+test("a passing oracle emits milestone_candidate before the run finishes, and suppresses the run-ended trigger", () => {
+	const src = supervisorSource();
+	const at = src.indexOf("if (total > 0 && pass === total) {");
+	assert.ok(at >= 0, "the oracle pass path must be a block, so the trigger can precede finish()");
+	const block = src.slice(at, src.indexOf('return finish("SUCCESS: oracle passed");', at));
+	assert.ok(block.includes("decideTrigger({ oraclePassed: true })"), "the pass path must ask decideTrigger, not name the kind itself");
+	assert.ok(block.includes("milestoneCandidateFired = true;"), "and record that this run's ending is already accounted for");
+	// finish() never reads acceptance out of its own reason string.
+	const fin = src.slice(src.indexOf("\nfunction finish(reason) {"));
+	const body = fin.slice(0, fin.indexOf("\n\tconst t = totals();"));
+	assert.ok(body.includes("runEnded: { reason, accepted: false }"), "acceptance is an accept instruction's act on task.json, never inferred from a finish reason");
+	assert.ok(body.includes("milestoneCandidateFired ? null :"), "a run that already said milestone_candidate must not also say it ended unaccepted");
+	assert.ok(!body.includes("/^SUCCESS/.test(reason)"), "the old inference must be gone");
+});
+
+// A threshold at or above the attempt cap can never pause, and nothing at runtime says so.
+test("an unreachable failThreshold is warned about at startup, like jev's missing key", () => {
+	const src = supervisorSource();
+	const line = src.split("\n").find((l) => l.includes("the oracle_failed_repeatedly pause can never fire"));
+	assert.ok(line, "the failThreshold warning is missing");
+	assert.ok(line.includes("console.error"), "it is a startup warning on stderr, not an audit line");
+	const guard = src.split("\n").find((l) => l.includes("MANAGE.failThreshold <= 0 || MANAGE.failThreshold >= CAPS.doneAttempts"));
+	assert.ok(guard, "both the non-positive and the unreachable case must be covered");
+	assert.ok(guard.includes("if (MANAGE &&"), "and the warning must not fire in a run with no manager");
 });
 
 test("a trigger writes a lifecycle event and an audit line, and asks for a packet rather than building one", () => {
 	const src = supervisorSource();
-	assert.ok(src.includes('jevEvent("manage:trigger", { kind, pauses: Boolean(pauses), packetRequest: { runId, detail } });'), "manage:trigger carries kind, pauses and the packet request");
-	assert.ok(src.includes('log({ type: "manage"'), "triggers are audited under type manage");
+	// Both sliced to manageTrigger: matched file-wide, either would pass on any manage line
+	// anywhere in the supervisor and say nothing about where the trigger is recorded.
+	const trig = src.slice(src.indexOf("\nfunction manageTrigger("));
+	const trigBody = trig.slice(0, trig.indexOf("\n}\n"));
+	assert.ok(trigBody.includes('jevEvent("manage:trigger", { kind, pauses: Boolean(pauses), packetRequest: { runId, detail } });'), "manage:trigger carries kind, pauses and the packet request");
+	assert.ok(trigBody.includes('log({ type: "manage", msg: `trigger ${kind}'), "and every trigger is audited under type manage as it is emitted");
 	// The run's own ending is a trigger, but never a pause: finish() kills the processes.
 	const fin = src.slice(src.indexOf("\nfunction finish(reason) {"));
 	const body = fin.slice(0, fin.indexOf("\n\tconst t = totals();"));
-	assert.ok(body.includes("decideTrigger({ runEnded: { reason, accepted } })"), "finish() must emit the run-ended trigger");
+	assert.ok(body.includes("decideTrigger({ runEnded: { reason, accepted: false } })"), "finish() must emit the run-ended trigger");
 	assert.ok(body.indexOf("decideTrigger") < body.indexOf("finished = true"), "the trigger is recorded before the teardown begins");
 	assert.ok(body.includes("t0.pauses, null)"), "nothing can be held at the end of a run — there is no delivery left to withhold");
 });
