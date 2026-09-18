@@ -11,11 +11,13 @@ run it actually performs, and leaves any section it skips marked as not run.
 
 | task | what | state |
 |---|---|---|
-| 1 | task state, ledger, packet assembler | merged |
-| 2 | triggers, pause, supervisor wiring, instruction executor (`continue`, `correct`, `escalate`) | merged |
-| 3 | `restore` and `compare` over the fork runner; findings | merged |
-| 4 | `accept` with the four evidence kinds; checkpoints | merged |
-| 5 | manager driver, replay harness, `serve` loop | this branch |
+| 1 | task state, ledger, packet assembler | on this branch |
+| 2 | triggers, pause, supervisor wiring, instruction executor (`continue`, `correct`, `escalate`) | on this branch |
+| 3 | `restore` and `compare` over the fork runner; findings | on this branch |
+| 4 | `accept` with the four evidence kinds; checkpoints | on this branch |
+| 5 | manager driver, replay harness, `serve` loop | on this branch |
+
+All five are on `management` and none is on `master`.
 
 ## 1. Trigger and pause (Task 2, step 9)
 

@@ -216,8 +216,16 @@ test("any instruction whose args mention acceptance is refused — criteria are 
 	assert.equal(r.code, "precondition");
 	assert.match(r.refusal, /immutable/);
 	// Nested and renamed, too: the check is over the rendered args, not a key list.
-	const deep = validateInstruction(instr({ verb: "correct", args: { runId: RUN_ID, message: "please relax the acceptance criteria" } }), { task, packet: packetFor(task), taskDir: dir });
-	assert.equal(deep.code, "precondition");
+	const nested = validateInstruction(instr({ verb: "restore", args: { checkpoint: "ck-0007", approach: { config: "x", notes: { acceptance: "loosen it" } } } }), { task, packet: packetFor(task), taskDir: dir });
+	assert.equal(nested.code, "precondition");
+
+	// But a CORRECTION may say the word. It is prose handed to the orchestrator, written nowhere
+	// near acceptance, and "the acceptance criteria say 70/70 — you are at 68" is the most useful
+	// correction there is; refusing it taught the manager to talk around the word rather than
+	// protecting anything. Only `message` is exempt — a sibling key is still scanned, as the
+	// refusal above shows.
+	const honest = validateInstruction(instr({ verb: "correct", args: { runId: RUN_ID, message: "the acceptance criteria say all 70 cases must pass; you are at 68" } }), { task, packet: packetFor(task), taskDir: dir });
+	assert.deepEqual(honest, { ok: true });
 });
 
 // The refusal above tells the manager to escalate instead, so an escalate that cannot name the
@@ -234,8 +242,9 @@ test("escalate is exempt from the acceptance scan — it is the escape hatch the
 	const after = loadTask(dir);
 	assert.equal(after.acceptance.hash, task.acceptance.hash);
 	assert.equal(after.blockers[0].text, reason);
-	// The other five verbs keep the scan. (A fresh key: the escalate above took p7-v4.)
-	assert.equal(validateInstruction(instr({ idempotencyKey: "p7-v4-correct", verb: "correct", args: { runId: RUN_ID, message: reason } }), { task, packet: packetFor(task), taskDir: dir }).code, "precondition");
+	// The other five verbs keep the scan over every arg but a correction's prose. (A fresh key:
+	// the escalate above took p7-v4.)
+	assert.equal(validateInstruction(instr({ idempotencyKey: "p7-v4-restore", verb: "restore", args: { checkpoint: "ck-0007", approach: { config: "x", why: reason } } }), { task, packet: packetFor(task), taskDir: dir }).code, "precondition");
 });
 
 // A refusal is a ledger row, but it is not an execution. Reusing the key after one is the

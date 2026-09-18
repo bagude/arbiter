@@ -249,6 +249,26 @@ test("a playthrough script that does not exist is refused before anything is spa
 	assert.match(r.reason, /does not exist/);
 });
 
+test("a relative playthrough criterion cannot climb out of the repo", () => {
+	const f = fixture();
+	let spawned = 0;
+	const spawn = () => (spawned++, { status: 0 });
+	// The one evidence kind with no containment check: a relative path is resolved against the
+	// repo root, so `../../anything.js` ran whatever sat outside it. Criteria are human-written
+	// and hashed, so this is the accident, not the attack — and it is the same check the artifact
+	// kind already makes.
+	const r = checkEvidence(criterion("playthrough:../../anything.mjs", "c2"), { taskDir: f.taskDir, checkpoint: f.checkpoint, runsDir: f.runsDir, evidence: [], spawn });
+	assert.equal(r.ok, false);
+	assert.equal(spawned, 0);
+	assert.match(r.reason, /resolves outside the repo/);
+	// An absolute criterion names one exact file and is left alone — a path a human wrote out in
+	// full is a choice rather than a climb.
+	const script = path.join(f.taskDir, "play.mjs");
+	fs.writeFileSync(script, "process.exit(0)\n");
+	assert.equal(checkEvidence(criterion(`playthrough:${script}`, "c2"), { taskDir: f.taskDir, checkpoint: f.checkpoint, runsDir: f.runsDir, evidence: [], spawn }).ok, true);
+	assert.equal(spawned, 1);
+});
+
 // A real child process, once: the injected spawn above proves the wiring, this proves the
 // default is a working one.
 test("with no injected spawn, the real script decides", () => {

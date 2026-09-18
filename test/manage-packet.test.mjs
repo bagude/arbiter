@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, setCurrent, spendBudget } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
-import { appendFinding, appendLedger, reverseRow } from "../lib/manage/ledger.mjs";
+import { appendFinding, appendLedger, reverseRow, settleFinding } from "../lib/manage/ledger.mjs";
 
 const criteria = [{ id: "c1", text: "all 70 oracle cases pass", check: "oracle:tasks/pathnorm/oracle" }];
 const milestones = [{ id: "m1", title: "pass", criteria: ["c1"] }];
@@ -338,6 +338,51 @@ test("bounding ladder drops tail, then chain, in order, and the FINAL rendered p
 	assert.deepEqual(tight.run.chain, [], "chain goes second, because tail alone was not enough");
 	assert.deepEqual(tight.bounded, ["tail", "chain"]);
 	assert.ok(JSON.stringify(tight).length <= 8000, "the size check must include packet.bounded itself, not just the pre-assignment render");
+});
+
+test("a packet that cannot be redacted is refused by name, not thrown as a bare parse error", () => {
+	const taskDir = mkTaskDir();
+	const runDir = mkRunDir();
+	// The one JSON.parse in the path a PAUSED orchestrator is waiting on. No input is known to
+	// break redact's round trip — every replacement is a bracketed literal or a $1 that reproduces
+	// its own captured prefix — so the guard is exercised by making the parse fail on purpose.
+	const bad = () => { throw new SyntaxError("Unexpected token } in JSON at position 12"); };
+	const real = JSON.parse;
+	JSON.parse = new Proxy(real, { apply: (t, self, args) => (args[0]?.includes?.('"packetId"') ? bad() : Reflect.apply(t, self, args)) });
+	try {
+		assert.throws(
+			() => assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended", runId: "r1" } }),
+			/the redacted packet is not valid JSON and cannot be sent/,
+		);
+	} finally {
+		JSON.parse = real;
+	}
+});
+
+test("findings are the last rung: candidates go first, then the list, so a long-lived task still fits", () => {
+	const taskDir = mkTaskDir();
+	const runDir = mkRunDir();
+	// The mechanism behind the deferred Task 1 minor: `task` is verbatim by design and
+	// readFindings is unsliced, so a task that has accumulated findings grows every packet with
+	// nothing left to drop once the tail, the chain and the worker summaries are gone.
+	for (let i = 0; i < 12; i++) {
+		appendFinding(taskDir, { id: `f${i}`, scope: "harness:pathnorm", claim: `a claim about gathers, number ${i}, ${"padding ".repeat(40)}`, settlement_criterion: "A equals G across 3 replicates on 2 runs", evidence: [`docs/batch/fork-${i}.md`] });
+	}
+	settleFinding(taskDir, "f0", { status: "verified", verifiedOn: ["run-a", "run-b"] });
+
+	const full = assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended", runId: "r1" } });
+	assert.equal(full.history.settledFindings.length, 12);
+
+	const size = JSON.stringify(full).length;
+	const someFindings = assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended", runId: "r1" }, maxChars: size - 2000 });
+	assert.deepEqual(someFindings.history.settledFindings.map((f) => f.id), ["f0"], "the verified one is what a later decision can rely on");
+	assert.ok(someFindings.bounded.includes("candidate findings"));
+
+	const none = assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended", runId: "r1" }, maxChars: 1000 });
+	assert.deepEqual(none.history.settledFindings, []);
+	assert.ok(none.bounded.includes("findings"));
+	// Every earlier rung went first: findings are the last thing dropped, not the first.
+	assert.ok(none.bounded.indexOf("findings") > none.bounded.indexOf("tail"));
 });
 
 // §2 puts task.json in the packet verbatim, and `current.activeBranches` keeps a finished batch

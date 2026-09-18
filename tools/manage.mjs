@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 // loadTask, never saveTask: `accept` needs the version its synthetic packet is built on, and
 // reading is not writing — the batch child still never writes task.json (markBatchDone).
-import { createTask, loadTask, budgetLeft } from "../lib/manage/task-state.mjs";
+import { createTask, loadTask, budgetLeft, StaleVersion } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
 import { readLedger, readFindings, appendFinding, settleFinding, recordOutcome, appendLedger } from "../lib/manage/ledger.mjs";
 import { executeInstruction, registerRunForTrigger } from "../lib/manage/instructions.mjs";
@@ -104,7 +104,21 @@ function cmdPacket(argv) {
 	// `continue` and `correct` are refused for a run that is not in that list. The packet has to
 	// carry the version this registration produced, because that is the version the manager's
 	// `basedOnStateVersion` will name.
-	const registered = registerRunForTrigger(taskDir, trigger, { runsDir: runsRoot });
+	//
+	// Retried once on a lost compare-and-swap: the registration is a read-modify-write, and an
+	// executor answering another packet at the same moment makes this one the loser. Inside
+	// `serve` that throw is caught and the trigger is skipped (a defined degradation); at a
+	// terminal it was a stack trace and no packet at all, for a race that a re-read resolves.
+	let registered = null;
+	for (let attempt = 0; ; attempt++) {
+		try {
+			registered = registerRunForTrigger(taskDir, trigger, { runsDir: runsRoot });
+			break;
+		} catch (err) {
+			if (!(err instanceof StaleVersion) || attempt >= 1) throw err;
+			console.error(`[manage] ${runId}: the task moved while registering it (${err.message}); re-reading and retrying once`);
+		}
+	}
 	if (registered) console.error(`[manage] ${runId}: activeRuns is now [${registered.current.activeRuns.join(", ")}] at stateVersion ${registered.stateVersion}`);
 	const packet = assemblePacket({ taskDir, runDir, trigger });
 	const file = writePacket(taskDir, packet);
