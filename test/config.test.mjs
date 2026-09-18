@@ -287,9 +287,9 @@ test("loadConfig passes the jev block through unchanged (the supervisor normalis
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-jev-"));
 	const f = path.join(dir, "c.json");
 	fs.writeFileSync(f, JSON.stringify({ task: "pathnorm", pattern: "orchestrator", roles: { orchestrator: { provider: "llama.cpp", model: "m" } }, workers: { default: { provider: "llama.cpp", model: "m" } }, jev: { enabled: true, doneGuard: "shadow", transcriptEgress: true } }));
-	const cfg = loadConfig({ configPath: f, env: {} });
+	const cfg = loadConfig({ configPath: f, env: { ARBITER_SKIP_MODEL_PREFLIGHT: "1" } });
 	assert.deepEqual(cfg.jev, { enabled: true, doneGuard: "shadow", transcriptEgress: true });
 	fs.writeFileSync(f, JSON.stringify({ task: "pathnorm", pattern: "orchestrator", roles: { orchestrator: { provider: "llama.cpp", model: "m" } }, workers: { default: { provider: "llama.cpp", model: "m" } } }));
-	assert.equal(loadConfig({ configPath: f, env: {} }).jev, null, "absent → null, so the supervisor's default (off) applies");
+	assert.equal(loadConfig({ configPath: f, env: { ARBITER_SKIP_MODEL_PREFLIGHT: "1" } }).jev, null, "absent → null, so the supervisor's default (off) applies");
 	fs.rmSync(dir, { recursive: true, force: true });
 });
