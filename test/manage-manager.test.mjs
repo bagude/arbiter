@@ -15,6 +15,7 @@ import {
 	requestBody, runsForTask, serve, supervisorDeadlineMs, systemPrompt, triggerEvents,
 	unsupportedModelReason,
 } from "../lib/manage/manager.mjs";
+import { parseCheckpoint } from "../lib/manage/instructions.mjs";
 import { readApiKey, splitArgs, valueFlag } from "../tools/manage.mjs";
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "tools", "manage.mjs");
@@ -109,6 +110,34 @@ test("decide sends the packet as the user message under the system prompt and fo
 	assert.deepEqual(body.tool_choice, { type: "tool", name: "instruct" });
 	assert.equal(body.tools.length, 1);
 	assert.deepEqual(body.tools[0].input_schema.properties.verb.enum, ["continue", "correct", "restore", "compare", "accept", "escalate"]);
+});
+
+/**
+ * Every checkpoint form the manager is TAUGHT, made concrete.
+ *
+ * The bug this exists for is "two files describe one grammar": the tool description and the
+ * system prompt both documented `run:<id>@<call>` while the parser only ever accepted
+ * `run:<runId>#<call>`, so `restore` and `compare` from a captured inference were refused on
+ * every packet. Reading the forms out of the prose is the point — a test that repeated the
+ * grammar by hand would have passed all along.
+ */
+const checkpointForms = (text) =>
+	[...text.matchAll(/run:[^\s`,;)|]+|\bck-[A-Za-z0-9]+\b/g)]
+		.map((m) => m[0])
+		.map((form) => form.replace(/<runId>|<id>/g, "2026-09-18T05-36-41").replace(/<call>/g, "21").replace(/^ck-[A-Za-z]+$/, "ck-0007"));
+
+test("every checkpoint form the manager is taught is one the parser accepts", () => {
+	for (const [what, text] of [["the instruct tool", INSTRUCT_TOOL.description], ["the system prompt", systemPrompt()]]) {
+		const forms = [...new Set(checkpointForms(text))];
+		assert.ok(forms.length >= 2, `${what} should name both checkpoint kinds (found ${JSON.stringify(forms)})`);
+		for (const form of forms) {
+			const parsed = parseCheckpoint(form);
+			assert.ok(parsed, `${what} names ${JSON.stringify(form)}, which parseCheckpoint rejects`);
+			assert.equal(parsed.kind, form.startsWith("run:") ? "run" : "ck");
+		}
+		assert.ok(forms.some((f) => f.startsWith("run:")), `${what} must name a captured inference`);
+		assert.ok(forms.some((f) => f.startsWith("ck-")), `${what} must name an accepted checkpoint`);
+	}
 });
 
 test("requestBody carries the six verbs as an enum and the rationale limit", () => {

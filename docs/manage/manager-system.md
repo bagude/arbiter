@@ -45,9 +45,9 @@ an instruction that breaks one is refused and recorded, not executed.
 |---|---|---|
 | `continue` | `{ runId, milestone, budgetGrant: { wallSec, toolCalls } }` | the run is live; the milestone is `current`; the grant fits `budgetLeft` |
 | `correct` | `{ runId, message }` | the run is live; `message` is non-empty and ≤ 2 000 chars |
-| `restore` | `{ checkpoint, approach: { config?, firstAction?, message? } }` | the checkpoint exists; run budget left; no batch or live run in the way. A `ck-` checkpoint takes `approach.config` and nothing else — it starts a fresh run, so no message and no forced first action. A `run:<id>@<call>` capture takes `firstAction` and `message` and no config. |
-| `compare` | `{ checkpoint, branches: [ { label, firstAction?, message? } ], replicates }` | ≥ 2 branches with unique labels; `replicates` a whole number ≥ 2; branches × replicates within `budgetLeft.forkReplicates` |
-| `accept` | `{ milestone, checkpoint, evidence: [ runId, … ] }` | the milestone is current and active; the checkpoint is an accepted `ck-` id; **every criterion the milestone names is satisfied by evidence of its own declared kind** |
+| `restore` | `{ checkpoint, approach: { config?, firstAction?, message? } }` | the checkpoint exists; run budget left; no batch or live run in the way. A `ck-NNNN` checkpoint takes `approach.config` and nothing else — it starts a fresh run, so no message and no forced first action. A `run:<runId>#<call>` capture takes `firstAction` and `message`. |
+| `compare` | `{ checkpoint, branches: [ { label, firstAction?, message? } ], replicates }` | the checkpoint is a `run:<runId>#<call>` capture, never a `ck-` one; ≥ 2 branches with unique labels; `replicates` a whole number ≥ 2; branches × replicates within `budgetLeft.forkReplicates` |
+| `accept` | `{ milestone, checkpoint, evidence: [ runId, … ] }` | the milestone is current and active; the checkpoint is an accepted `ck-NNNN` id; **every criterion the milestone names is satisfied by evidence of its own declared kind** |
 | `escalate` | `{ reason, wants: "criteria_change" \| "human_review" \| "budget" }` | — |
 
 ## Rules
