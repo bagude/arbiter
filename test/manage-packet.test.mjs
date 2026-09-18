@@ -160,6 +160,14 @@ test("tools/manage.mjs packet succeeds against a live run directory", () => {
 	// BEFORE the packet, so the version the manager answers with is the one it produced.
 	assert.deepEqual(loadTask(taskDir).current.activeRuns, [runId]);
 	assert.equal(written.task.stateVersion, loadTask(taskDir).stateVersion, "the packet carries the post-registration version");
+	// And it is the registration's own version, not merely the latest: the command says which it
+	// wrote, and that is the number the manager's basedOnStateVersion has to match.
+	const said = /stateVersion (\d+)/.exec(r.stderr);
+	assert.ok(said, `the packet command must report the version it registered at; stderr was: ${r.stderr}`);
+	assert.equal(written.task.stateVersion, Number(said[1]));
+	// The derived live list travels with it, beside pendingBatches.
+	assert.deepEqual(written.options.pendingRuns, [runId], "the run this packet is about is live");
+	assert.deepEqual(written.options.pendingBatches, []);
 	assert.equal(written.task.current.activeRuns[0], runId);
 
 	// And the run leaving is the same path in reverse.

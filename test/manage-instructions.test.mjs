@@ -11,6 +11,22 @@ import { INSTRUCTION_VERBS, validateInstruction, executeInstruction, controlAppe
 
 const RUN_ID = "2026-09-18T01-02-03";
 
+/** A run as it looks on disk. `ended` writes summary.json; `quietForMs` backdates its audit. */
+function mkRun(runsDir, runId, { ended = false, quietForMs = 0, audit = true } = {}) {
+	const dir = path.join(runsDir, runId);
+	fs.mkdirSync(dir, { recursive: true });
+	if (audit) {
+		const f = path.join(dir, "audit.jsonl");
+		fs.writeFileSync(f, JSON.stringify({ t: "1.0", type: "tool", msg: "bash npm test" }) + "\n");
+		if (quietForMs) {
+			const when = new Date(Date.now() - quietForMs);
+			fs.utimesSync(f, when, when);
+		}
+	}
+	if (ended) fs.writeFileSync(path.join(dir, "summary.json"), JSON.stringify({ runId, reason: "SUCCESS: oracle passed" }));
+	return dir;
+}
+
 /**
  * A task at stateVersion 4 with one live run. The version is reached by saving until the file
  * says 4 rather than by writing the number: saveTask bumps on every write (createTask persists
@@ -27,6 +43,9 @@ function fixture({ budget = { wallSec: 14400, runs: 20, forkReplicates: 24 }, ac
 		milestones: [{ id: "m1", title: "first", criteria: ["c1"] }],
 		budget,
 	});
+	// A registered run has a run directory being written to — that is what makes it live
+	// (pendingRuns). A fixture without one describes a state the harness reads as over.
+	for (const id of activeRuns) mkRun(runsDir, id);
 	task = saveTask(dir, setCurrent(task, { activeRuns, checkpoint: "ck-0007" }));
 	while (loadTask(dir).stateVersion < 4) task = saveTask(dir, task);
 	assert.equal(loadTask(dir).stateVersion, 4, "fixture must be at version 4");
@@ -509,9 +528,10 @@ test("a batch is not stale while its own shape says it should still be running",
 // only the instruction answering them could not validate.
 test("a live trigger registers its run; an ended trigger removes it; a second packet does neither twice", () => {
 	const { dir, runsDir } = fixture({ activeRuns: [] });
+	mkRun(runsDir, RUN_ID); // the run the supervisor just triggered on, as it is on disk
 	const t = (kind) => ({ kind, runId: RUN_ID, detail: {} });
 
-	const registered = registerRunForTrigger(dir, t("oracle_failed_repeatedly"));
+	const registered = registerRunForTrigger(dir, t("oracle_failed_repeatedly"), { runsDir });
 	assert.deepEqual(registered.current.activeRuns, [RUN_ID]);
 	assert.equal(readLedger(dir).at(-1).kind, "run_registered");
 
@@ -534,22 +554,6 @@ test("a live trigger registers its run; an ended trigger removes it; a second pa
 	assert.equal(registerRunForTrigger(dir, { kind: "not_a_trigger", runId: RUN_ID }), null);
 	assert.equal(registerRunForTrigger(dir, { kind: "escalation" }), null, "a trigger with no run is not about a run");
 });
-
-/** A run as it looks on disk. `ended` writes summary.json; `quietForMs` backdates its audit. */
-function mkRun(runsDir, runId, { ended = false, quietForMs = 0, audit = true } = {}) {
-	const dir = path.join(runsDir, runId);
-	fs.mkdirSync(dir, { recursive: true });
-	if (audit) {
-		const f = path.join(dir, "audit.jsonl");
-		fs.writeFileSync(f, JSON.stringify({ t: "1.0", type: "tool", msg: "bash npm test" }) + "\n");
-		if (quietForMs) {
-			const when = new Date(Date.now() - quietForMs);
-			fs.utimesSync(f, when, when);
-		}
-	}
-	if (ended) fs.writeFileSync(path.join(dir, "summary.json"), JSON.stringify({ runId, reason: "SUCCESS: oracle passed" }));
-	return dir;
-}
 
 // The trigger's runId is the harness's, but `packet` is also a command an operator types. An id
 // with no run directory would register as live and then refuse every restore and compare on
@@ -581,7 +585,12 @@ test("a registered run stops counting when it wrote a summary, or when its audit
 	mkRun(runsDir, "quiet", { quietForMs: 45 * 60 * 1000 });
 	mkRun(runsDir, "just-started", { audit: false });
 
-	assert.deepEqual(pendingRuns(task, { runsDir }), ["alive", "just-started"], "a run that has written no audit line yet may have started seconds ago");
+	assert.deepEqual(pendingRuns(task, { runsDir }), ["alive", "just-started"], "a directory with no audit line yet may have started seconds ago");
+	// A run id with no directory at all is a different case, and a conclusive one: the supervisor
+	// makes that directory before it does anything else.
+	const gone = { ...task, current: { ...task.current, activeRuns: ["never-was"] } };
+	assert.deepEqual(settledRuns(gone, runsDir).map((r) => [r.runId, r.why]), [["never-was", "ended"]]);
+	assert.deepEqual(pendingRuns(gone, { runsDir }), []);
 	assert.deepEqual(settledRuns(task, runsDir).map((r) => [r.runId, r.why]), [["finished", "ended"], ["quiet", "stale"]]);
 	// The ceiling is a ceiling on silence: the same run is live under a longer one.
 	assert.equal(pendingRuns(task, { runsDir, staleRunMs: 60 * 60 * 1000 }).includes("quiet"), true);
