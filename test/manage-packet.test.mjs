@@ -119,9 +119,20 @@ test("a packet can be built for a LIVE run, which has no summary.json", () => {
 	assert.deepEqual(packet.run.oracle, [{ attempt: 1, pass: 68, total: 70 }]);
 	assert.equal(packet.run.doneAttempts, 1, "the oracle-N directories say how many attempts have happened");
 	assert.deepEqual(packet.run.workers.map((w) => [w.wid, w.type, w.status]), [["worker:a", "tester", "completed"]]);
-	// Cost and tokens live in the supervisor's memory, not in any file the run writes, so they
-	// are reported as zero rather than guessed at.
-	assert.equal(packet.run.tokens, 0);
+	// Tokens live in the supervisor's memory and reach disk only in finish(). Zero would read as
+	// a measurement — a run that decoded nothing — which is a different claim from "not known
+	// yet", and the manager is being asked to judge cost. Null, and named in `partial`.
+	assert.equal(packet.run.tokens, null);
+	// The config is the same kind of gap: only summary.json records configPath, and `run.config`
+	// is where a restore or compare gets the config to spawn with.
+	assert.equal(packet.run.config, null);
+	assert.deepEqual(packet.run.partial, ["tokens", "config"]);
+
+	// A run that does carry its config leaves only tokens unknown.
+	fs.writeFileSync(path.join(runDir, "config.json"), JSON.stringify({ task: "pathnorm" }));
+	const withConfig = assemblePacket({ taskDir, runDir, trigger: { kind: "oracle_failed_repeatedly", runId: path.basename(runDir), detail: {} } });
+	assert.equal(withConfig.run.config, path.join(runDir, "config.json"));
+	assert.deepEqual(withConfig.run.partial, ["tokens"]);
 	// And the rest of the §2 shape is unchanged: the manager gets the same fields either way.
 	for (const k of ["milestone", "guards", "decisions", "heads", "chain", "tail"]) assert.ok(k in packet.run, `run.${k} missing`);
 	assert.ok(packet.options.verbsAllowed.includes("continue"));
