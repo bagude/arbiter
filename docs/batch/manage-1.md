@@ -1,0 +1,75 @@
+# Management interface — first live checks
+
+Date: 2026-09-18. Spec: `docs/superpowers/specs/2026-09-18-management-interface-design.md`.
+Plan: `docs/superpowers/plans/2026-09-18-management-interface.md`.
+
+This is the log of the live checks for Tasks 2–5. **Every section below is a skeleton written
+with the code, not a result.** Nothing here was run; the controller fills each section from the
+run it actually performs, and leaves any section it skips marked as not run.
+
+## 0. What was built
+
+| task | what | state |
+|---|---|---|
+| 1 | task state, ledger, packet assembler | merged |
+| 2 | triggers, pause, supervisor wiring, instruction executor (`continue`, `correct`, `escalate`) | merged |
+| 3 | `restore` and `compare` over the fork runner; findings | merged |
+| 4 | `accept` with the four evidence kinds; checkpoints | merged |
+| 5 | manager driver, replay harness, `serve` loop | this branch |
+
+## 1. Trigger and pause (Task 2, step 9)
+
+Config: pathnorm with `manage: { enabled: true, failThreshold: 1, taskDir: … }`.
+
+- [ ] `manage:trigger` fires on the first failed verdict, and the delivery waits.
+- [ ] `tools/manage.mjs execute` with a `correct` releases it, with the message delivered.
+- [ ] A second run with no executor defaults after 120 s with `manage:defaulted`.
+
+Run ids, lifecycle lines and the audit excerpts go here.
+
+## 2. Restore and compare (Task 3)
+
+- [ ] A `restore` from a captured inference produces a run, and its id lands as an outcome row.
+- [ ] A `compare` of two branches × 2 replicates writes reports, a candidate finding and a
+      `comparison_ready` packet.
+
+The compare table and the finding ids go here.
+
+## 3. Acceptance (Task 4)
+
+- [ ] A milestone is accepted only with evidence of the kind its criterion declares.
+- [ ] A missing-evidence `accept` is refused and the refusal names the criterion.
+- [ ] A checkpoint candidate is preserved by the run and promoted by hand.
+
+## 4. First live manager (Task 5, step 4)
+
+One pathnorm task with `manage.enabled` on a config that fails at least once, with
+`node tools/manage.mjs serve <taskDir> --run <runId>` driving the decisions.
+
+| packet | trigger | verb | rationale (abridged) | outcome | manager ms |
+|---|---|---|---|---|---|
+| | | | | | |
+
+Notes on what the manager saw and whether the instruction was the right one go here.
+
+## 5. Manager selection by replay (§7)
+
+The same packets replayed against cheaper candidates:
+
+```
+node tools/manage.mjs replay <taskDir> --model claude-sonnet-5
+node tools/manage.mjs replay <taskDir> --model claude-haiku-4-5
+```
+
+| model | agreement | by trigger kind | cost |
+|---|---|---|---|
+| claude-opus-5 (live) | — | — | |
+| claude-sonnet-5 | | | |
+| claude-haiku-4-5 | | | |
+
+Confusion table (ledger verb → candidate verb) and the routing conclusion go here: which trigger
+kinds a cheap manager may answer, and which go to the expensive one.
+
+## 6. What this changes
+
+Findings, open questions and the next slice go here.

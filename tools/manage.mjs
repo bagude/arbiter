@@ -1,9 +1,14 @@
 // tools/manage.mjs — CLI over lib/manage/*: create a task, assemble+write an observation
 // packet from an existing run's records, execute one manager instruction, and print the
-// ledger. No network. `execute` is the only command with an effect outside the task
+// ledger. `execute` is the only command with an effect outside the task
 // directory, and even that reaches a live run through one appended file
 // (runs/<id>/control.jsonl) which the supervisor tails — this process never touches an
 // agent, a workspace or the oracle.
+//
+// Three commands DO reach the network, and only these: `decide`, `replay` and `serve` call the
+// Messages API through lib/manage/manager.mjs. The key is read here and nowhere else (§3's
+// driver is pure over an injected fetch), from ANTHROPIC_API_KEY or the repo's .env, and it is
+// never printed, never logged and never put in an error message.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +20,7 @@ import { readLedger, readFindings, appendFinding, settleFinding, recordOutcome, 
 import { executeInstruction, registerRunForTrigger } from "../lib/manage/instructions.mjs";
 import { listCheckpoints, promoteCandidate, isCandidateId } from "../lib/manage/checkpoint.mjs";
 import { compareTable, findingsFromCompare, incompleteBranches, settleOrAppend } from "../lib/manage/compare.mjs";
+import { decide, replay, serve, DEFAULT_MANAGER_MODEL } from "../lib/manage/manager.mjs";
 import { runBatch, runOnce } from "./fork.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -30,7 +36,10 @@ const USAGE = `usage:
   node tools/manage.mjs checkpoint list <taskDir>
   node tools/manage.mjs run-batch <taskDir> <compares/<n>/spec.json>
   node tools/manage.mjs compare-ready <taskDir> <compares/<n>>
-  node tools/manage.mjs ledger <taskDir>`;
+  node tools/manage.mjs ledger <taskDir>
+  node tools/manage.mjs decide <taskDir> <packetId> [--model <m>] [--execute] [--runs <dir>]
+  node tools/manage.mjs replay <taskDir> --model <m> [--packets 1,2,3]
+  node tools/manage.mjs serve <taskDir> [--model <m>] [--runs <dir>] [--run <runId>] [--once]`;
 
 /** Splits argv into --flag value pairs and the remaining positionals, in order. */
 export function splitArgs(argv) {
@@ -39,7 +48,15 @@ export function splitArgs(argv) {
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a.startsWith("--")) {
-			flags[a.slice(2)] = argv[i + 1];
+			// A flag whose next token is another flag (or nothing) is a switch, not a flag with a
+			// value: `serve <dir> --once --model m` must not read "--model" as `once`'s value and
+			// then leave "m" standing as a positional task directory.
+			const next = argv[i + 1];
+			if (next === undefined || next.startsWith("--")) {
+				flags[a.slice(2)] = true;
+				continue;
+			}
+			flags[a.slice(2)] = next;
 			i++;
 		} else {
 			positionals.push(a);
@@ -489,6 +506,90 @@ function cmdCompareReady(argv) {
 	}
 }
 
+/**
+ * The manager's key: `ANTHROPIC_API_KEY`, else an `ANTHROPIC_API_KEY=` line in the repo's `.env`.
+ * Read here and passed down as an argument — `decide` never reads the environment, which is what
+ * makes the whole driver testable without one. Returned, never printed.
+ */
+export function readApiKey({ env = process.env, root = ROOT } = {}) {
+	const fromEnv = String(env.ANTHROPIC_API_KEY ?? "").trim();
+	if (fromEnv) return fromEnv;
+	const file = path.join(root, ".env");
+	if (fs.existsSync(file)) {
+		const m = fs.readFileSync(file, "utf8").match(/^ANTHROPIC_API_KEY=(\S+)/m);
+		if (m) return m[1];
+	}
+	return null;
+}
+
+/** Exit 2 with a clear message rather than a 401 from the API — a missing key is an operator's
+ * mistake, and the run on the other side would otherwise be told the manager failed. */
+function requireApiKey() {
+	const key = readApiKey();
+	if (!key) {
+		console.error("no ANTHROPIC_API_KEY in the environment or in .env — the manager cannot be called");
+		process.exit(2);
+	}
+	return key;
+}
+
+/**
+ * `decide <taskDir> <packetId>` — one packet, one instruction, printed. With `--execute` the
+ * instruction goes through the same executor everything else uses, so the checks, the ledger row
+ * and the refusal codes are identical to a hand-written instruction's.
+ */
+async function cmdDecide(argv) {
+	const { flags, positionals } = splitArgs(argv);
+	const [taskDir, packetArg] = positionals;
+	if (!taskDir || !packetArg) return usageExit();
+	const packetFile = /^\d+$/.test(packetArg) ? path.join(taskDir, "packets", `${packetArg}.json`) : packetArg;
+	if (!fs.existsSync(packetFile)) {
+		console.error(`no packet at ${packetFile}`);
+		process.exit(2);
+	}
+	const packet = JSON.parse(fs.readFileSync(packetFile, "utf8"));
+	const decision = await decide({ packet, model: flags.model ?? DEFAULT_MANAGER_MODEL, apiKey: requireApiKey() });
+	const { manager, ...instr } = decision;
+	console.log(JSON.stringify({ ...instr, manager }, null, 2));
+	if (!("execute" in flags)) return;
+	const runsDir = flags.runs ?? path.join(here, "..", "runs");
+	reportResult(executeInstruction({ taskDir, instr, packet, runsDir, manager }));
+}
+
+/** `replay <taskDir> --model m` — §7's offline evaluation of a candidate manager against the
+ * packets and instructions this task already recorded. Reads the task directory and writes only
+ * under `replays/`; nothing else moves. */
+async function cmdReplay(argv) {
+	const { flags, positionals } = splitArgs(argv);
+	const [taskDir] = positionals;
+	if (!taskDir) return usageExit();
+	const packetIds = flags.packets ? String(flags.packets).split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n)) : null;
+	await replay({ taskDir, packetIds, model: flags.model ?? DEFAULT_MANAGER_MODEL, apiKey: requireApiKey() });
+}
+
+/**
+ * `serve <taskDir>` — the loop the first live manager runs in: watch this task's live runs for
+ * `manage:trigger`, and for each one assemble a packet, decide and execute.
+ *
+ * `--run <runId>` adopts a run explicitly. It earns its place because a run is not in
+ * `current.activeRuns` until its first trigger is registered, and a live run's config is
+ * recorded nowhere the harness can read (see runsForTask): without it the first trigger of a
+ * brand-new run has no way to be attributed to this task.
+ */
+async function cmdServe(argv) {
+	const { flags, positionals } = splitArgs(argv);
+	const [taskDir] = positionals;
+	if (!taskDir) return usageExit();
+	const runsDir = flags.runs ?? path.join(here, "..", "runs");
+	await serve({
+		taskDir, runsDir,
+		model: flags.model ?? DEFAULT_MANAGER_MODEL,
+		apiKey: requireApiKey(),
+		once: "once" in flags,
+		adopt: flags.run ? [flags.run] : [],
+	});
+}
+
 function cmdLedger(argv) {
 	const { positionals } = splitArgs(argv);
 	const [taskDir] = positionals;
@@ -508,13 +609,17 @@ export function main(argv = process.argv.slice(2)) {
 	if (cmd === "run-batch") return cmdRunBatch(rest);
 	if (cmd === "compare-ready") return cmdCompareReady(rest);
 	if (cmd === "ledger") return cmdLedger(rest);
+	if (cmd === "decide") return cmdDecide(rest);
+	if (cmd === "replay") return cmdReplay(rest);
+	if (cmd === "serve") return cmdServe(rest);
 	return usageExit();
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-	// `run-batch` is the one async command, and it is run detached with nothing watching: an
-	// unhandled rejection there would be a stack trace into a log file nobody reads. Said on
-	// stderr with a non-zero exit instead, so the batch log's last line names the failure.
+	// `run-batch`, `decide`, `replay` and `serve` are the async commands, and `run-batch` is run
+	// detached with nothing watching: an unhandled rejection there would be a stack trace into a
+	// log file nobody reads. Said on stderr with a non-zero exit instead, so the batch log's last
+	// line names the failure.
 	Promise.resolve(main()).catch((err) => {
 		console.error(`[manage] ${err?.stack ?? err}`);
 		process.exit(1);
