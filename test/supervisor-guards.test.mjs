@@ -586,7 +586,7 @@ test("a trigger writes a lifecycle event and an audit line, and asks for a packe
 	// anywhere in the supervisor and say nothing about where the trigger is recorded.
 	const trig = src.slice(src.indexOf("\nfunction manageTrigger("));
 	const trigBody = trig.slice(0, trig.indexOf("\n}\n"));
-	assert.ok(trigBody.includes('jevEvent("manage:trigger", { kind, pauses: Boolean(pauses), packetRequest: { runId, detail } });'), "manage:trigger carries kind, pauses and the packet request");
+	assert.ok(trigBody.includes('jevEvent("manage:trigger", { kind, pauses: Boolean(pauses), packetRequest: { runId, detail, taskDir: MANAGE.taskDir ?? null } });'), "manage:trigger carries kind, pauses and the packet request, which names the task directory so a serve loop can admit the run");
 	assert.ok(trigBody.includes('log({ type: "manage", msg: `trigger ${kind}'), "and every trigger is audited under type manage as it is emitted");
 	// The run's own ending is a trigger, but never a pause: finish() kills the processes.
 	const fin = src.slice(src.indexOf("\nfunction finish(reason) {"));

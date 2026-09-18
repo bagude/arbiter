@@ -1577,7 +1577,7 @@ const controlTail = MANAGE ? new JsonlTailer(path.join(RUN, "control.jsonl")) : 
  */
 function manageTrigger(kind, detail, pauses, pending) {
 	if (!MANAGE) return false;
-	jevEvent("manage:trigger", { kind, pauses: Boolean(pauses), packetRequest: { runId, detail } });
+	jevEvent("manage:trigger", { kind, pauses: Boolean(pauses), packetRequest: { runId, detail, taskDir: MANAGE.taskDir ?? null } });
 	log({ type: "manage", msg: `trigger ${kind}${pauses ? " (orchestrator paused)" : ""}: ${JSON.stringify(detail).slice(0, 200)}` });
 	if (!pauses || !pending) return false;
 	const r = managePause.open(kind, Date.now(), pending);

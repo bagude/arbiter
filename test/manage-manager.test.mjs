@@ -310,6 +310,17 @@ test("serve answers a run this task registered, or one an operator adopted — n
 	assert.deepEqual(runsForTask({ taskDir: dir, runsDir }), [RUN_ID]);
 	assert.deepEqual(runsForTask({ taskDir: dir, runsDir, adopt: [stranger] }).sort(), [RUN_ID, stranger].sort());
 
+	// A run whose trigger event names this task directory is admitted without --run: that is how
+	// a live run identifies itself before the task registers it.
+	const self = "2026-09-18T10-10-10";
+	mkRun(runsDir, self, { lifecycle: [{ ts: 1, ev: "manage:trigger", data: { kind: "budget_threshold", pauses: false, packetRequest: { runId: self, detail: {}, taskDir: dir } } }] });
+	assert.deepEqual(runsForTask({ taskDir: dir, runsDir }).sort(), [RUN_ID, self].sort());
+	fs.rmSync(path.join(runsDir, self), { recursive: true, force: true });
+	// A trigger naming another task, or none, admits nothing.
+	mkRun(runsDir, self, { lifecycle: [{ ts: 1, ev: "manage:trigger", data: { kind: "budget_threshold", pauses: false, packetRequest: { runId: self, detail: {}, taskDir: path.join(dir, "..", "somebody-else") } } }] });
+	assert.deepEqual(runsForTask({ taskDir: dir, runsDir }), [RUN_ID]);
+	fs.rmSync(path.join(runsDir, self), { recursive: true, force: true });
+
 	// A run whose own config names this task directory is admitted without --run.
 	fs.writeFileSync(path.join(runsDir, stranger, "config.json"), JSON.stringify({ task: "pathnorm", manage: { enabled: true, taskDir: dir } }));
 	assert.deepEqual(runsForTask({ taskDir: dir, runsDir }).sort(), [RUN_ID, stranger].sort());
