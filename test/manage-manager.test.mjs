@@ -15,7 +15,7 @@ import {
 	requestBody, runsForTask, serve, supervisorDeadlineMs, systemPrompt, triggerEvents,
 	unsupportedModelReason,
 } from "../lib/manage/manager.mjs";
-import { readApiKey, splitArgs } from "../tools/manage.mjs";
+import { readApiKey, splitArgs, valueFlag } from "../tools/manage.mjs";
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "tools", "manage.mjs");
 
@@ -655,4 +655,38 @@ test("the admission memo re-checks a run whose lifecycle has grown", () => {
 	fs.appendFileSync(path.join(runsDir, later, "lifecycle.jsonl"), JSON.stringify({ ts: 2, ev: "manage:trigger", data: { kind: "escalation", packetRequest: { runId: later, taskDir: dir, detail: {} } } }) + "\n");
 	assert.deepEqual(runsForTask({ taskDir: dir, runsDir, admitCache }), [later]);
 	assert.equal(admitCache.get(later).admitted, true);
+});
+
+test("a bare value flag is refused, never read as a value: --timeout alone was a 1 ms budget", () => {
+	const calls = [];
+	const io = { exit: (c) => calls.push(["exit", c]), error: (m) => calls.push(["error", m]) };
+	assert.equal(valueFlag({ timeout: "5000" }, "timeout", io), "5000");
+	assert.equal(valueFlag({}, "timeout", io), undefined);
+	assert.deepEqual(calls, []);
+	// splitArgs turns `--timeout --once` and a trailing `--timeout` into true; Number(true) is 1.
+	assert.equal(splitArgs(["dir", "--timeout", "--once"]).flags.timeout, true);
+	for (const name of ["timeout", "model", "run"]) {
+		calls.length = 0;
+		assert.equal(valueFlag({ [name]: true }, name, io), undefined);
+		assert.deepEqual(calls.map((c) => c[0]), ["error", "exit"]);
+		assert.equal(calls[1][1], 2);
+		assert.match(calls[0][1], new RegExp(`bare --${name}`));
+	}
+});
+
+test("two loops that both read one stale lock cannot both take it over", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "serve-lock-"));
+	const lock = path.join(dir, "serve.lock");
+	fs.writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 - 1, startedAt: 1 })); // no such pid
+	// The first taker claims the stale file and creates its own.
+	assert.deepEqual(acquireServeLock(dir, { pid: 111 }), { ok: true });
+	assert.equal(JSON.parse(fs.readFileSync(lock, "utf8")).pid, 111);
+	// A second taker that also saw the stale lock cannot delete 111's: its takeover finds a live
+	// owner (111 is not alive here, so simulate the live owner as this process).
+	fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+	const second = acquireServeLock(dir, { pid: 222 });
+	assert.equal(second.ok, false);
+	assert.equal(second.owner.pid, process.pid);
+	assert.equal(JSON.parse(fs.readFileSync(lock, "utf8")).pid, process.pid, "the live owner's lock is untouched");
+	assert.deepEqual(fs.readdirSync(dir).filter((f) => f.includes("stale")), [], "a claimed stale file is removed");
 });

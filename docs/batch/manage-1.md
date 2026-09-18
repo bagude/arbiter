@@ -59,6 +59,11 @@ forbids. Raise one and you raise both — set `MANAGE_DECISION_TIMEOUT_MS` and t
 at 0.75; set `MANAGE_DRIVER_TIMEOUT_MS` only to shrink the driver's share further. One retry on a
 429 / 529 / 5xx fits inside the driver's budget and is skipped when it would not.
 
+**The key.** `ANTHROPIC_API_KEY` in the environment, else an `ANTHROPIC_API_KEY=` line in the
+repo's `.env` (quotes stripped); `ARBITER_DOTENV=<file>` names another file instead of the
+repo's own. Missing → exit 2 before any request. A bare `--timeout`, `--model` or `--run` (the
+flag with no value) is exit 2 too, never a silent default.
+
 **The model matters.** Forced `tool_choice` is a hard 400 on the fable and mythos families, and
 every packet forces the `instruct` call, so `decide`, `replay` and `serve` refuse those ids rather
 than spend a run writing defaults. The live manager is `claude-opus-5`.

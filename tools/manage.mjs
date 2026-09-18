@@ -549,8 +549,23 @@ function requireApiKey() {
  * default with the reason on `manager.error`); at a terminal it is an operator's typo, and the
  * honest answer is to stop before spending a run.
  */
+/** A flag that takes a value, or nothing. splitArgs turns a bare `--model` (followed by another
+ * flag or by the end) into `true`, and `true` is a valid-looking value to every consumer here:
+ * `Number(true)` is 1, so a bare `--timeout` was a 1 ms budget and every packet defaulted; a bare
+ * `--model` would reach the API as the model id "true". Exported for its test. */
+export function valueFlag(flags, name, { exit = process.exit, error = console.error } = {}) {
+	const v = flags[name];
+	if (v === undefined) return undefined;
+	if (typeof v !== "string" || v === "") {
+		error(`--${name} needs a value (got a bare --${name})`);
+		exit(2);
+		return undefined;
+	}
+	return v;
+}
+
 function requireSupportedModel(flags) {
-	const model = flags.model ?? DEFAULT_MANAGER_MODEL;
+	const model = valueFlag(flags, "model") ?? DEFAULT_MANAGER_MODEL;
 	if (UNSUPPORTED_MODEL.test(String(model))) {
 		console.error(unsupportedModelReason(model));
 		process.exit(2);
@@ -562,8 +577,9 @@ function requireSupportedModel(flags) {
  * supervisor's deadline (lib/manage/manager.mjs), which is what keeps an answer from arriving at
  * a pause that has already closed. */
 function timeoutFlag(flags) {
-	const raw = Number(flags.timeout ?? "");
-	if (flags.timeout != null && !(raw > 0)) {
+	const given = valueFlag(flags, "timeout");
+	const raw = Number(given ?? "");
+	if (given != null && !(raw > 0)) {
 		console.error(`--timeout must be a positive number of milliseconds (got ${JSON.stringify(flags.timeout)})`);
 		process.exit(2);
 	}
@@ -638,7 +654,7 @@ async function cmdServe(argv) {
 		taskDir, runsDir, model, timeoutMs,
 		apiKey: requireApiKey(),
 		once: "once" in flags,
-		adopt: flags.run ? [flags.run] : [],
+		adopt: valueFlag(flags, "run") ? [flags.run] : [],
 	});
 	// A loop that answered nothing because another one holds the lock is not a successful run of
 	// this command, and an operator who started a second one by mistake must be told at the exit
