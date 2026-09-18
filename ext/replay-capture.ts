@@ -16,36 +16,15 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const home = process.env.ARBITER_HOME ?? path.resolve(here, "..");
 const kit = await import(new URL(`file:///${path.join(home, "ext", "guard-kit.ts").replace(/\\/g, "/")}`).href);
+const { treeHash } = await import(new URL(`file:///${path.join(home, "lib", "tree-hash.mjs").replace(/\\/g, "/")}`).href);
 
 const DIR = (process.env.ARBITER_REQUESTS_DIR ?? "").trim();
-
-/** sha1 over (relative path, contents) of every regular file under dir, in sorted order. */
-function treeHash(dir: string): string {
-	const files: string[] = [];
-	const walk = (d: string) => {
-		for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-			const p = path.join(d, e.name);
-			if (e.isDirectory()) walk(p);
-			else if (e.isFile()) files.push(p);
-		}
-	};
-	walk(dir);
-	const h = createHash("sha1");
-	for (const f of files) {
-		h.update(path.relative(dir, f).split(path.sep).join("/"));
-		h.update("|");
-		h.update(fs.readFileSync(f));
-		h.update("|");
-	}
-	return h.digest("hex");
-}
 
 export default function (pi: ExtensionAPI) {
 	if (!DIR) return;
