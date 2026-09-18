@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-state.mjs";
 import { readLedger, appendLedger, recordOutcome } from "../lib/manage/ledger.mjs";
-import { INSTRUCTION_VERBS, validateInstruction, executeInstruction, controlAppend, NotYetImplemented, batchCeiling, settledBatches } from "../lib/manage/instructions.mjs";
+import { INSTRUCTION_VERBS, validateInstruction, executeInstruction, controlAppend, NotYetImplemented, batchCeiling, settledBatches, registerRunForTrigger } from "../lib/manage/instructions.mjs";
 
 const RUN_ID = "2026-09-18T01-02-03";
 
@@ -502,6 +502,39 @@ test("a batch is not stale while its own shape says it should still be running",
 	assert.equal(batchCeiling(task, { batchId: 2, expectedMs: 0 }), 2 * hour);
 });
 
+// Nothing used to put a supervisor's run into activeRuns: the supervisor cannot write task.json
+// and the executor only knew about runs it started itself, which is none of them. Every
+// `continue` and `correct` for a real run was therefore refused as "not live" — found on the
+// live check of 2026-09-18, where the trigger, the packet and the 120 s default all worked and
+// only the instruction answering them could not validate.
+test("a live trigger registers its run; an ended trigger removes it; a second packet does neither twice", () => {
+	const { dir, runsDir } = fixture({ activeRuns: [] });
+	const t = (kind) => ({ kind, runId: RUN_ID, detail: {} });
+
+	const registered = registerRunForTrigger(dir, t("oracle_failed_repeatedly"));
+	assert.deepEqual(registered.current.activeRuns, [RUN_ID]);
+	assert.equal(readLedger(dir).at(-1).kind, "run_registered");
+
+	// The whole point: a correct now validates, against the version the registration produced.
+	const live = loadTask(dir);
+	const ok = validateInstruction(instr({ verb: "correct", basedOnStateVersion: live.stateVersion, args: { runId: RUN_ID, message: "the tester's suite is the gate" } }), { task: live, packet: packetFor(live), taskDir: dir, runsDir });
+	assert.deepEqual(ok, { ok: true });
+
+	// A second packet for the same run is not a second registration.
+	const rows = readLedger(dir).length;
+	assert.equal(registerRunForTrigger(dir, t("budget_threshold")), null);
+	assert.equal(readLedger(dir).length, rows, "and no second ledger note");
+	assert.equal(loadTask(dir).stateVersion, live.stateVersion, "nor a state version bump");
+
+	const ended = registerRunForTrigger(dir, t("run_ended_without_acceptance"));
+	assert.deepEqual(ended.current.activeRuns, []);
+	assert.equal(readLedger(dir).at(-1).kind, "run_ended");
+	// Ending a run that was never live — a fork run reaching comparison_ready — changes nothing.
+	assert.equal(registerRunForTrigger(dir, { kind: "comparison_ready", runId: "some-fork-run" }), null);
+	assert.equal(registerRunForTrigger(dir, { kind: "not_a_trigger", runId: RUN_ID }), null);
+	assert.equal(registerRunForTrigger(dir, { kind: "escalation" }), null, "a trigger with no run is not about a run");
+});
+
 test("compare: replicates must be a whole number — the budget is charged branches × replicates", () => {
 	const { dir, runsDir, task, config, checkpoint } = forkFixture();
 	const r = validateInstruction(instr({ verb: "compare", args: { checkpoint, config, branches: [{ label: "G" }, { label: "A", firstAction: "done" }], replicates: 2.5 } }), { task, packet: packetFor(task), taskDir: dir, runsDir });
@@ -619,7 +652,9 @@ test("tools/manage.mjs execute prints the ledger row, and exits 3 on a refusal",
 
 	// The same key twice is an acknowledgement, not a failure.
 	const retry = cli(dir, instr(), runsDir);
-	assert.equal(retry.status, 0);
+	// The message carries stderr: this assertion saw a null status once in review, and a spawn
+	// that failed to start says why there and nowhere else.
+	assert.equal(retry.status, 0, retry.stderr ?? String(retry.error));
 	assert.match(retry.stdout, /already executed/);
 });
 

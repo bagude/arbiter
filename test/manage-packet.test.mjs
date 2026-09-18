@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, spendBudget } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
-import { appendFinding } from "../lib/manage/ledger.mjs";
+import { appendFinding, appendLedger, reverseRow } from "../lib/manage/ledger.mjs";
 
 const criteria = [{ id: "c1", text: "all 70 oracle cases pass", check: "oracle:tasks/pathnorm/oracle" }];
 const milestones = [{ id: "m1", title: "pass", criteria: ["c1"] }];
@@ -153,6 +153,34 @@ test("tools/manage.mjs packet succeeds against a live run directory", () => {
 	const written = JSON.parse(fs.readFileSync(path.join(taskDir, "packets", "1.json"), "utf8"));
 	assert.equal(written.run.status, "running");
 	assert.equal(written.trigger.runId, runId);
+
+	// The command is also the only place a supervisor's run gets into current.activeRuns — the
+	// supervisor cannot write task.json — and without that every `continue` and `correct` for a
+	// real run is refused as "not live" (the live check of 2026-09-18). The registration happens
+	// BEFORE the packet, so the version the manager answers with is the one it produced.
+	assert.deepEqual(loadTask(taskDir).current.activeRuns, [runId]);
+	assert.equal(written.task.stateVersion, loadTask(taskDir).stateVersion, "the packet carries the post-registration version");
+	assert.equal(written.task.current.activeRuns[0], runId);
+
+	// And the run leaving is the same path in reverse.
+	const ended = spawnSync(process.execPath, [cli, "packet", taskDir, runId, "--trigger", "run_ended_without_acceptance", "--runs", runsDir], { encoding: "utf8" });
+	assert.equal(ended.status, 0, ended.stderr);
+	assert.deepEqual(loadTask(taskDir).current.activeRuns, []);
+});
+
+// An instruction whose save lost the compare-and-swap is retracted by a `reversed` row: it did
+// not run. Handing it back as recent history invites the manager to reason from an act that
+// never happened, and pushes a real one out of the five.
+test("history.recentInstructions leaves out an instruction a reversed row retracts", () => {
+	const taskDir = mkTaskDir();
+	const runDir = mkRunDir();
+	appendLedger(taskDir, { packetId: 1, instruction: { idempotencyKey: "p1-v1", verb: "correct" }, verified: true });
+	const lost = appendLedger(taskDir, { packetId: 2, instruction: { idempotencyKey: "p2-v2", verb: "compare" }, verified: true });
+	reverseRow(taskDir, lost.seq, "stale_version");
+
+	const verbs = assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended_without_acceptance", runId: "r1" } }).history.recentInstructions.map((r) => r.verb);
+	assert.ok(verbs.includes("correct"), "the instruction that ran is history");
+	assert.ok(!verbs.includes("compare"), "the one that did not, is not");
 });
 
 test("a finished run still reads its summary, and says so", () => {
@@ -163,6 +191,7 @@ test("a finished run still reads its summary, and says so", () => {
 	assert.equal(packet.run.reason, "FAILED: done attempts exhausted");
 	assert.equal(packet.run.wallSec, 100, "the summary's own figure, not the audit's last line");
 	assert.equal(packet.run.doneAttempts, 2);
+	assert.equal(packet.run.partial, null, "nothing is partial once the summary is on disk — the field is the live case's alone");
 });
 
 test("assemblePacket builds the §2 shape, redacts secrets, bounds size, and numbers packets by directory count", () => {

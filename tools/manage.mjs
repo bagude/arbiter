@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { createTask } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
 import { readLedger, readFindings, appendFinding, settleFinding, recordOutcome } from "../lib/manage/ledger.mjs";
-import { executeInstruction } from "../lib/manage/instructions.mjs";
+import { executeInstruction, registerRunForTrigger } from "../lib/manage/instructions.mjs";
 import { compareTable, findingsFromCompare, incompleteBranches, settleOrAppend } from "../lib/manage/compare.mjs";
 import { runBatch } from "./fork.mjs";
 
@@ -76,6 +76,13 @@ function cmdPacket(argv) {
 	const runDir = path.join(runsRoot, runId);
 	const detail = parseJsonFlag(flags, "detail", {});
 	const trigger = { kind: flags.trigger, runId, detail };
+	// Before the packet, never after. A live trigger is the only moment anything can put this run
+	// into current.activeRuns — the supervisor starts runs but must not write task.json — and
+	// `continue` and `correct` are refused for a run that is not in that list. The packet has to
+	// carry the version this registration produced, because that is the version the manager's
+	// `basedOnStateVersion` will name.
+	const registered = registerRunForTrigger(taskDir, trigger);
+	if (registered) console.error(`[manage] ${runId}: activeRuns is now [${registered.current.activeRuns.join(", ")}] at stateVersion ${registered.stateVersion}`);
 	const packet = assemblePacket({ taskDir, runDir, trigger });
 	const file = writePacket(taskDir, packet);
 	console.log(`${file} (${JSON.stringify(packet).length} chars)`);
