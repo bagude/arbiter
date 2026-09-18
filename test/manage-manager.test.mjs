@@ -448,6 +448,16 @@ test("a retry that would not fit the remaining budget is not attempted", async (
 	const instr = await decide({ packet: packetFor(task), fetchImpl, apiKey: "k", timeoutMs: 30, retryDelayMs: 1000 });
 	assert.equal(n, 1, "the delay alone would outlive the decision window");
 	assert.equal(instr.defaulted, true);
+
+	// The boundary that matters is not "does the delay fit" but "is there an attempt left after
+	// it": 400 ms of budget minus a 300 ms wait leaves less than MIN_ATTEMPT_MS, so the retry
+	// would sleep into a window it could not use, and the default is better early than late.
+	let tight = 0;
+	await decide({
+		packet: packetFor(task), apiKey: "k", timeoutMs: 400, retryDelayMs: 300,
+		fetchImpl: async () => { tight++; return { ok: false, status: 429, text: async () => "slow down" }; },
+	});
+	assert.equal(tight, 1);
 });
 
 test("the manager's token usage is kept, because §5's row has a usd slot and nothing else can feed it", async () => {
@@ -610,6 +620,19 @@ test("a second loop refuses while a live one holds the lock, and takes over a st
 	const took = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
 	assert.equal(took.handled.length, 1);
 	assert.equal(fs.existsSync(lockFile(dir)), false, "the lock is released on the way out");
+});
+
+test("a CLI loop refused by a live lock exits 3 and never deletes the owner's lock", () => {
+	const { dir, runsDir } = fixture({ activeRuns: [] });
+	const env = { ...process.env, ANTHROPIC_API_KEY: "sk-test-not-used", ARBITER_DOTENV: path.join(dir, "no-such.env") };
+	// A lock held by this (live) test process. The refusal comes before any polling, so this
+	// returns at once — and before any network path could be reached.
+	fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+	const second = spawnSync(process.execPath, [CLI, "serve", dir, "--runs", runsDir, "--once"], { encoding: "utf8", env, timeout: 20_000 });
+	assert.equal(second.status, 3);
+	assert.match(second.stderr, /another serve loop holds/);
+	assert.equal(JSON.parse(fs.readFileSync(lockFile(dir), "utf8")).pid, process.pid, "a refused loop never deletes the owner's lock");
+	fs.unlinkSync(lockFile(dir));
 });
 
 test("acquireServeLock is exclusive while its owner lives", () => {

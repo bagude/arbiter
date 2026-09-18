@@ -20,7 +20,7 @@ import { readLedger, readFindings, appendFinding, settleFinding, recordOutcome, 
 import { executeInstruction, registerRunForTrigger } from "../lib/manage/instructions.mjs";
 import { listCheckpoints, promoteCandidate, isCandidateId } from "../lib/manage/checkpoint.mjs";
 import { compareTable, findingsFromCompare, incompleteBranches, settleOrAppend } from "../lib/manage/compare.mjs";
-import { decide, replay, serve, DEFAULT_MANAGER_MODEL, DEFAULT_TIMEOUT_MS, UNSUPPORTED_MODEL, unsupportedModelReason } from "../lib/manage/manager.mjs";
+import { decide, replay, serve, releaseServeLock, DEFAULT_MANAGER_MODEL, DEFAULT_TIMEOUT_MS, UNSUPPORTED_MODEL, unsupportedModelReason } from "../lib/manage/manager.mjs";
 import { runBatch, runOnce } from "./fork.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -622,6 +622,18 @@ async function cmdServe(argv) {
 	const runsDir = flags.runs ?? path.join(here, "..", "runs");
 	const model = requireSupportedModel(flags);
 	const timeoutMs = timeoutFlag(flags);
+	// The loop's own `finally` covers a return and a throw; this covers the way an operator
+	// actually stops one. `exit` handlers do not run on a signal, so both signals are caught and
+	// re-exited, and `releaseServeLock` deletes the file only when it names THIS process — so the
+	// locked path below, which never took the lock, cannot delete the live owner's.
+	const release = () => releaseServeLock(taskDir);
+	process.on("exit", release);
+	for (const signal of ["SIGINT", "SIGTERM"]) {
+		process.on(signal, () => {
+			release();
+			process.exit(130);
+		});
+	}
 	const out = await serve({
 		taskDir, runsDir, model, timeoutMs,
 		apiKey: requireApiKey(),
