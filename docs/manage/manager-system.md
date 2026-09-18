@@ -36,8 +36,11 @@ an instruction that breaks one is refused and recorded, not executed.
   task. `null` means that resource was never capped.
 - `options.pendingRuns` — runs the harness still believes are alive. `continue` and `correct`
   are refused for any run not in this list.
-- `options.pendingBatches` — comparison or restore batches still in flight. A `restore` or a
-  `compare` is refused while one is pending: there is a single model server.
+- `options.pendingBatches` — comparison or restore batches still in flight. While a run or a
+  batch is pending, `restore` and `compare` are **left out of `verbsAllowed`**: there is a single
+  model server, and two batches contend for it. `args.parallel: true` is the deliberate opt-in
+  when you judge the second piece of work worth that contention — it is not free, because the
+  fork runner abandons one of the two after its whole budget has been charged.
 
 ## The six verbs
 

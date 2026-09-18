@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { createTask, loadTask, saveTask, spendBudget } from "../lib/manage/task-state.mjs";
+import { createTask, loadTask, saveTask, setCurrent, spendBudget } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
 import { appendFinding, appendLedger, reverseRow } from "../lib/manage/ledger.mjs";
 
@@ -291,6 +291,26 @@ test("default verbsAllowed prunes accept off milestone_candidate/comparison_read
 	assert.ok(!exhausted.options.verbsAllowed.includes("restore"), "both forkReplicates and runs budgetLeft are 0");
 	assert.ok(!exhausted.options.verbsAllowed.includes("compare"));
 	assert.ok(exhausted.options.verbsAllowed.includes("accept"), "accept is unaffected by the fork/run budget rule");
+});
+
+test("while a run is live, restore and compare are not advertised: the harness would refuse them", () => {
+	// The trigger where changing approach matters most is a PAUSING one, which fires mid-run by
+	// definition — so advertising the two verbs that liveWorkRefusal always refuses there invited
+	// the right answer and then rejected it.
+	const taskDir = mkTaskDir();
+	const runsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "runs-"));
+	const liveDir = path.join(runsRoot, "2026-09-18T01-02-03");
+	fs.mkdirSync(liveDir, { recursive: true });
+	fs.writeFileSync(path.join(liveDir, "audit.jsonl"), JSON.stringify({ t: "1.0", type: "oracle", msg: "Oracle run #1: 68/70 passed." }) + "\n");
+	saveTask(taskDir, setCurrent(loadTask(taskDir), { activeRuns: ["2026-09-18T01-02-03"] }));
+
+	const p = assemblePacket({ taskDir, runDir: liveDir, trigger: { kind: "oracle_failed_repeatedly", runId: "2026-09-18T01-02-03", detail: { attempts: 2 } } });
+	assert.deepEqual(p.options.pendingRuns, ["2026-09-18T01-02-03"]);
+	assert.ok(!p.options.verbsAllowed.includes("restore"), "a live run refuses a restore; the packet must not offer one");
+	assert.ok(!p.options.verbsAllowed.includes("compare"));
+	assert.ok(p.options.verbsAllowed.includes("correct"), "the verbs that DO work at a pausing trigger are still there");
+	assert.ok(p.options.verbsAllowed.includes("continue"));
+	assert.ok(p.options.verbsAllowed.includes("escalate"));
 });
 
 test("bounding ladder drops tail, then chain, in order, and the FINAL rendered packet (bounded field included) always fits maxChars", () => {
