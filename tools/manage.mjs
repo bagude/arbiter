@@ -81,7 +81,7 @@ function cmdPacket(argv) {
 	// `continue` and `correct` are refused for a run that is not in that list. The packet has to
 	// carry the version this registration produced, because that is the version the manager's
 	// `basedOnStateVersion` will name.
-	const registered = registerRunForTrigger(taskDir, trigger);
+	const registered = registerRunForTrigger(taskDir, trigger, { runsDir: runsRoot });
 	if (registered) console.error(`[manage] ${runId}: activeRuns is now [${registered.current.activeRuns.join(", ")}] at stateVersion ${registered.stateVersion}`);
 	const packet = assemblePacket({ taskDir, runDir, trigger });
 	const file = writePacket(taskDir, packet);

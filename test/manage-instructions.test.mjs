@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-state.mjs";
 import { readLedger, appendLedger, recordOutcome } from "../lib/manage/ledger.mjs";
-import { INSTRUCTION_VERBS, validateInstruction, executeInstruction, controlAppend, NotYetImplemented, batchCeiling, settledBatches, registerRunForTrigger } from "../lib/manage/instructions.mjs";
+import { INSTRUCTION_VERBS, validateInstruction, executeInstruction, controlAppend, NotYetImplemented, batchCeiling, settledBatches, registerRunForTrigger, pendingRuns, settledRuns } from "../lib/manage/instructions.mjs";
 
 const RUN_ID = "2026-09-18T01-02-03";
 
@@ -533,6 +533,80 @@ test("a live trigger registers its run; an ended trigger removes it; a second pa
 	assert.equal(registerRunForTrigger(dir, { kind: "comparison_ready", runId: "some-fork-run" }), null);
 	assert.equal(registerRunForTrigger(dir, { kind: "not_a_trigger", runId: RUN_ID }), null);
 	assert.equal(registerRunForTrigger(dir, { kind: "escalation" }), null, "a trigger with no run is not about a run");
+});
+
+/** A run as it looks on disk. `ended` writes summary.json; `quietForMs` backdates its audit. */
+function mkRun(runsDir, runId, { ended = false, quietForMs = 0, audit = true } = {}) {
+	const dir = path.join(runsDir, runId);
+	fs.mkdirSync(dir, { recursive: true });
+	if (audit) {
+		const f = path.join(dir, "audit.jsonl");
+		fs.writeFileSync(f, JSON.stringify({ t: "1.0", type: "tool", msg: "bash npm test" }) + "\n");
+		if (quietForMs) {
+			const when = new Date(Date.now() - quietForMs);
+			fs.utimesSync(f, when, when);
+		}
+	}
+	if (ended) fs.writeFileSync(path.join(dir, "summary.json"), JSON.stringify({ runId, reason: "SUCCESS: oracle passed" }));
+	return dir;
+}
+
+// The trigger's runId is the harness's, but `packet` is also a command an operator types. An id
+// with no run directory would register as live and then refuse every restore and compare on
+// behalf of a run that never existed.
+test("registering refuses a run id with no run directory, and says so in the ledger", () => {
+	const { dir, runsDir } = fixture({ activeRuns: [] });
+	const trigger = { kind: "oracle_failed_repeatedly", runId: "2026-09-18T99-99-99", detail: {} };
+	assert.equal(registerRunForTrigger(dir, trigger, { runsDir }), null);
+	assert.deepEqual(loadTask(dir).current.activeRuns, []);
+	const note = readLedger(dir).at(-1);
+	assert.equal(note.kind, "run_missing");
+	assert.match(note.reason, /no such run directory/);
+
+	// With the directory there it registers as before.
+	mkRun(runsDir, trigger.runId);
+	assert.deepEqual(registerRunForTrigger(dir, trigger, { runsDir }).current.activeRuns, [trigger.runId]);
+
+	// Removal is not gated: a run whose records were cleaned up must still be able to leave.
+	fs.rmSync(path.join(runsDir, trigger.runId), { recursive: true });
+	assert.deepEqual(registerRunForTrigger(dir, { kind: "run_ended_without_acceptance", runId: trigger.runId }, { runsDir }).current.activeRuns, []);
+});
+
+// The mirror of the pending-batch rule. A supervisor that is killed never emits an ended
+// trigger, and its entry would otherwise refuse every later restore and compare for good.
+test("a registered run stops counting when it wrote a summary, or when its audit went quiet", () => {
+	const { runsDir, task } = fixture({ activeRuns: ["alive", "finished", "quiet", "just-started"] });
+	mkRun(runsDir, "alive");
+	mkRun(runsDir, "finished", { ended: true });
+	mkRun(runsDir, "quiet", { quietForMs: 45 * 60 * 1000 });
+	mkRun(runsDir, "just-started", { audit: false });
+
+	assert.deepEqual(pendingRuns(task, { runsDir }), ["alive", "just-started"], "a run that has written no audit line yet may have started seconds ago");
+	assert.deepEqual(settledRuns(task, runsDir).map((r) => [r.runId, r.why]), [["finished", "ended"], ["quiet", "stale"]]);
+	// The ceiling is a ceiling on silence: the same run is live under a longer one.
+	assert.equal(pendingRuns(task, { runsDir, staleRunMs: 60 * 60 * 1000 }).includes("quiet"), true);
+	// With no runs directory nothing can be judged, so nothing is taken away.
+	assert.deepEqual(pendingRuns(task, {}), ["alive", "finished", "quiet", "just-started"]);
+});
+
+test("continue and correct are refused for a run whose own records say it is over", () => {
+	const { dir, runsDir, task } = fixture();
+	mkRun(runsDir, RUN_ID, { ended: true });
+	const v = (over) => validateInstruction(instr(over), { task, packet: packetFor(task), taskDir: dir, runsDir });
+	assert.match(v({}).refusal, /is not live/, "the summary is on disk: the run is finished, whatever the list still says");
+	assert.match(v({ verb: "correct", args: { runId: RUN_ID, message: "keep going" } }).refusal, /is not live/);
+});
+
+test("a run that went quiet is folded out of activeRuns by the executor's next save", () => {
+	const f = forkFixture();
+	saveTask(f.dir, setCurrent(loadTask(f.dir), { activeRuns: ["dead-run"] }));
+	mkRun(f.runsDir, "dead-run", { quietForMs: 90 * 60 * 1000 });
+	const now = loadTask(f.dir);
+	const { launchBatch } = recorder();
+	const r = executeInstruction({ taskDir: f.dir, runsDir: f.runsDir, launchBatch, packet: packetFor(now), instr: instr({ verb: "restore", basedOnStateVersion: now.stateVersion, args: { checkpoint: f.checkpoint, approach: { config: f.config } } }) });
+	assert.equal(r.executed, true, r.refusal ?? "a run whose supervisor died must not block a restore");
+	assert.deepEqual(loadTask(f.dir).current.activeRuns, [], "and it leaves the list in the same save");
+	assert.equal(readLedger(f.dir).find((x) => x.kind === "run_stale")?.runId, "dead-run");
 });
 
 test("compare: replicates must be a whole number — the budget is charged branches × replicates", () => {
