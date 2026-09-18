@@ -342,9 +342,38 @@ test("pumpControl drives the pause machine on every tick and survives a throw", 
 	assert.ok(applyBody.includes("catch (err)"), "a held delivery that throws must not take the run down either");
 	// The replies held during the pause go out after the release, each redelivered as itself.
 	assert.ok(applyBody.includes('d.kind === "queued"'), "applyPauseActions must flush the queued replies");
-	assert.ok(applyBody.includes("deliver(d.item.to, d.item.text,"), "each queued reply keeps its own recipient and text");
-	assert.ok(applyBody.includes("(held during the pause)"), "and is labelled so the audit shows it arrived late");
+	assert.ok(applyBody.includes("deliver(d.item.to, d.item.text, d.item.why)"), "each queued reply keeps its own recipient, text AND label");
+	assert.ok(applyBody.includes("flushing a reply held during the pause"), "where it has been is a log line, not part of the label");
 	assert.ok(applyBody.indexOf('d.kind === "release"') < applyBody.indexOf('d.kind === "queued"'), "the release is handled before the flush; the list's order is the delivery order");
+});
+
+// A label is what every routing rule matches on, and the pause allow-list is anchored so that
+// "oracle verdict (stale)" cannot pass as a verdict. The cost of anchoring is that decorating a
+// label makes it match nothing: the compaction flush sites appended "(queued during
+// compaction)", so a manager correction or an oracle verdict that had waited out a compaction
+// came back unrecognisable and would have been DROPPED by the pause rule — the one delivery a
+// pause exists to let through. Every flush now passes the label on and logs the provenance.
+test("no flush site decorates the delivery label", () => {
+	const src = supervisorSource();
+	const offenders = src.split("\n").filter((l) => /\bdeliver\(/.test(l) && /\.why\}[^`]*\(/.test(l));
+	assert.deepEqual(offenders, [], `a flush must re-deliver with the original label; found:\n${offenders.join("\n")}`);
+	// The two compaction flushes and the pause flush, each passing the label straight through.
+	const passes = src.split("\n").filter((l) => /\bdeliver\(.*(q\.why|d\.item\.why)\)/.test(l));
+	assert.equal(passes.length, 3, `expected three flush sites passing the label through; found ${passes.length}:\n${passes.join("\n")}`);
+	// And each says where the message has been, in the audit rather than in the label.
+	for (const needle of ["flushing after a failed compaction", "flushing after the compaction", "flushing a reply held during the pause"]) {
+		assert.ok(src.includes(needle), `the flush at "${needle}" must record its provenance as a log line`);
+	}
+});
+
+// The held verdict is one loss; every reply queued behind it is another. A reader of the audit
+// should not have to guess whether the run ended owing one delivery or six.
+test("a run that ends while paused reports how much was owed", () => {
+	const src = supervisorSource();
+	const line = src.split("\n").find((l) => l.includes("decision still owed"));
+	assert.ok(line, "the run-ended-while-paused line is missing");
+	assert.ok(line.includes("managePause.queued().length"), `it must report the queued count; found:\n${line}`);
+	assert.ok(line.includes("managePause.kind()"), "and which decision was owed");
 });
 
 // The live check died 2 s into a pause because its driver threw and closed the pipes the

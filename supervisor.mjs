@@ -1101,7 +1101,15 @@ function onCompactResponse(name, ev) {
 	if (ev.success === false) {
 		log({ type: "compaction_failed", msg: `${compaction.id}: ${ev.error ?? "unknown error"}` });
 		compaction = { phase: "idle" };
-		for (const q of queued) deliver("orchestrator", q.text, `${q.why} (after failed compaction)`);
+		// `q.why` unchanged: the label is what routing rules match on, not prose. Decorating it
+		// here made a "manager correction" arrive as "manager correction (after failed
+		// compaction)", which the pause rule — anchored, and rightly so — matches against
+		// nothing, so the one delivery a pause exists to let through would have been dropped.
+		// Where it has been is a fact about this flush, so it goes in the log line.
+		for (const q of queued) {
+			log({ agent: "orchestrator", type: "deliver_queued", msg: `flushing after a failed compaction: ${q.why}` });
+			deliver("orchestrator", q.text, q.why);
+		}
 		return;
 	}
 	const data = ev.data ?? {};
@@ -1115,7 +1123,13 @@ function onCompactResponse(name, ev) {
 	}
 	compaction = { phase: "idle" };
 	deliver("orchestrator", M.compaction.done(rec.tokensBefore, rec.tokensAfter, rec.checkpoint), "compaction done");
-	for (const q of queued) deliver("orchestrator", q.text, `${q.why} (queued during compaction)`);
+	// Same rule as the failed-compaction flush above: the label travels unchanged so it still
+	// means what every downstream rule reads it to mean, and "this waited for a compaction" is
+	// recorded as a log line rather than smuggled into the label.
+	for (const q of queued) {
+		log({ agent: "orchestrator", type: "deliver_queued", msg: `flushing after the compaction: ${q.why}` });
+		deliver("orchestrator", q.text, q.why);
+	}
 }
 function pumpLifecycle() {
 	if (finished || !fs.existsSync(LIFECYCLE)) return;
@@ -1541,7 +1555,12 @@ function applyPauseActions(r) {
 			// A reply held during the pause, redelivered after it. The pause is already closed
 			// by the time this runs, so it goes through deliver() like any other message — no
 			// recursion, and the ordering is the list's, held answers behind the verdict.
-			else if (d.kind === "queued") deliver(d.item.to, d.item.text, `${d.item.why} (held during the pause)`);
+			// The label travels unchanged, as at every other flush site: it is what the routing
+			// rules match on, and a decorated one matches nothing.
+			else if (d.kind === "queued") {
+				log({ agent: d.item.to, type: "deliver_queued", msg: `flushing a reply held during the pause: ${d.item.why}` });
+				deliver(d.item.to, d.item.text, d.item.why);
+			}
 		} catch (err) {
 			log({ type: "manage", msg: `pause action ${d.kind} threw: ${err?.stack ?? err}`.slice(0, 400) });
 		}
@@ -1981,7 +2000,10 @@ function finish(reason) {
 		// put two contradictory readings of the same ending in the ledger.
 		const t0 = milestoneCandidateFired ? null : decideTrigger({ runEnded: { reason, accepted: false } });
 		if (t0) manageTrigger(t0.kind, { reason, doneAttempts }, t0.pauses, null);
-		if (managePause.isOpen()) log({ type: "manage", msg: `run ended with a ${managePause.kind()} decision still owed; the held delivery is dropped` });
+		// The queued count belongs in this line: the held verdict is one loss, and every reply
+		// that piled up behind it is another. Without the number a reader of the audit cannot
+		// tell whether the run ended owing one delivery or six.
+		if (managePause.isOpen()) log({ type: "manage", msg: `run ended with a ${managePause.kind()} decision still owed; the held delivery and ${managePause.queued().length} queued reply(ies) are dropped` });
 	}
 	finished = true;
 	const t = totals();

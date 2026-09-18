@@ -229,3 +229,36 @@ test("hold() with no pause open always says allow — the guard is the caller's,
 	assert.deepEqual(p.hold({ to: "orchestrator", text: "x", why: "idle nudge 1" }), { action: "allow" });
 	assert.deepEqual(p.queued(), []);
 });
+
+// The trap behind round 5, stated as a rule rather than left implicit. A label is what the
+// routing rules match on, and the allow-list is anchored — deliberately, so "oracle verdict
+// (stale)" cannot pass as a verdict. The cost of anchoring is that ANY decoration turns an
+// allowed label into an unrecognised one, which is dropped. A flush site that appended where a
+// message had been would have silently swallowed the manager's own correction.
+test("a decorated label is not the label: decoration turns allow into drop", () => {
+	assert.equal(classifyDelivery("manager correction"), "allow");
+	for (const decorated of [
+		"manager correction (queued during compaction)",
+		"manager correction (after failed compaction)",
+		"manager correction (held during the pause)",
+		"oracle verdict (queued during compaction)",
+		"escalation answered (queued during compaction)",
+	]) {
+		assert.equal(classifyDelivery(decorated), "drop", `"${decorated}" matches nothing — which is why every flush site passes the label through unchanged`);
+	}
+	// A queued reply would survive decoration, because its patterns are prefixes. That is luck,
+	// not a licence: the rule is that no flush site decorates.
+	assert.equal(classifyDelivery("probe results (held during the pause)"), "queue");
+});
+
+test("a correction that waited for a compaction still reaches an open pause", () => {
+	const p = createPause({ timeoutMs: 1000 });
+	p.open("oracle_failed_repeatedly", T0, held);
+	// A compaction flush re-delivers with the label it stored. Passed through unchanged, the
+	// guard lets it past and the orchestrator gets the manager's words while the pause holds
+	// the verdict they belong to — which is the whole shape of a correction.
+	assert.equal(suppressWhilePaused("manager correction"), false);
+	assert.deepEqual(p.hold({ to: "orchestrator", text: "[SUPERVISOR] From the manager: …", why: "manager correction" }), { action: "allow" });
+	assert.deepEqual(p.queued(), [], "an allowed delivery is not queued — it goes out now");
+	assert.equal(p.isOpen(), true, "and the verdict it is holding stays held");
+});
