@@ -1,0 +1,8 @@
+{ "task": "pathnorm", "pattern": "orchestrator", "report": true,
+  "roles": { "orchestrator": { "provider": "llama.cpp", "model": "qwen3-27b" } },
+  "workers": { "default": { "provider": "llama.cpp", "model": "qwen3-27b", "thinking": "off" }, "use": ["tester", "implementer"], "max": 1 },
+  "caps": { "toolCalls": 250, "wallSec": 1800, "usd": 5, "doneAttempts": 5 },
+  "memory": { "mode": "search", "budgetChars": 2000, "retrievalChars": 9000, "workerReserveChars": 4000 },
+  "guards": { "topology": "nudge" },
+  "manage": { "enabled": true, "failThreshold": 1, "budgetFraction": 0.75, "timeoutMs": 120000, "taskDir": "tasks-live/pathnorm-night" },
+  "_note": "Management interface live check (plan Task 2 Step 9): the topology config with the manager triggers on. failThreshold 1 pauses on the FIRST failed done claim, so fork the failing run 2026-09-17T16-47-16 at call 21 (every replicate claims 68/70 there) to exercise the pause deterministically: node tools/fork.mjs 2026-09-17T16-47-16 21 --config configs/orch-pathnorm-27b-manage.json --branch G --replicates 1. Then answer with tools/manage.mjs execute, or let it default after 120 s." }
