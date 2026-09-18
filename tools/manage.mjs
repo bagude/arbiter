@@ -190,7 +190,9 @@ function cmdAccept(argv) {
 function cmdReview(argv) {
 	const { flags, positionals } = splitArgs(argv);
 	const [taskDir, criterionId, checkpoint] = positionals;
-	if (!taskDir || !criterionId || !checkpoint || !flags.by) return usageExit();
+	// A bare `--by` with nothing after it leaves `flags.by` undefined, and the row would be signed
+	// by nobody — which `checkEvidence` refuses, but only after the human believes they signed it.
+	if (!taskDir || !criterionId || !checkpoint || typeof flags.by !== "string" || !flags.by.trim()) return usageExit();
 	const task = loadTask(taskDir);
 	const criterion = (task.acceptance?.criteria ?? []).find((c) => c.id === criterionId);
 	const bad = !criterion

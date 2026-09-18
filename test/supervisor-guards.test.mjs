@@ -287,7 +287,10 @@ test("every management site is behind the MANAGE gate", () => {
 	// checkpoint.mjs is the one exception, and it is not one: a checkpoint is a DIRECTORY. The
 	// supervisor may preserve the workspace its run ended with (finish(), below) because that
 	// writes nothing task.json's single writer owns, and it cannot promote one.
-	assert.ok(imports.some((l) => l.includes('import { snapshotCheckpoint, CHECKPOINT_OWN } from "./lib/manage/checkpoint.mjs";')), "the candidate snapshot comes from the checkpoint module");
+	assert.ok(imports.some((l) => l.includes('import { snapshotCheckpoint, findSymlinks, CHECKPOINT_OWN } from "./lib/manage/checkpoint.mjs";')), "the candidate snapshot comes from the checkpoint module");
+	// The task travels with the candidate: a restore's config brings the oracle and the mounts,
+	// and the executor refuses a config for a task other than the checkpoint's.
+	assert.ok(src.includes("task: TASK_NAME, id: `cand-${runId}`"), "a checkpoint candidate must record the task it was taken from");
 	assert.ok(!src.includes("promoteCandidate"), "the supervisor must never promote a candidate — that is the executor's act, on an accept");
 });
 
@@ -304,6 +307,11 @@ test("ARBITER_WS_SOURCE builds the workspace from a checkpoint, under MANAGE, or
 	// Refused at startup, not at the copy: a run that silently fell back to the seed would be
 	// scored as a restore of a state it never loaded.
 	assert.ok(block.includes("if (!fs.existsSync(raw)) {") && block.includes("process.exit(2)"), `a WS_SOURCE that names nothing must exit(2); found:\n${block}`);
+	// A link in the source is refused rather than copied forward: cpSync copies one verbatim and
+	// treeHash counts regular files only, so it would be a path out of the new workspace that none
+	// of that run's own records mention — the same rule the evidence check applies to an artifact.
+	assert.ok(block.includes("const links = findSymlinks(raw);"), `a restore source must be checked for links; found:\n${block}`);
+	assert.ok(block.includes("contains symbolic links"), "and refused by name");
 
 	// The copy is the third arm of the branch the fork already takes — never a second copy — and
 	// it leaves behind what a checkpoint records about ITSELF (its manifest, its evidence logs):
@@ -313,8 +321,8 @@ test("ARBITER_WS_SOURCE builds the workspace from a checkpoint, under MANAGE, or
 	assert.ok(src.includes("summary.wsSource = WS_SOURCE;"), "summary.json must record what this run was restored from");
 	// Three mentions, all inside that block: the read and the two messages that name it. Nothing
 	// else in the file may reach for the variable — WS_SOURCE is what the rest of the run sees.
-	assert.equal(src.split("ARBITER_WS_SOURCE").length - 1, 3, "the variable belongs to that one block");
-	assert.equal(block.split("ARBITER_WS_SOURCE").length - 1, 3, "and every mention of it is inside it");
+	assert.equal(src.split("ARBITER_WS_SOURCE").length - 1, 4, "the variable belongs to that one block");
+	assert.equal(block.split("ARBITER_WS_SOURCE").length - 1, 4, "and every mention of it is inside it");
 });
 
 // A live packet has to be able to name the config its run was started with: `restore` and
@@ -338,7 +346,7 @@ test("finish() writes a MANAGE-gated checkpoint candidate from the archived work
 	assert.ok(at >= 0, "could not locate finish() in supervisor.mjs");
 	const body = src.slice(at + 1, src.indexOf("\nprocess.on(\"SIGINT\"", at));
 	assert.ok(body.includes("if (MANAGE?.taskDir) {"), `the candidate must be gated on a configured task directory; found:\n${body.slice(-2000)}`);
-	assert.ok(body.includes('snapshotCheckpoint({ taskDir: MANAGE.taskDir, fromDir: from, runId, oracle, id: `cand-${runId}` })'), "it is a cand- snapshot of the run's workspace into the task directory");
+	assert.ok(body.includes('snapshotCheckpoint({ taskDir: MANAGE.taskDir, fromDir: from, runId, oracle, task: TASK_NAME, id: `cand-${runId}` })'), "it is a cand- snapshot of the run's workspace into the task directory");
 	// From the ARCHIVE, not from WS.workspace: the archive is mount-filtered, and the evidence
 	// check hashes the archive. A candidate cut from the unfiltered tree fails every oracle
 	// criterion on a mounted run, and no hand-built fixture would show it.

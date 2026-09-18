@@ -32,7 +32,7 @@ import { decideTrigger } from "./lib/manage/triggers.mjs";
 import { createPause, suppressWhilePaused } from "./lib/manage/pause.mjs";
 // A checkpoint is a directory, not task.json: the supervisor may preserve the workspace it ends
 // with (finish(), below) and may not promote it. See lib/manage/checkpoint.mjs's header.
-import { snapshotCheckpoint, CHECKPOINT_OWN } from "./lib/manage/checkpoint.mjs";
+import { snapshotCheckpoint, findSymlinks, CHECKPOINT_OWN } from "./lib/manage/checkpoint.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, retainSpecialists, lastOracleRunNumber, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { resolveLedger, buildIndex } from "./lib/memory-index.mjs";
@@ -289,6 +289,16 @@ const WS_SOURCE = (() => {
 	}
 	if (!fs.existsSync(raw)) {
 		console.error(`[supervisor] ARBITER_WS_SOURCE names a directory that does not exist: ${raw}`);
+		process.exit(2);
+	}
+	// A link in the source is refused, not copied. cpSync copies one verbatim and treeHash counts
+	// regular files only, so a link planted in the run that produced this checkpoint is invisible
+	// to everything that identifies it — and copying it in would hand the next run a path out of
+	// its own workspace that none of its records mention. The same rule the evidence check applies
+	// to an artifact, applied to the whole tree before anything starts.
+	const links = findSymlinks(raw);
+	if (links.length) {
+		console.error(`[supervisor] ARBITER_WS_SOURCE ${raw} contains symbolic links, which a workspace must not: ${links.join(", ")}`);
 		process.exit(2);
 	}
 	return raw;
@@ -2224,7 +2234,9 @@ function finish(reason) {
 			if (!fs.existsSync(from)) log({ type: "manage", msg: "no archived workspace to preserve as a checkpoint candidate" });
 			else {
 				const oracle = lastOracleResult ? { attempt: lastOracleResult.attempt, pass: lastOracleResult.pass, total: lastOracleResult.total } : null;
-				const ck = snapshotCheckpoint({ taskDir: MANAGE.taskDir, fromDir: from, runId, oracle, id: `cand-${runId}` });
+				// The task travels with the checkpoint: a restore's config brings the oracle and the
+				// mounts, and this is what lets the executor refuse one that belongs to another task.
+				const ck = snapshotCheckpoint({ taskDir: MANAGE.taskDir, fromDir: from, runId, oracle, task: TASK_NAME, id: `cand-${runId}` });
 				log({ type: "manage", msg: `checkpoint candidate ${ck.id} (${ck.treeHash})${oracle ? ` at ${oracle.pass}/${oracle.total}` : ""}` });
 			}
 		} catch (err) {

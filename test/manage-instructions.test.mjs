@@ -699,9 +699,46 @@ test("restore without a forced action is the G branch, and no control file is wr
  * needs, and nothing a fork needs. */
 function ckFixture(opts = {}) {
 	const f = forkFixture(opts);
-	const ck = snapshotCheckpoint({ taskDir: f.dir, fromDir: mkCheckpointSource(), runId: "r-earlier" });
+	// `task: "x"` is the task forkFixture's config runs. A checkpoint carries the task it was
+	// taken from, and a restore's config has to be for the same one.
+	const ck = snapshotCheckpoint({ taskDir: f.dir, fromDir: mkCheckpointSource(), runId: "r-earlier", task: "x" });
 	return { ...f, ck, checkpoint: ck.id };
 }
+
+/**
+ * The refusal that keeps a "restore" from being a fresh start nobody notices.
+ *
+ * ARBITER_WS_SOURCE is MANAGE-gated inside the supervisor: handed a config with no manage block,
+ * the run prints one line, copies the task's SEED, produces a run id and exits 0. Its outcome row
+ * is then indistinguishable from a real restore, and the manager reads "restored from ck-0001"
+ * while looking at a run that started from nothing.
+ */
+test("restore from a checkpoint refuses a config that does not enable management", () => {
+	const noManage = ckFixture({ manage: false });
+	const v = validateInstruction(
+		instr({ verb: "restore", args: { checkpoint: noManage.checkpoint, approach: { config: noManage.config } } }),
+		{ task: noManage.task, packet: packetFor(noManage.task), taskDir: noManage.dir, runsDir: noManage.runsDir },
+	);
+	assert.equal(v.ok, false);
+	assert.match(v.refusal, /manage block is enabled/);
+	assert.match(v.refusal, /start from the task's seed instead/);
+
+	// The same config is still fine for a fork restore, which carries no workspace source.
+	const fork = forkFixture({ manage: false });
+	assert.equal(validateInstruction(instr({ verb: "restore", args: { checkpoint: fork.checkpoint, approach: { config: fork.config } } }), { task: fork.task, packet: packetFor(fork.task), taskDir: fork.dir, runsDir: fork.runsDir }).ok, true);
+});
+
+// The workspace is the checkpoint's; the oracle, the mounts and the spec are still the config's.
+// A config for another task runs that task's oracle against this tree and spends the run on a
+// comparison nobody asked for.
+test("restore from a checkpoint refuses a config for another task", () => {
+	const f = ckFixture();
+	const other = path.join(f.dir, "other.json");
+	fs.writeFileSync(other, JSON.stringify({ task: "raid", caps: { wallSec: 60 }, manage: { enabled: true } }));
+	const v = (config) => validateInstruction(instr({ verb: "restore", args: { checkpoint: f.checkpoint, approach: { config } } }), { task: f.task, packet: packetFor(f.task), taskDir: f.dir, runsDir: f.runsDir });
+	assert.match(v(other).refusal, /checkpoint of task x, and .* runs task raid/);
+	assert.equal(v(f.config).ok, true, "the checkpoint's own task is fine");
+});
 
 test("restore from an accepted checkpoint spends a run alone and names the workspace in its spec", () => {
 	const { dir, runsDir, task, config, checkpoint, ck } = ckFixture();

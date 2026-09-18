@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { treeHash } from "../lib/tree-hash.mjs";
-import { snapshotCheckpoint, promoteCandidate, nextCheckpointId, listCheckpoints, readManifest, workspaceHash, finalWorkspaceOf, isCandidateId, isCheckpointId } from "../lib/manage/checkpoint.mjs";
+import { snapshotCheckpoint, promoteCandidate, nextCheckpointId, listCheckpoints, readManifest, workspaceHash, finalWorkspaceOf, findSymlinks, isCandidateId, isCheckpointId } from "../lib/manage/checkpoint.mjs";
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
@@ -124,6 +124,30 @@ test("list reports both kinds with their manifests", () => {
 	const list = listCheckpoints(taskDir);
 	assert.deepEqual(list.map((c) => [c.id, c.candidate]), [["cand-r2", true], ["ck-0001", false]]);
 	assert.equal(list[1].manifest.runId, "r1");
+});
+
+// cpSync copies a link verbatim and treeHash counts regular files only, so a link is invisible
+// to everything that identifies a checkpoint. This is what a restore refuses to copy forward.
+test("findSymlinks reports the links under a tree, skipping .pi, bounded", (t) => {
+	const ws = mkWorkspace();
+	assert.deepEqual(findSymlinks(ws), [], "a plain workspace has none");
+	const outside = tmp("manage-outside-");
+	try {
+		fs.symlinkSync(outside, path.join(ws, "src", "elsewhere"), "junction");
+		fs.symlinkSync(outside, path.join(ws, ".pi", "host-link"), "junction");
+	} catch {
+		return t.skip("this environment allows neither a symlink nor a junction");
+	}
+	assert.deepEqual(findSymlinks(ws), ["src/elsewhere"], "the host's .pi is not the run's work");
+	assert.equal(findSymlinks(ws, 0).length, 0, "bounded — the reason goes into one log line");
+});
+
+test("a checkpoint records the task it was taken from", () => {
+	const taskDir = mkTask();
+	const ck = snapshotCheckpoint({ taskDir, fromDir: mkWorkspace(), runId: "r1", task: "pathnorm" });
+	assert.equal(readManifest(taskDir, ck.id).task, "pathnorm", "a restore's config has to be for the same task");
+	// A checkpoint written before manifests carried one reads as null, not as a mismatch.
+	assert.equal(snapshotCheckpoint({ taskDir, fromDir: mkWorkspace(), runId: "r2" }).manifest.task, null);
 });
 
 test("the id predicates tell an accepted checkpoint from a candidate", () => {
