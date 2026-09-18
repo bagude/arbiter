@@ -277,6 +277,23 @@ test("the failed verdict and its boundary are deferred together when the trigger
 	assert.ok(after.includes("if (!paused) deliverVerdict(null);"), "an unpaused run must deliver exactly as it always did");
 });
 
+// The escalate thunk IS the whole reply — unlike the verdict, there is nothing delivered after
+// it. So it must tell three outcomes apart: a correction, a decision with no correction, and no
+// decision at all. Inferring silence from "no correction" told the orchestrator that a manager's
+// own answer was a timeout.
+test("the escalation acknowledgement distinguishes an answer from a timeout", () => {
+	const src = supervisorSource();
+	const at = src.indexOf("const ackEscalation = (correction, defaulted) => {");
+	assert.ok(at >= 0, "the escalation acknowledgement must take the defaulted flag, not infer it from the correction");
+	const thunk = src.slice(at, src.indexOf("};", at));
+	assert.ok(thunk.includes("if (correction) deliver(VERIFIER, correction"), "a correction is delivered as the manager wrote it");
+	assert.ok(thunk.includes("else if (defaulted) deliver(VERIFIER, M.manage.escalationDefaulted()"), "only a timeout may use the defaulted text");
+	assert.ok(thunk.includes("else deliver(VERIFIER, M.manage.escalationAnswered()"), "a decision with no correction must still read as answered");
+	// And the flag has to come from the release, not from a guess at the call site.
+	assert.ok(src.includes("held.deliver(held.correction, defaulted)"), "releasePause passes the reason through to the held delivery");
+	assert.ok(src.includes('releasePause("decision timeout", { defaulted: true })'), "the timeout is the one release that sets it");
+});
+
 test("a decision releases the held delivery; a silent manager defaults after the timeout", () => {
 	const src = supervisorSource();
 	const pump = src.slice(src.indexOf("\nfunction pumpControl("));

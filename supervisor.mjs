@@ -929,13 +929,20 @@ function pumpBus() {
 				// blocked on the reply, so this is the second place a run pauses (§4). With no
 				// manager configured the kind does not exist in its tool at all; if one arrives
 				// anyway, it is acknowledged like any other mail rather than silently dropped.
-				const ackEscalation = (correction) => {
+				// Three outcomes, three texts. The orchestrator is waiting on a reply and this
+				// thunk is the whole reply, so inferring "nobody answered" from "no correction
+				// arrived" would tell a manager's own decision to the orchestrator as silence.
+				const ackEscalation = (correction, defaulted) => {
 					if (correction) deliver(VERIFIER, correction, "manager correction");
-					else deliver(VERIFIER, M.manage.escalationDefaulted(), "escalation defaulted");
+					else if (defaulted) deliver(VERIFIER, M.manage.escalationDefaulted(), "escalation defaulted");
+					else deliver(VERIFIER, M.manage.escalationAnswered(), "escalation answered");
 				};
 				if (!MANAGE) { deliver(VERIFIER, M.ack(), "escalation with no manager configured"); break; }
 				const t = decideTrigger({ escalateMail: true });
-				if (!manageTrigger(t.kind, { mail: msg.n, body: msg.body.slice(0, 500) }, t.pauses, ackEscalation)) ackEscalation(null);
+				// Not paused means a decision is already owed on an earlier trigger, so none is
+				// coming for this one either: the orchestrator is told so at once rather than
+				// left waiting on a reply that has no manager behind it.
+				if (!manageTrigger(t.kind, { mail: msg.n, body: msg.body.slice(0, 500) }, t.pauses, ackEscalation)) ackEscalation(null, true);
 				break;
 			}
 			case "solo_ack":
@@ -1455,14 +1462,19 @@ function manageTrigger(kind, detail, pauses, pending) {
 	return true;
 }
 
-/** Releases the held delivery, attaching any correction that arrived with the decision. */
-function releasePause(why) {
+/**
+ * Releases the held delivery, attaching any correction that arrived with the decision.
+ * `defaulted` travels with it because "no correction" and "no decision" are different facts and
+ * a held delivery may have to say which one happened — a manager that answers with a bare verb
+ * sends no correction, and must not be reported to the orchestrator as silence.
+ */
+function releasePause(why, { defaulted = false } = {}) {
 	if (!managePause) return;
 	const held = managePause;
 	managePause = null;
 	log({ type: "manage", msg: `releasing the held ${held.kind} delivery (${why})` });
 	try {
-		held.deliver(held.correction);
+		held.deliver(held.correction, defaulted);
 	} catch (err) {
 		log({ type: "manage", msg: `held delivery threw: ${err?.stack ?? err}`.slice(0, 400) });
 	}
@@ -1509,7 +1521,7 @@ function pumpControl() {
 	if (managePause && Date.now() >= managePause.deadline) {
 		jevEvent("manage:defaulted", { kind: managePause.kind, afterMs: MANAGE.timeoutMs });
 		log({ type: "manage", msg: `no decision within ${MANAGE.timeoutMs}ms — defaulting to continue with a zero grant` });
-		releasePause("decision timeout");
+		releasePause("decision timeout", { defaulted: true });
 	}
 }
 function latestOrchestratorRequest() {

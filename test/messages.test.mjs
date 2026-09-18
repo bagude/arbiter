@@ -36,6 +36,11 @@ test("manager correction and the defaulted escalation acknowledgement", () => {
 	assert.equal(orch.manage.correction("the tester's suite is the gate"), "[SUPERVISOR] From the manager: the tester's suite is the gate");
 	assert.equal(dyad.manage.correction("x"), orch.manage.correction("x"));
 	assert.equal(orch.manage.escalationDefaulted(), "[SUPERVISOR] Your escalation was recorded but no decision came back in time. Nothing about the task has changed — carry on with the criteria and budget you already have.");
+	// An answered escalation and an unanswered one must not read alike: a manager that replies
+	// with a bare verb sends no correction, and reporting that as silence would be a lie the
+	// orchestrator then reasons from.
+	assert.equal(orch.manage.escalationAnswered(), "[SUPERVISOR] Your escalation was answered. The task's criteria and your remaining budget are as stated; carry on.");
+	assert.notEqual(orch.manage.escalationAnswered(), orch.manage.escalationDefaulted());
 });
 
 test("probe texts", () => {
