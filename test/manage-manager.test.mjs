@@ -6,7 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-state.mjs";
-import { appendLedger } from "../lib/manage/ledger.mjs";
+import { appendLedger, readLedger } from "../lib/manage/ledger.mjs";
+import { executeInstruction } from "../lib/manage/instructions.mjs";
 import { writePacket } from "../lib/manage/packet.mjs";
 import {
 	DEFAULT_MANAGER_MODEL, DEFAULT_TIMEOUT_MS, INSTRUCT_TOOL, MAX_DECISION_TOKENS, MESSAGES_URL,
@@ -628,6 +629,49 @@ test("an event with no kind is skipped and logged, never given a kind of its own
 	assert.equal(fetchImpl.calls.length, 0, "no manager is asked about a packet that could not be built");
 	assert.match(fs.readFileSync(path.join(dir, "serve.log"), "utf8"), /carries no kind/);
 	assert.ok(!fs.existsSync(path.join(dir, "packets", "1.json")));
+});
+
+test("a stale refusal is answered with a fresh packet, once, inside what is left of the budget", async () => {
+	const { dir, runsDir } = fixture({
+		lifecycle: [{ ts: 2, ev: "manage:trigger", data: { kind: "oracle_failed_repeatedly", packetRequest: { runId: RUN_ID, detail: {} } } }],
+	});
+	const fetchImpl = fakeFetch(toolUse("correct", { runId: RUN_ID, message: "probe the trailing separator" }));
+	// The task moves under the first decision, exactly as a worker report in flight would move it:
+	// the executor sees a version the manager never saw and refuses as stale.
+	let executed = 0;
+	const execute = (args) => {
+		executed++;
+		if (executed === 1) saveTask(dir, loadTask(dir)); // a writer that is not this decision
+		return executeInstruction(args);
+	};
+	const out = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl, execute });
+
+	assert.equal(out.handled.length, 1);
+	const answer = out.handled[0];
+	assert.equal(answer.attempts, 2, "asked again, once");
+	assert.equal(answer.result.executed, true, answer.result.refusal ?? "");
+	assert.equal(fetchImpl.calls.length, 2, "a fresh packet is a fresh decision");
+	// Both packets are on disk and both rows are in the ledger: the refusal is part of the record.
+	assert.deepEqual(fs.readdirSync(path.join(dir, "packets")).sort(), ["1.json", "2.json"]);
+	const rows = readLedger(dir).filter((r) => r.instruction);
+	assert.equal(rows.length, 2);
+	assert.equal(rows[0].refused, "stale_version");
+	assert.equal(rows[1].verified, true);
+	assert.equal(rows[1].instruction.packetId, 2);
+	assert.ok(rows[1].instruction.idempotencyKey !== rows[0].instruction.idempotencyKey, "a new packet is a new key");
+});
+
+test("a refusal that is not stale is recorded and left: asking again would only repeat it", async () => {
+	const { dir, runsDir } = fixture({
+		lifecycle: [{ ts: 2, ev: "manage:trigger", data: { kind: "oracle_failed_repeatedly", packetRequest: { runId: RUN_ID, detail: {} } } }],
+	});
+	// The C1 shape: a checkpoint syntax the parser rejects. It will be rejected again next time.
+	const fetchImpl = fakeFetch(toolUse("restore", { checkpoint: "run:2026-09-18T05-36-41@21", approach: {} }));
+	const out = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
+	assert.equal(out.handled[0].attempts, 1, "no retry for a refusal that repeats");
+	assert.equal(out.handled[0].result.executed, false);
+	assert.equal(fetchImpl.calls.length, 1);
+	assert.match(fs.readFileSync(path.join(dir, "serve.log"), "utf8"), /refused \((precondition|verb_not_allowed)\)/);
 });
 
 test("a paused task answers no trigger: §3's escalate stops the loop, not just the executor", async () => {
