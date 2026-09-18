@@ -366,7 +366,14 @@ function headPickFor(runDir, call) {
 	return { pickClass: row.head.pickClass, confidence: row.head.confidence };
 }
 
-function runOnce(config, env, logFile, runsRoot) {
+/**
+ * One supervisor run to exit, with `env` laid over the current environment, and the run id it
+ * created (the directory that appeared under `runsRoot`).
+ *
+ * Exported because a `restore` from an accepted checkpoint needs exactly this and nothing else
+ * the fork runner does: a plain run, a different starting workspace, and its id back.
+ */
+export function runOnce(config, env, logFile, runsRoot) {
 	return new Promise((resolve) => {
 		const before = new Set(fs.readdirSync(runsRoot));
 		const log = fs.openSync(logFile, "w");

@@ -32,7 +32,7 @@ import { decideTrigger } from "./lib/manage/triggers.mjs";
 import { createPause, suppressWhilePaused } from "./lib/manage/pause.mjs";
 // A checkpoint is a directory, not task.json: the supervisor may preserve the workspace it ends
 // with (finish(), below) and may not promote it. See lib/manage/checkpoint.mjs's header.
-import { snapshotCheckpoint } from "./lib/manage/checkpoint.mjs";
+import { snapshotCheckpoint, CHECKPOINT_OWN } from "./lib/manage/checkpoint.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, retainSpecialists, lastOracleRunNumber, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { resolveLedger, buildIndex } from "./lib/memory-index.mjs";
@@ -270,6 +270,29 @@ const MANAGE = (() => {
 // feature rather than a misconfiguration, so it is said out loud at startup, like jev's key.
 if (MANAGE && (MANAGE.failThreshold <= 0 || MANAGE.failThreshold >= CAPS.doneAttempts))
 	console.error(`[supervisor] manage.failThreshold ${MANAGE.failThreshold} against caps.doneAttempts ${CAPS.doneAttempts} — the oracle_failed_repeatedly pause can never fire (it needs 0 < failThreshold < doneAttempts)`);
+/**
+ * The directory this run's workspace is built from instead of the task's seed — an accepted
+ * checkpoint, set by the executor's `restore` (§3). Null for every ordinary run.
+ *
+ * MANAGE-gated like every other management site: a config with no manage block behaves exactly
+ * as it did before this existed, and an environment variable left over from an earlier command
+ * cannot quietly change what a plain run starts from. It is refused rather than ignored when it
+ * names nothing, and at startup rather than at the copy: a run that silently fell back to the
+ * seed would be scored as a restore of a state it never loaded.
+ */
+const WS_SOURCE = (() => {
+	const raw = (process.env.ARBITER_WS_SOURCE ?? "").trim();
+	if (!raw) return null;
+	if (!MANAGE) {
+		console.error(`[supervisor] ARBITER_WS_SOURCE is set but this config has no manage block — ignoring it and starting from the task's seed workspace`);
+		return null;
+	}
+	if (!fs.existsSync(raw)) {
+		console.error(`[supervisor] ARBITER_WS_SOURCE names a directory that does not exist: ${raw}`);
+		process.exit(2);
+	}
+	return raw;
+})();
 fs.writeFileSync(BUS, "");
 // A supervisor must outlive whatever spawned it. log() writes every line to stdout as well as
 // to the audit, so when a parent that piped our output dies, the next console.log raises EPIPE
@@ -372,7 +395,16 @@ function forkAbort(msg) {
 // the task's seed; installWorkspaceExtension / writeRosterDefinitions below rebuild
 // .pi/ unchanged either way.
 if (FORK) fs.cpSync(path.join(FORK_SRC, "requests", FORK_REQ.snapshot), WS.workspace, { recursive: true });
-else fs.cpSync(path.join(TASK, "ws-builder"), WS.workspace, { recursive: true });
+// A restore from an accepted checkpoint (§3): the same plain run as ever — no recorded
+// inference, no forced first action, a fresh orchestrator — except that the workspace it starts
+// from is a state the task already accepted rather than the task's seed. What a checkpoint
+// records about ITSELF is left behind (its manifest, its evidence logs): those are the harness's
+// record, not the tree the agents worked on, and copying them in would hand the orchestrator a
+// manifest naming the hash it is about to change.
+else if (WS_SOURCE) {
+	fs.cpSync(WS_SOURCE, WS.workspace, { recursive: true, filter: (src) => !CHECKPOINT_OWN.includes(path.relative(WS_SOURCE, src)) });
+	log({ type: "manage", msg: `workspace restored from ${WS_SOURCE}` });
+} else fs.cpSync(path.join(TASK, "ws-builder"), WS.workspace, { recursive: true });
 // Read-only mounts (tasks/<task>/mounts.json): junctions into the copied workspace,
 // created after the copy (cpSync would dereference them) and skipped at archive
 // time. Agents learn the mount roots through ARBITER_MOUNTS; the path guard lets
@@ -2048,6 +2080,9 @@ function finish(reason) {
 		verifier: PDEF.verifier,
 	});
 	summary.snapshot = SNAPSHOT;
+	// The checkpoint this run was restored from, null for an ordinary run — the counterpart of
+	// summary.fork below, and the only record that this run did not start from the task's seed.
+	summary.wsSource = WS_SOURCE;
 	summary.tokens = t.tokens;
 	// What this run was forked from, null for an ordinary run. Assigned here rather than
 	// passed to buildSummary: that function destructures a fixed key set and returns a

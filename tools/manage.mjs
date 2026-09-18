@@ -15,7 +15,7 @@ import { readLedger, readFindings, appendFinding, settleFinding, recordOutcome, 
 import { executeInstruction, registerRunForTrigger } from "../lib/manage/instructions.mjs";
 import { listCheckpoints, promoteCandidate, isCandidateId } from "../lib/manage/checkpoint.mjs";
 import { compareTable, findingsFromCompare, incompleteBranches, settleOrAppend } from "../lib/manage/compare.mjs";
-import { runBatch } from "./fork.mjs";
+import { runBatch, runOnce } from "./fork.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(here, "..");
@@ -233,6 +233,18 @@ function cmdCheckpoint(argv) {
 	return usageExit();
 }
 
+/**
+ * One plain supervisor run started from an accepted checkpoint: `runOnce` with
+ * `ARBITER_WS_SOURCE` set, which is the single thing that makes it a restore.
+ *
+ * The three fork variables are cleared explicitly rather than left to the inherited environment.
+ * `runOnce` spreads `process.env` under this, and a stale `ARBITER_FORK` in the shell that
+ * launched the batch would turn this plain run into a fork of somebody else's recording — the
+ * same trap `planForks` documents for `ARBITER_FORK_FORCE`.
+ */
+const defaultRestoreRun = ({ config, wsSource, runsDir, logFile }) =>
+	runOnce(config, { ARBITER_WS_SOURCE: wsSource, ARBITER_FORK: "", ARBITER_FORK_FORCE: "", ARBITER_FORK_CONTROL: "" }, logFile, runsDir);
+
 const readJsonl = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l)) : []);
 /** A path as a finding's evidence should read it: relative to the repo root when it is inside. */
 const relRoot = (p) => (path.resolve(p).startsWith(path.resolve(ROOT) + path.sep) ? path.relative(ROOT, p).split(path.sep).join("/") : p);
@@ -254,7 +266,7 @@ const relRoot = (p) => (path.resolve(p).startsWith(path.resolve(ROOT) + path.sep
  * Either way the batch says it is over before this returns — success, abandonment or throw — by
  * writing `done.json` in its own directory. It never writes task.json: see markBatchDone.
  */
-export async function runBatchSpec({ taskDir, specFile, runner = runBatch }) {
+export async function runBatchSpec({ taskDir, specFile, runner = runBatch, restoreRun = defaultRestoreRun }) {
 	const spec = JSON.parse(fs.readFileSync(specFile, "utf8"));
 	const dir = path.dirname(path.resolve(specFile));
 	// Before anything spawns. The budget was charged when the instruction executed, and every
@@ -274,6 +286,22 @@ export async function runBatchSpec({ taskDir, specFile, runner = runBatch }) {
 			const prior = JSON.parse(fs.readFileSync(readyFile, "utf8"));
 			console.log(`[batch ${spec.compareId}] already ready (packet ${prior.packetId ?? "none"}); nothing re-run`);
 			return { alreadyReady: true, ...prior };
+		}
+		// A restore from an accepted checkpoint: one plain supervisor run whose workspace is that
+		// checkpoint, not a fork of a recorded inference. It owes the task the same one thing a
+		// `run:` restore owes it — the new run's id, as an outcome row, which is the manager's only
+		// handle on it — and, like that one, it is deliberately NOT added to current.activeRuns:
+		// the id exists only once the run is over.
+		if (spec.wsSource) {
+			console.log(`[batch ${spec.compareId}] restore from ${spec.checkpoint} (${spec.wsSource})`);
+			const out = await restoreRun({ config: spec.config, wsSource: spec.wsSource, runsDir: spec.runsDir, logFile: path.join(dir, "restore.log") });
+			const row = { label: spec.branches[0]?.label ?? "restore", runId: out.runId ?? null, exit: out.code ?? null, crashed: out.code !== 0, checkpoint: spec.checkpoint };
+			rows.push(row);
+			fs.writeFileSync(path.join(dir, "rows.jsonl"), JSON.stringify(row) + "\n");
+			recordOutcome(taskDir, spec.idempotencyKey, { batchId: spec.compareId, runId: row.runId, crashed: row.crashed, checkpoint: spec.checkpoint });
+			console.log(`[batch ${spec.compareId}] restore → ${row.runId ?? "no run"} (exit ${row.exit})`);
+			status = "ready";
+			return { rows, runId: row.runId };
 		}
 		for (const b of spec.branches) {
 			console.log(`[batch ${spec.compareId}] branch ${b.label} (${b.forkBranch}${b.firstAction ? ` ${b.firstAction}` : ""}) × ${spec.replicates}`);

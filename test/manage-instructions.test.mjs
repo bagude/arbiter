@@ -9,6 +9,7 @@ import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-s
 import { readLedger, appendLedger, recordOutcome } from "../lib/manage/ledger.mjs";
 import { INSTRUCTION_VERBS, NOT_YET_IMPLEMENTED, validateInstruction, executeInstruction, controlAppend, NotYetImplemented, batchCeiling, settledBatches, registerRunForTrigger, pendingRuns, settledRuns } from "../lib/manage/instructions.mjs";
 import { snapshotCheckpoint } from "../lib/manage/checkpoint.mjs";
+import { runBatchSpec } from "../tools/manage.mjs";
 
 const RUN_ID = "2026-09-18T01-02-03";
 
@@ -329,6 +330,14 @@ function forkFixture({ manage = true, captured = true, budget, live = false } = 
 	return { ...f, config, checkpoint: `run:${RUN_ID}#${CALL}` };
 }
 
+/** A workspace to cut a checkpoint from — the state an accepted milestone left behind. */
+function mkCheckpointSource() {
+	const ws = fs.mkdtempSync(path.join(os.tmpdir(), "manage-ck-ws-"));
+	fs.mkdirSync(path.join(ws, "src"), { recursive: true });
+	fs.writeFileSync(path.join(ws, "src", "x.mjs"), "export const x = 1;\n");
+	return ws;
+}
+
 /** A launcher that records instead of spawning: no test may start a supervisor. */
 function recorder() {
 	const calls = [];
@@ -374,11 +383,25 @@ test("restore: a checkpoint whose captured inference is missing is a preconditio
 
 // ck-NNNN checkpoints arrive with Task 4. Refusing by name is the point: a restore that quietly
 // fell back to something else would start a run from a state nobody named.
-test("restore: a ck- checkpoint is refused as not yet available, and a malformed one by shape", () => {
+test("restore: a checkpoint that is not on disk is refused, and a malformed one by shape", () => {
 	const { dir, runsDir, task, config } = forkFixture();
 	const v = (checkpoint) => validateInstruction(instr({ verb: "restore", args: { checkpoint, approach: { config } } }), { task, packet: packetFor(task), taskDir: dir, runsDir });
-	assert.equal(v("ck-0007").refusal, "checkpoint restore not yet available");
+	assert.match(v("ck-0007").refusal, /no checkpoint ck-0007/, "the fixture has no checkpoints on disk");
 	assert.match(v("yesterday").refusal, /must be ck-NNNN or run:<runId>#<call>/);
+});
+
+// A compare runs its branches through the fork runner, which resumes a recorded inference. There
+// is none in an accepted workspace, so a comparison over one would be two identical fresh runs
+// charged as an experiment.
+test("compare: an accepted checkpoint is refused — a comparison forks a captured inference", () => {
+	const { dir, runsDir, task, config } = forkFixture();
+	snapshotCheckpoint({ taskDir: dir, fromDir: mkCheckpointSource(), runId: "r-old" });
+	const v = validateInstruction(
+		instr({ verb: "compare", args: { checkpoint: "ck-0001", branches: [{ label: "G" }, { label: "A", firstAction: "inspect" }], replicates: 2, approach: { config } } }),
+		{ task, packet: packetFor(task), taskDir: dir, runsDir },
+	);
+	assert.equal(v.ok, false);
+	assert.match(v.refusal, /captured inference/);
 });
 
 test("restore: the config must exist, and a message needs a run that reads a control file", () => {
@@ -668,6 +691,94 @@ test("restore without a forced action is the G branch, and no control file is wr
 	assert.equal(spec.branches[0].forkBranch, "G");
 	assert.equal(spec.branches[0].controlFile, null);
 	assert.deepEqual(fs.readdirSync(path.join(dir, "compares", "1")).sort(), ["spec.json"]);
+});
+
+// ---------- restore from an accepted checkpoint (Task 4b) ----------
+
+/** The fork fixture plus a promoted checkpoint on disk — what a restore from an accepted state
+ * needs, and nothing a fork needs. */
+function ckFixture(opts = {}) {
+	const f = forkFixture(opts);
+	const ck = snapshotCheckpoint({ taskDir: f.dir, fromDir: mkCheckpointSource(), runId: "r-earlier" });
+	return { ...f, ck, checkpoint: ck.id };
+}
+
+test("restore from an accepted checkpoint spends a run alone and names the workspace in its spec", () => {
+	const { dir, runsDir, task, config, checkpoint, ck } = ckFixture();
+	const { calls, launchBatch } = recorder();
+	const r = executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(task), instr: instr({ verb: "restore", args: { checkpoint, approach: { config } } }) });
+
+	assert.equal(r.executed, true, r.refusal);
+	const spec = JSON.parse(fs.readFileSync(calls[0].specFile, "utf8"));
+	assert.equal(spec.kind, "restore");
+	assert.equal(spec.checkpoint, checkpoint);
+	assert.equal(spec.wsSource, path.resolve(ck.dir), "the batch child starts the run from this directory");
+	assert.equal(spec.runId, null, "there is no source run to fork");
+	assert.equal(spec.call, null);
+	assert.equal(spec.recordedTool, null);
+	assert.equal(spec.replicates, 1);
+
+	const after = loadTask(dir);
+	assert.equal(after.budget.runs.used, 1);
+	assert.equal(after.budget.forkReplicates.used, 0, "no fork runner, no replicate");
+	assert.equal(after.stateVersion, 5, "one instruction, one state version bump");
+	assert.equal(after.current.activeBranches[0].checkpoint, checkpoint);
+});
+
+test("restore from a checkpoint needs its own config, and takes no message or forced action", () => {
+	const { dir, runsDir, task, config, checkpoint } = ckFixture();
+	const v = (approach) => validateInstruction(instr({ verb: "restore", args: { checkpoint, approach } }), { task, packet: packetFor(task), taskDir: dir, runsDir });
+	// The packet's run.config belongs to whatever run the trigger was about, which may be another
+	// task entirely, and a ck- restore has no source run to inherit one from.
+	assert.match(v({}).refusal, /must name the config to run it with/);
+	// Both of these reach a restored run only through the fork path, and would be written and
+	// read by nothing here.
+	assert.match(v({ config, message: "try the tester first" }).refusal, /no recorded inference to resume/);
+	assert.match(v({ config, firstAction: "inspect" }).refusal, /this run starts fresh/);
+	assert.equal(v({ config }).ok, true);
+});
+
+test("restore from a checkpoint is refused when the fork budget is gone but a run is left", () => {
+	const { dir, runsDir, task, config, checkpoint } = ckFixture({ budget: { runs: 20, forkReplicates: 0 } });
+	const v = validateInstruction(instr({ verb: "restore", args: { checkpoint, approach: { config } } }), { task, packet: packetFor(task), taskDir: dir, runsDir });
+	assert.equal(v.ok, true, "a checkpoint restore does not touch the fork budget");
+
+	// The other half, with a run budget of one that the restore itself spends: a zero total means
+	// UNBOUNDED here (task-state's convention), so "no runs left" can only be reached by spending.
+	const one = ckFixture({ budget: { runs: 1, forkReplicates: 24 } });
+	const args = { checkpoint: one.checkpoint, approach: { config: one.config } };
+	const first = executeInstruction({ taskDir: one.dir, runsDir: one.runsDir, launchBatch: recorder().launchBatch, packet: packetFor(one.task), instr: instr({ verb: "restore", args }) });
+	assert.equal(first.executed, true, first.refusal);
+	const t = loadTask(one.dir);
+	const second = validateInstruction(instr({ verb: "restore", args, idempotencyKey: "second", basedOnStateVersion: t.stateVersion }), { task: t, packet: packetFor(t), taskDir: one.dir, runsDir: one.runsDir });
+	assert.equal(second.code, "budget");
+	assert.match(second.refusal, /no run budget left/);
+});
+
+test("the batch child runs a checkpoint restore as one plain run and reports its id", async () => {
+	const { dir, runsDir, task, config, checkpoint, ck } = ckFixture();
+	const { calls, launchBatch } = recorder();
+	const i = instr({ verb: "restore", args: { checkpoint, approach: { config } } });
+	executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(task), instr: i });
+
+	const seen = [];
+	const out = await runBatchSpec({
+		taskDir: dir,
+		specFile: calls[0].specFile,
+		runner: () => { throw new Error("a checkpoint restore must not go through the fork runner"); },
+		restoreRun: (arg) => (seen.push(arg), { code: 0, runId: "2026-09-18T12-00-00" }),
+	});
+
+	assert.equal(seen.length, 1);
+	assert.equal(seen[0].wsSource, path.resolve(ck.dir));
+	assert.equal(seen[0].config, config);
+	assert.equal(out.runId, "2026-09-18T12-00-00");
+	// The run id is the manager's only handle on a restored run: it arrives as an outcome row.
+	const outcome = readLedger(dir).find((r) => r.kind === "outcome" && r.forKey === i.idempotencyKey);
+	assert.deepEqual(outcome.outcome, { batchId: 1, runId: "2026-09-18T12-00-00", crashed: false, checkpoint });
+	// And the batch says it is over by its marker file, never by writing task.json.
+	assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "compares", "1", "done.json"), "utf8")).status, "ready");
+	assert.equal(loadTask(dir).stateVersion, 5, "the child wrote no task state");
 });
 
 test("compare: spends branches × replicates, writes the spec both branches, and keeps the ids apart", () => {
