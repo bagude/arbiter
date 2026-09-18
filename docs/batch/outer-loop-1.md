@@ -50,8 +50,39 @@ Two forks: **call 4** (skip the listing, spawn now; A-natural `--action spawn`) 
 
 ## Results
 
-_(filled in when the chain finishes; per-batch tables in `fork-2026-09-18T00-01-44-{4,22}-{G,A-natural}.md`)_
+Both forks: every replicate on both branches passed the oracle first try (12 of 12 at 70/70). The question each fork asked is therefore answered by cost and by what the unforced replicates chose to do.
+
+### Call 4 — skip the listing, spawn the tester now
+
+| branch | first action | first-try oracle | wall s | decoded |
+|---|---|---|---|---|
+| G 1 | spawn | 70/70 | 389 | 22.4k |
+| G 2 | spawn | 70/70 | 606 | 36.4k |
+| G 3 | ls, then spawn | 70/70 | 289 | 25.3k |
+| A 1 | ls denied ×1, spawn | 70/70 | 403 | 24.8k |
+| A 2 | ls denied ×1, spawn | 70/70 | 403 | 19.3k |
+| A 3 | ls denied ×2, spawn | 70/70 | 564 | 34.6k |
+
+The listing had no value: nothing downstream differed. Left alone, the orchestrator skipped it in two of three replicates, so the recorded gather was sampling noise and the heads' 1.00 matched the model's majority behaviour rather than correcting it. Forcing the spawn cost more than the inference it saved: every A replicate attempted the listing first, took one or two guard denials, then spawned.
+
+### Call 22 — skip the re-read of the source, claim done now
+
+| branch | actions from the fork | first-try oracle | wall s | decoded |
+|---|---|---|---|---|
+| G 1 | checkpoint, done | 70/70 | 33 | 0.7k |
+| G 2 | checkpoint, done | 70/70 | 21 | 0.9k |
+| G 3 | checkpoint, done, answer | 70/70 | 22 | 1.2k |
+| A 1 | checkpoint denied, done | 70/70 | 20 | 0.8k |
+| A 2 | checkpoint denied, done, answer | 70/70 | 22 | 1.2k |
+| A 3 | checkpoint denied, done, answer | 70/70 | 107 | 9.7k |
+
+Same shape at the frontier the earlier forks approached from the failing side: after three matched probes the re-read was ceremony, and not even the model's own ceremony — no G replicate re-read the source; all three checkpointed and claimed. The forced branch saved nothing and once cost a long answer turn.
 
 ## What this cycle retains
 
-_(pending results)_
+1. **Finding f1 (candidate):** at a gather of kind `ls` or a re-read of a file already in context, where both heads name the next substantive action at p ≥ 0.95, skipping the gather changes neither first-try nor final oracle. Settlement criterion: the same on a second run. Evidence: the twelve rows above.
+2. **Finding f2 (candidate):** a recorded gather at such a point is often not the model's modal choice. Two of three unforced replicates skipped the listing and three of three skipped the re-read. A confident head at these points is a majority vote over the model's own samples, which is useful for prediction and says nothing about correction.
+3. **A rule for the management spec, retained now:** the way to act on a settled "skippable gather" finding is not to force the substantive action at the tool edge. Forcing made the model fight the guard and cost more than the gather. The promotion path is to remove the reason for the gather (the listing was of a directory already read; the re-read followed probes that already matched) or to pre-answer it, which is the harness's job, not the manager's. This changes §8 of the spec: `compare` settles findings; a settled finding of this kind becomes a prompt or a pre-answered tool result, never a forced action.
+4. **What the cycle did not show:** any automatic improvement, or anything about the failing frontier. Both points were chosen because both heads were certain, and certainty here meant the gather was already optional. The informative forks are the ones where the heads are confident and the model is not modal — the failing run's claims — and those need the failure-side signal the retracted jev-3 was meant to supply.
+
+Cost of the cycle: one observed run (11 min), two replays (2 min), twelve fork replicates (52 min), all on one server slot.
