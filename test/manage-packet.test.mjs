@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, spendBudget } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
 import { appendFinding } from "../lib/manage/ledger.mjs";
@@ -65,6 +67,92 @@ function mkRunDir() {
 	);
 	return dir;
 }
+
+/**
+ * A run as it looks WHILE it is running: no summary.json, because the supervisor writes that in
+ * finish(). This is the shape runs/2026-09-18T04-53-07 had on disk when the first live check
+ * tried to build a packet at its pause and threw ENOENT instead.
+ */
+function mkLiveRunDir() {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "live-run-"));
+	fs.writeFileSync(
+		path.join(dir, "audit.jsonl"),
+		[
+			{ t: "0.1", type: "ready", msg: "orchestrator ready; kicking off" },
+			{ t: "12.4", type: "tool", agent: "orchestrator", msg: "bash npm test" },
+			{ t: "20.0", type: "tool", agent: "worker:a", msg: "edit src/index.mjs" },
+			{ t: "30.2", type: "mail", msg: "MAIL #1 orchestrator -> supervisor [done] Claiming done." },
+			{ t: "34.9", type: "oracle", msg: "Oracle run #1: 68/70 passed." },
+			{ t: "34.9", type: "manage", msg: "trigger oracle_failed_repeatedly (orchestrator paused): {}" },
+		]
+			.map((r) => JSON.stringify(r))
+			.join("\n") + "\n",
+	);
+	fs.writeFileSync(
+		path.join(dir, "workers.jsonl"),
+		[
+			{ ts: 1, ev: "started", wid: "worker:a", description: "write tests", background: false, type: "tester" },
+			{ ts: 2, ev: "completed", wid: "worker:a", status: "completed", outcome: "completed" },
+		]
+			.map((r) => JSON.stringify(r))
+			.join("\n") + "\n",
+	);
+	fs.mkdirSync(path.join(dir, "oracle-1"), { recursive: true });
+	return dir;
+}
+
+// Every PAUSING trigger fires mid-run by definition — the orchestrator is blocked on a delivery
+// the supervisor is withholding — so a packet that needs summary.json is a packet that cannot
+// be built at the moments the manager exists for.
+test("a packet can be built for a LIVE run, which has no summary.json", () => {
+	const taskDir = mkTaskDir();
+	const runDir = mkLiveRunDir();
+	assert.ok(!fs.existsSync(path.join(runDir, "summary.json")), "the fixture must really lack the summary");
+
+	const packet = assemblePacket({ taskDir, runDir, trigger: { kind: "oracle_failed_repeatedly", runId: path.basename(runDir), detail: { attempts: 1 } } });
+	assert.equal(packet.run.status, "running");
+	assert.equal(packet.run.reason, null, "the field that would say the run ended stays empty");
+	assert.equal(packet.run.id, path.basename(runDir));
+	assert.equal(packet.run.wallSec, 34.9, "elapsed comes from the last audit line while the run is alive");
+	assert.equal(packet.run.toolCalls, 2, "counted from the audit, as it already was");
+	assert.equal(packet.run.mails, 1);
+	assert.deepEqual(packet.run.oracle, [{ attempt: 1, pass: 68, total: 70 }]);
+	assert.equal(packet.run.doneAttempts, 1, "the oracle-N directories say how many attempts have happened");
+	assert.deepEqual(packet.run.workers.map((w) => [w.wid, w.type, w.status]), [["worker:a", "tester", "completed"]]);
+	// Cost and tokens live in the supervisor's memory, not in any file the run writes, so they
+	// are reported as zero rather than guessed at.
+	assert.equal(packet.run.tokens, 0);
+	// And the rest of the §2 shape is unchanged: the manager gets the same fields either way.
+	for (const k of ["milestone", "guards", "decisions", "heads", "chain", "tail"]) assert.ok(k in packet.run, `run.${k} missing`);
+	assert.ok(packet.options.verbsAllowed.includes("continue"));
+});
+
+// The command the driver actually runs at a trigger. It threw ENOENT on the live check; if it
+// throws again, the pause it was answering is left to time out and the evidence is lost.
+test("tools/manage.mjs packet succeeds against a live run directory", () => {
+	const taskDir = mkTaskDir();
+	const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), "runs-"));
+	const runId = "2026-09-18T04-53-07";
+	fs.cpSync(mkLiveRunDir(), path.join(runsDir, runId), { recursive: true });
+
+	const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "tools", "manage.mjs");
+	const r = spawnSync(process.execPath, [cli, "packet", taskDir, runId, "--trigger", "oracle_failed_repeatedly", "--detail", JSON.stringify({ attempts: 1 }), "--runs", runsDir], { encoding: "utf8" });
+	assert.equal(r.status, 0, `exit ${r.status}: ${r.stderr}`);
+	assert.match(r.stdout, /packets[\\/]1\.json/);
+	const written = JSON.parse(fs.readFileSync(path.join(taskDir, "packets", "1.json"), "utf8"));
+	assert.equal(written.run.status, "running");
+	assert.equal(written.trigger.runId, runId);
+});
+
+test("a finished run still reads its summary, and says so", () => {
+	const taskDir = mkTaskDir();
+	const runDir = mkRunDir();
+	const packet = assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended_without_acceptance", runId: "r1" } });
+	assert.equal(packet.run.status, "finished");
+	assert.equal(packet.run.reason, "FAILED: done attempts exhausted");
+	assert.equal(packet.run.wallSec, 100, "the summary's own figure, not the audit's last line");
+	assert.equal(packet.run.doneAttempts, 2);
+});
 
 test("assemblePacket builds the §2 shape, redacts secrets, bounds size, and numbers packets by directory count", () => {
 	const taskDir = mkTaskDir();
