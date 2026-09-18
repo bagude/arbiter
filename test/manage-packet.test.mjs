@@ -138,6 +138,21 @@ test("a packet can be built for a LIVE run, which has no summary.json", () => {
 	assert.ok(packet.options.verbsAllowed.includes("continue"));
 });
 
+// What the supervisor's startup line is for: a live run carries no summary.json and usually no
+// config copy either, and `restore` and `compare` need a config path to spawn with. The line is
+// `{ type: "config", msg: <path> }` and `msg` is read AS the path — so this test is also what
+// pins the supervisor to logging the bare path rather than a sentence about it.
+test("a live run's config comes from its startup audit line when no copy is beside it", () => {
+	const taskDir = mkTaskDir();
+	const runDir = mkLiveRunDir();
+	const audit = path.join(runDir, "audit.jsonl");
+	fs.writeFileSync(audit, JSON.stringify({ t: "0.0", type: "config", msg: "configs/orch-pathnorm-27b.json" }) + "\n" + fs.readFileSync(audit, "utf8"));
+
+	const packet = assemblePacket({ taskDir, runDir, trigger: { kind: "oracle_failed_repeatedly", runId: path.basename(runDir), detail: {} } });
+	assert.equal(packet.run.config, "configs/orch-pathnorm-27b.json");
+	assert.deepEqual(packet.run.partial, ["tokens"], "the config is no longer a gap");
+});
+
 // The command the driver actually runs at a trigger. It threw ENOENT on the live check; if it
 // throws again, the pause it was answering is left to time out and the evidence is lost.
 test("tools/manage.mjs packet succeeds against a live run directory", () => {

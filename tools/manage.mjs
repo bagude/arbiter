@@ -7,11 +7,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-// No loadTask/saveTask here on purpose: the batch child never writes task.json (markBatchDone).
-import { createTask } from "../lib/manage/task-state.mjs";
+// loadTask, never saveTask: `accept` needs the version its synthetic packet is built on, and
+// reading is not writing — the batch child still never writes task.json (markBatchDone).
+import { createTask, loadTask, budgetLeft } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
 import { readLedger, readFindings, appendFinding, settleFinding, recordOutcome } from "../lib/manage/ledger.mjs";
 import { executeInstruction, registerRunForTrigger } from "../lib/manage/instructions.mjs";
+import { listCheckpoints, promoteCandidate } from "../lib/manage/checkpoint.mjs";
 import { compareTable, findingsFromCompare, incompleteBranches, settleOrAppend } from "../lib/manage/compare.mjs";
 import { runBatch } from "./fork.mjs";
 
@@ -22,6 +24,9 @@ const USAGE = `usage:
   node tools/manage.mjs init <taskDir> --task <id> --goal "<text>" --criteria <json> --milestones <json> [--budget <json>]
   node tools/manage.mjs packet <taskDir> <runId> --trigger <kind> [--detail <json>] [--runs <dir>]
   node tools/manage.mjs execute <taskDir> <instruction.json> [--packet <n|file>] [--runs <dir>]
+  node tools/manage.mjs accept <taskDir> <milestone> <checkpoint> --evidence <runId,...> [--packet <n|file>] [--runs <dir>]
+  node tools/manage.mjs checkpoint promote <taskDir> cand-<runId>
+  node tools/manage.mjs checkpoint list <taskDir>
   node tools/manage.mjs run-batch <taskDir> <compares/<n>/spec.json>
   node tools/manage.mjs compare-ready <taskDir> <compares/<n>>
   node tools/manage.mjs ledger <taskDir>`;
@@ -107,7 +112,12 @@ function cmdExecute(argv) {
 	}
 	const packet = JSON.parse(fs.readFileSync(packetFile, "utf8"));
 	const runsDir = flags.runs ?? path.join(here, "..", "runs");
-	const result = executeInstruction({ taskDir, instr, packet, runsDir });
+	reportResult(executeInstruction({ taskDir, instr, packet, runsDir }));
+}
+
+/** What an operator sees for any executed instruction: the ledger row on success, the reason and
+ * exit 3 on a refusal, and an acknowledgement (exit 0) for a key that already ran. */
+function reportResult(result) {
 	if (result.executed) {
 		console.log(JSON.stringify(result.ledgerRow));
 		return;
@@ -120,6 +130,70 @@ function cmdExecute(argv) {
 	console.error(`refused (${result.code}): ${result.refusal}`);
 	console.error(JSON.stringify(result.ledgerRow));
 	process.exit(3);
+}
+
+/**
+ * `accept <taskDir> <milestone> <checkpoint> --evidence <runId,...>` — the human's way to ask for
+ * §6's verification, and the only verb with a hand-driven entry point.
+ *
+ * It goes through `executeInstruction` like everything else: the checking, the ledger row, the
+ * single save and the refusal codes are the contract, and a second acceptance path would be a
+ * second place §6 could be got wrong. What is synthesised is only the PACKET — an `accept` asked
+ * for at a terminal answers no trigger and has no packet on disk, so one is built naming the
+ * verb it allows and the version the task is at right now. `--packet` overrides it whenever a
+ * real one exists (a `milestone_candidate` the manager was shown), and then the manager's own
+ * verbsAllowed and packetId are what get checked.
+ */
+function cmdAccept(argv) {
+	const { flags, positionals } = splitArgs(argv);
+	const [taskDir, milestone, checkpoint] = positionals;
+	if (!taskDir || !milestone || !checkpoint || !flags.evidence) return usageExit();
+	const evidence = String(flags.evidence).split(",").map((s) => s.trim()).filter(Boolean);
+	const runsDir = flags.runs ?? path.join(here, "..", "runs");
+	const task = loadTask(taskDir);
+	const packetFile = flags.packet && /^\d+$/.test(flags.packet) ? path.join(taskDir, "packets", `${flags.packet}.json`) : flags.packet;
+	const packet = packetFile
+		? JSON.parse(fs.readFileSync(packetFile, "utf8"))
+		: { packetId: null, trigger: { kind: "milestone_candidate", runId: evidence[0] ?? null, detail: { by: "operator" } }, task, run: { id: evidence[0] ?? null }, options: { verbsAllowed: ["accept", "escalate"], budgetLeft: budgetLeft(task) } };
+	const instr = {
+		packetId: packet.packetId ?? null,
+		basedOnStateVersion: task.stateVersion,
+		// The key names one answer to one packet (§3). With no packet, the milestone and the
+		// checkpoint are the answer: accepting m2 at ck-0007 is one act however many times the
+		// command is typed. The state version is deliberately NOT in it — executing an accept moves
+		// the version, so a key carrying it would be different on the retry, and the retry would be
+		// verified all over again and then refused for a milestone that is no longer current, which
+		// is §3's duplicate rule exactly inverted. `--key` overrides for the rare second acceptance
+		// of the same pair (a checkpoint re-promoted after a human fixed something by hand).
+		idempotencyKey: flags.key ?? `accept-${milestone}-${checkpoint}`,
+		verb: "accept",
+		args: { milestone, checkpoint, evidence },
+		rationale: flags.rationale ?? "accepted by an operator at the command line",
+	};
+	reportResult(executeInstruction({ taskDir, instr, packet, runsDir }));
+}
+
+/** `checkpoint promote|list` — the two things a human does with checkpoints. Promotion is
+ * deliberately not a verb: no instruction promotes a candidate, because a candidate is the state
+ * a run left behind and turning it into something acceptable is the operator's judgement. */
+function cmdCheckpoint(argv) {
+	const { positionals } = splitArgs(argv);
+	const [sub, taskDir, id] = positionals;
+	if (sub === "list" && taskDir) {
+		for (const c of listCheckpoints(taskDir)) console.log(`${c.id}\t${c.candidate ? "candidate" : "accepted"}\t${c.manifest?.treeHash ?? "no manifest"}\t${c.manifest?.runId ?? "-"}\t${c.manifest?.oracle ? `${c.manifest.oracle.pass}/${c.manifest.oracle.total}` : "-"}`);
+		return;
+	}
+	if (sub === "promote" && taskDir && id) {
+		try {
+			const out = promoteCandidate(taskDir, id);
+			console.log(`${id} → ${out.id} (${out.manifest.treeHash})`);
+		} catch (err) {
+			console.error(err.message);
+			process.exit(3);
+		}
+		return;
+	}
+	return usageExit();
 }
 
 const readJsonl = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l)) : []);
@@ -343,6 +417,8 @@ export function main(argv = process.argv.slice(2)) {
 	if (cmd === "init") return cmdInit(rest);
 	if (cmd === "packet") return cmdPacket(rest);
 	if (cmd === "execute") return cmdExecute(rest);
+	if (cmd === "accept") return cmdAccept(rest);
+	if (cmd === "checkpoint") return cmdCheckpoint(rest);
 	if (cmd === "run-batch") return cmdRunBatch(rest);
 	if (cmd === "compare-ready") return cmdCompareReady(rest);
 	if (cmd === "ledger") return cmdLedger(rest);

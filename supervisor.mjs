@@ -30,6 +30,9 @@ import { messages } from "./lib/messages.mjs";
 // the executor's side of the boundary — the supervisor never imports lib/manage/instructions.mjs.
 import { decideTrigger } from "./lib/manage/triggers.mjs";
 import { createPause, suppressWhilePaused } from "./lib/manage/pause.mjs";
+// A checkpoint is a directory, not task.json: the supervisor may preserve the workspace it ends
+// with (finish(), below) and may not promote it. See lib/manage/checkpoint.mjs's header.
+import { snapshotCheckpoint } from "./lib/manage/checkpoint.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, retainSpecialists, lastOracleRunNumber, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { resolveLedger, buildIndex } from "./lib/memory-index.mjs";
@@ -284,6 +287,14 @@ function log(entry) {
 	const line = `[${rec.t}s] ${rec.agent ? `${rec.agent}: ` : ""}${rec.msg ?? rec.type}`;
 	console.log(line.length > 200 ? `${line.slice(0, 200)}…` : line);
 }
+
+// The config this run was started with, as a bare path and as the FIRST thing in the audit.
+// summary.json records it too, but that is written in finish(), and a packet assembled while the
+// run is alive is exactly the case that needs it: `restore` and `compare` name a config to spawn
+// with, and lib/manage/packet.mjs's liveConfig reads `msg` of this line as that path (so it is
+// the path alone — a sentence around it would be handed to --config). Unconditional, like every
+// other startup line: a run's own record of what it ran is not a management feature.
+log({ type: "config", msg: CONFIG.configPath });
 
 // Fresh workspace per run — one shared workspace, whatever the pattern. In a dyad
 // only BUILDER can write to it; in a solo run only BUILDER exists; under the
@@ -2156,6 +2167,29 @@ function finish(reason) {
 		removeAfterArchive(WSROOT);
 	} catch (err) {
 		log({ type: "warn", msg: `failed to archive workspaces into RUN: ${err?.message ?? err}` });
+	}
+	// The run's last act for the management interface (§1, §6): preserve the workspace it ended
+	// with as a CANDIDATE checkpoint, so a manager can still accept it once this process is gone.
+	//
+	// Three things about it are deliberate. It is taken from the ARCHIVE, not from WS.workspace:
+	// the archive is mount-filtered, the evidence check hashes the archive, and a candidate cut
+	// from the unfiltered tree would fail every oracle criterion on a mounted run with a hash
+	// mismatch. It is a `cand-` directory, never a `ck-` one and never a task.json write — the
+	// executor is task.json's only writer, and promotion is its act, not the run's. And it is
+	// wrapped in its own try/catch that only logs: a run that produced a summary must not then
+	// die on the way out because a task directory was moved or a disk filled up.
+	if (MANAGE?.taskDir) {
+		try {
+			const from = path.join(RUN, "ws-builder");
+			if (!fs.existsSync(from)) log({ type: "manage", msg: "no archived workspace to preserve as a checkpoint candidate" });
+			else {
+				const oracle = lastOracleResult ? { attempt: lastOracleResult.attempt, pass: lastOracleResult.pass, total: lastOracleResult.total } : null;
+				const ck = snapshotCheckpoint({ taskDir: MANAGE.taskDir, fromDir: from, runId, oracle, id: `cand-${runId}` });
+				log({ type: "manage", msg: `checkpoint candidate ${ck.id} (${ck.treeHash})${oracle ? ` at ${oracle.pass}/${oracle.total}` : ""}` });
+			}
+		} catch (err) {
+			log({ type: "warn", msg: `failed to write the checkpoint candidate: ${err?.message ?? err}` });
+		}
 	}
 	// Same move for the session directories, and for the same reason (see SESSIONS
 	// above): out of tree while anything could read them, archived into RUN/sessions

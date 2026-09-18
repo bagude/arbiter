@@ -279,6 +279,45 @@ test("every management site is behind the MANAGE gate", () => {
 	const imports = src.split("\n").filter((l) => /^import .* from "/.test(l));
 	assert.ok(!imports.some((l) => /manage\/(instructions|packet|ledger|task-state)\.mjs/.test(l)), `the supervisor must import only the pure trigger policy from lib/manage; found:\n${imports.filter((l) => l.includes("manage/")).join("\n")}`);
 	assert.ok(imports.some((l) => l.includes('import { decideTrigger } from "./lib/manage/triggers.mjs";')), "the trigger policy is decideTrigger's, imported from the pure module");
+	// checkpoint.mjs is the one exception, and it is not one: a checkpoint is a DIRECTORY. The
+	// supervisor may preserve the workspace its run ended with (finish(), below) because that
+	// writes nothing task.json's single writer owns, and it cannot promote one.
+	assert.ok(imports.some((l) => l.includes('import { snapshotCheckpoint } from "./lib/manage/checkpoint.mjs";')), "the candidate snapshot comes from the checkpoint module");
+	assert.ok(!src.includes("promoteCandidate"), "the supervisor must never promote a candidate — that is the executor's act, on an accept");
+});
+
+// A live packet has to be able to name the config its run was started with: `restore` and
+// `compare` spawn with it, and summary.json — the only other record — is written in finish(),
+// which is exactly the moment a live packet is not at. lib/manage/packet.mjs's liveConfig reads
+// the `msg` of this line AS a path, so the line carries the path alone.
+test("the supervisor logs its config path as an audit line at startup", () => {
+	const src = supervisorSource();
+	assert.ok(src.includes('log({ type: "config", msg: CONFIG.configPath });'), "the startup config line must be the bare configPath under type config");
+	// Before anything a packet could be assembled over: the log has to be there from the run's
+	// first moments, not written on the way out.
+	assert.ok(src.indexOf('log({ type: "config", msg: CONFIG.configPath });') < src.indexOf("\nfunction finish("), "the config line is a startup line, not a finish() one");
+});
+
+// The run's last act for the management interface: preserve what it ended with so a manager can
+// still accept it once this process is gone. Sliced to finish()'s own body — a snapshot call
+// anywhere else in the file would not preserve the final workspace.
+test("finish() writes a MANAGE-gated checkpoint candidate from the archived workspace", () => {
+	const src = supervisorSource();
+	const at = src.indexOf("\nfunction finish(reason) {");
+	assert.ok(at >= 0, "could not locate finish() in supervisor.mjs");
+	const body = src.slice(at + 1, src.indexOf("\nprocess.on(\"SIGINT\"", at));
+	assert.ok(body.includes("if (MANAGE?.taskDir) {"), `the candidate must be gated on a configured task directory; found:\n${body.slice(-2000)}`);
+	assert.ok(body.includes('snapshotCheckpoint({ taskDir: MANAGE.taskDir, fromDir: from, runId, oracle, id: `cand-${runId}` })'), "it is a cand- snapshot of the run's workspace into the task directory");
+	// From the ARCHIVE, not from WS.workspace: the archive is mount-filtered, and the evidence
+	// check hashes the archive. A candidate cut from the unfiltered tree fails every oracle
+	// criterion on a mounted run, and no hand-built fixture would show it.
+	assert.ok(body.includes('const from = path.join(RUN, "ws-builder");'), "the candidate is taken from the archived workspace");
+	assert.ok(body.indexOf('fs.cpSync(WS.workspace, path.join(RUN, "ws-builder")') < body.indexOf("if (MANAGE?.taskDir) {"), "and therefore after the archive is made");
+	assert.ok(body.indexOf('fs.writeFileSync(path.join(RUN, "summary.json")') < body.indexOf("if (MANAGE?.taskDir) {"), "and after summary.json is written");
+	// A run that produced a summary must not then die on the way out because a task directory
+	// moved or a disk filled up.
+	const block = body.slice(body.indexOf("if (MANAGE?.taskDir) {"));
+	assert.ok(block.slice(0, block.indexOf("\n\t// Same move for the session directories")).includes("} catch (err) {"), "the candidate must never throw out of finish()");
 });
 
 // The orchestrator is blocked on this verdict anyway, so holding it costs nothing and buys the

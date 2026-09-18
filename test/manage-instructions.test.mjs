@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-state.mjs";
 import { readLedger, appendLedger, recordOutcome } from "../lib/manage/ledger.mjs";
-import { INSTRUCTION_VERBS, validateInstruction, executeInstruction, controlAppend, NotYetImplemented, batchCeiling, settledBatches, registerRunForTrigger, pendingRuns, settledRuns } from "../lib/manage/instructions.mjs";
+import { INSTRUCTION_VERBS, NOT_YET_IMPLEMENTED, validateInstruction, executeInstruction, controlAppend, NotYetImplemented, batchCeiling, settledBatches, registerRunForTrigger, pendingRuns, settledRuns } from "../lib/manage/instructions.mjs";
+import { snapshotCheckpoint } from "../lib/manage/checkpoint.mjs";
 
 const RUN_ID = "2026-09-18T01-02-03";
 
@@ -300,12 +301,13 @@ test("a retried delivery with the same key is acknowledged, not executed again: 
 	assert.equal(loadTask(dir).budget.wallSec.used, 300, "the grant is spent once");
 });
 
-test("accept validates but does not execute yet", () => {
-	const { dir, runsDir, task } = fixture();
-	assert.throws(
-		() => executeInstruction({ taskDir: dir, instr: instr({ verb: "accept", args: { milestone: "m1", checkpoint: "ck-0007", evidence: ["oracle:x"] } }), packet: packetFor(task, { verbsAllowed: ["accept"] }), runsDir }),
-		NotYetImplemented,
-	);
+// Task 4 built `accept`, so the list is empty — but the mechanism stays, and so does the test: a
+// verb may join the contract (validation, packets, replays) before the harness can carry it out,
+// and until it can, executing it must throw rather than quietly do nothing. The `accept` tests
+// themselves are at the end of this file.
+test("nothing in the contract is unimplemented, and the class that says so is still exported", () => {
+	assert.deepEqual(NOT_YET_IMPLEMENTED, []);
+	assert.ok(NotYetImplemented.prototype instanceof Error);
 });
 
 // ---------- restore and compare (Task 3) ----------
@@ -750,4 +752,238 @@ test("controlAppend creates the run directory and appends one JSON line per entr
 	assert.equal(lines.length, 2);
 	assert.equal(JSON.parse(lines[0]).type, "grant");
 	assert.ok(JSON.parse(lines[0]).ts > 0);
+});
+
+// ---------- accept (Task 4) ----------
+
+/**
+ * A task whose three milestones want the three evidence kinds a test can produce, a checkpoint of
+ * a real workspace, and a run that passed the oracle on exactly that tree.
+ *
+ * Everything is real on disk rather than stubbed: §6 is a claim about what the harness can verify
+ * from a run's own records, and a fixture that hands checkEvidence a prepared answer would test
+ * the accept branch against itself.
+ */
+function acceptFixture({ oracle = [[1, 70, 70]], mutateRunWorkspace = null } = {}) {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "manage-accept-"));
+	const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), "manage-accept-runs-"));
+	const ws = fs.mkdtempSync(path.join(os.tmpdir(), "manage-accept-ws-"));
+	fs.mkdirSync(path.join(ws, "docs"), { recursive: true });
+	fs.writeFileSync(path.join(ws, "docs", "a.md"), "notes\n");
+	fs.mkdirSync(path.join(ws, ".pi"), { recursive: true });
+	fs.writeFileSync(path.join(ws, ".pi", "agents.md"), "host\n");
+
+	createTask({
+		dir,
+		taskId: "t4",
+		goal: "a goal",
+		criteria: [
+			{ id: "c1", text: "the oracle passes", check: "oracle:tasks/pathnorm/oracle" },
+			{ id: "c2", text: "the notes exist", check: "artifact:docs/a.md:nonempty" },
+			{ id: "c3", text: "a human looked", check: "review:human" },
+		],
+		milestones: [
+			{ id: "m1", title: "first", criteria: ["c1", "c2"] },
+			{ id: "m2", title: "second", criteria: ["c3"] },
+			{ id: "m3", title: "third", criteria: [] },
+		],
+		budget: { runs: 20 },
+	});
+	const ck = snapshotCheckpoint({ taskDir: dir, fromDir: ws, runId: "2026-09-18T09-00-00", oracle: { attempt: 1, pass: 70, total: 70 } });
+
+	const runDir = path.join(runsDir, "r1");
+	fs.mkdirSync(runDir, { recursive: true });
+	fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify({ runId: "r1", task: "pathnorm", reason: "SUCCESS" }));
+	fs.writeFileSync(path.join(runDir, "audit.jsonl"), oracle.map(([n, p, t]) => JSON.stringify({ t: "1.0", type: "oracle", msg: `Oracle run #${n}: ${p}/${t} passed.` })).join("\n") + "\n");
+	fs.cpSync(ws, path.join(runDir, "ws-builder"), { recursive: true, filter: (src) => path.basename(src) !== ".pi" });
+	if (mutateRunWorkspace) mutateRunWorkspace(path.join(runDir, "ws-builder"));
+
+	const task = loadTask(dir);
+	return { dir, runsDir, ws, ck, task };
+}
+
+const acceptInstr = (task, over = {}) => ({
+	packetId: 11,
+	basedOnStateVersion: task.stateVersion,
+	idempotencyKey: `p11-v${task.stateVersion}`,
+	verb: "accept",
+	args: { milestone: "m1", checkpoint: "ck-0001", evidence: ["r1"] },
+	rationale: "the oracle passed on this checkpoint",
+	...over,
+});
+
+const acceptPacket = (task) => ({
+	packetId: 11,
+	trigger: { kind: "milestone_candidate", runId: "r1", detail: {} },
+	task,
+	run: { id: "r1" },
+	options: { verbsAllowed: ["accept", "escalate"], budgetLeft: {} },
+});
+
+test("accept advances the milestone, the current pointer and the checkpoint, in one version bump", () => {
+	const { dir, runsDir, task } = acceptFixture();
+	const out = executeInstruction({ taskDir: dir, instr: acceptInstr(task), packet: acceptPacket(task), runsDir });
+
+	assert.equal(out.executed, true, out.refusal);
+	const after = loadTask(dir);
+	assert.equal(after.stateVersion, task.stateVersion + 1, "one instruction, one write");
+	assert.equal(after.milestones[0].status, "accepted");
+	assert.equal(after.milestones[0].acceptedCheckpoint, "ck-0001");
+	assert.ok(after.milestones[0].acceptedAt > 0);
+	assert.deepEqual(after.milestones[0].evidence, ["oracle:runs/r1/oracle-1", "artifact:docs/a.md:nonempty"], "what satisfied the criteria, not the run ids that were offered");
+	assert.equal(after.milestones[1].status, "active", "the next pending milestone becomes active");
+	assert.equal(after.milestones[2].status, "pending");
+	assert.equal(after.current.milestone, "m2");
+	assert.equal(after.current.checkpoint, "ck-0001");
+	assert.equal(after.status, "active");
+	assert.equal(out.accepted.next, "m2");
+	// The ledger says what happened, beside the instruction's own row.
+	const rows = readLedger(dir);
+	assert.equal(rows.at(-1).kind, "accepted");
+	assert.deepEqual(rows.at(-1).evidence, ["oracle:runs/r1/oracle-1", "artifact:docs/a.md:nonempty"]);
+});
+
+test("one failing criterion refuses the whole accept, names it, and changes nothing", () => {
+	// m1 wants c1 (oracle) and c2 (a non-empty docs/a.md). Emptying the file in the CHECKPOINT is
+	// the honest failure: the checkpoint is the state being accepted.
+	const { dir, runsDir, task, ck } = acceptFixture();
+	fs.writeFileSync(path.join(ck.dir, "docs", "a.md"), "");
+	const before = fs.readFileSync(path.join(dir, "task.json"), "utf8");
+
+	const out = executeInstruction({ taskDir: dir, instr: acceptInstr(task), packet: acceptPacket(task), runsDir });
+	assert.equal(out.executed, false);
+	assert.equal(out.code, "precondition");
+	assert.match(out.refusal, /criterion c2 \(artifact:docs\/a\.md:nonempty\)/);
+	assert.match(out.refusal, /is empty/);
+	assert.equal(fs.readFileSync(path.join(dir, "task.json"), "utf8"), before, "a refused accept must not touch task.json");
+	assert.equal(out.ledgerRow.verified, false, "and the refusal is a ledger row");
+});
+
+test("a run that passed a different tree is not evidence for this checkpoint", () => {
+	const { dir, runsDir, task } = acceptFixture({ mutateRunWorkspace: (ws) => fs.writeFileSync(path.join(ws, "docs", "a.md"), "notes, edited after the oracle\n") });
+	const out = executeInstruction({ taskDir: dir, instr: acceptInstr(task), packet: acceptPacket(task), runsDir });
+	assert.equal(out.executed, false);
+	assert.match(out.refusal, /criterion c1 \(oracle:tasks\/pathnorm\/oracle\)/);
+	assert.match(out.refusal, /hashes [0-9a-f]{40}/);
+	assert.equal(loadTask(dir).milestones[0].status, "active");
+});
+
+test("a failing oracle refuses, whatever the manager asserts", () => {
+	const { dir, runsDir, task } = acceptFixture({ oracle: [[1, 69, 70]] });
+	const out = executeInstruction({ taskDir: dir, instr: acceptInstr(task), packet: acceptPacket(task), runsDir });
+	assert.equal(out.executed, false);
+	assert.match(out.refusal, /69\/70/);
+});
+
+test("a milestone that is not the current, active one cannot be accepted", () => {
+	const { dir, runsDir, task } = acceptFixture();
+	const later = executeInstruction({ taskDir: dir, instr: acceptInstr(task, { args: { milestone: "m2", checkpoint: "ck-0001", evidence: ["r1"] } }), packet: acceptPacket(task), runsDir });
+	assert.equal(later.executed, false);
+	assert.match(later.refusal, /milestone m2 is not current \(m1\)/);
+
+	const none = executeInstruction({ taskDir: dir, instr: acceptInstr(task, { idempotencyKey: "p11-x", args: { milestone: "m9", checkpoint: "ck-0001", evidence: ["r1"] } }), packet: acceptPacket(task), runsDir });
+	assert.equal(none.executed, false);
+	assert.match(none.refusal, /no milestone m9/);
+});
+
+test("a candidate checkpoint is refused with the command that promotes it", () => {
+	const { dir, runsDir, task, ws } = acceptFixture();
+	snapshotCheckpoint({ taskDir: dir, fromDir: ws, runId: "r1", id: "cand-r1" });
+	const out = executeInstruction({ taskDir: dir, instr: acceptInstr(task, { args: { milestone: "m1", checkpoint: "cand-r1", evidence: ["r1"] } }), packet: acceptPacket(task), runsDir });
+	assert.equal(out.executed, false);
+	assert.match(out.refusal, /promote it first/);
+});
+
+test("a checkpoint that is not on disk is refused before any criterion is checked", () => {
+	const { dir, runsDir, task } = acceptFixture();
+	const out = executeInstruction({ taskDir: dir, instr: acceptInstr(task, { args: { milestone: "m1", checkpoint: "ck-0099", evidence: ["r1"] } }), packet: acceptPacket(task), runsDir });
+	assert.equal(out.executed, false);
+	assert.match(out.refusal, /no checkpoint ck-0099/);
+});
+
+test("accepting the last milestone completes the task", () => {
+	const { dir, runsDir, task } = acceptFixture();
+	let t = task;
+	const step = (milestone, key) => {
+		const r = executeInstruction({ taskDir: dir, instr: acceptInstr(t, { idempotencyKey: key, args: { milestone, checkpoint: "ck-0001", evidence: ["r1"] } }), packet: acceptPacket(t), runsDir });
+		assert.equal(r.executed, true, r.refusal);
+		t = loadTask(dir);
+	};
+	step("m1", "a1");
+	// m2 wants review:human — the one kind only a human can produce.
+	const refused = executeInstruction({ taskDir: dir, instr: acceptInstr(t, { idempotencyKey: "a2-early", args: { milestone: "m2", checkpoint: "ck-0001", evidence: ["r1"] } }), packet: acceptPacket(t), runsDir });
+	assert.equal(refused.executed, false);
+	assert.match(refused.refusal, /criterion c3 \(review:human\): no signed review row/);
+	appendLedger(dir, { kind: "review", criterion: "c3", checkpoint: "ck-0001", by: "david", signed: true });
+	t = loadTask(dir);
+	step("m2", "a2");
+	assert.equal(loadTask(dir).milestones[1].evidence[0], "review:david");
+	step("m3", "a3");
+
+	const done = loadTask(dir);
+	assert.equal(done.status, "complete");
+	assert.equal(done.current.milestone, null);
+	assert.equal(done.current.checkpoint, "ck-0001");
+	assert.ok(done.milestones.every((m) => m.status === "accepted"));
+});
+
+test("a playthrough criterion runs the script once, through the injected spawn", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "manage-play-"));
+	const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), "manage-play-runs-"));
+	const ws = fs.mkdtempSync(path.join(os.tmpdir(), "manage-play-ws-"));
+	fs.writeFileSync(path.join(ws, "game.mjs"), "export const play = 1;\n");
+	const script = path.join(dir, "play.mjs");
+	fs.writeFileSync(script, "// a playthrough\n");
+	createTask({ dir, taskId: "t4p", goal: "g", criteria: [{ id: "c1", text: "it plays", check: `playthrough:${script}` }], milestones: [{ id: "m1", title: "only", criteria: ["c1"] }] });
+	snapshotCheckpoint({ taskDir: dir, fromDir: ws, runId: "r1" });
+	const task = loadTask(dir);
+
+	let calls = 0;
+	const spawn = () => (calls++, { status: 0, stdout: "played 12 rooms\n", stderr: "" });
+	const out = executeInstruction({ taskDir: dir, instr: acceptInstr(task, { args: { milestone: "m1", checkpoint: "ck-0001", evidence: ["r1"] } }), packet: acceptPacket(task), runsDir, spawn });
+
+	assert.equal(out.executed, true, out.refusal);
+	assert.equal(calls, 1, "the executor must not re-run what validation already ran");
+	assert.equal(loadTask(dir).status, "complete");
+	assert.equal(fs.readFileSync(path.join(dir, "checkpoints", "ck-0001", "evidence", "c1.log"), "utf8"), "played 12 rooms\n");
+});
+
+test("tools/manage.mjs accept and checkpoint drive the same executor from a terminal", () => {
+	const { dir, runsDir, task, ws } = acceptFixture();
+	const run = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8" });
+
+	// A candidate the run left behind: listed, promoted, and only then acceptable.
+	snapshotCheckpoint({ taskDir: dir, fromDir: ws, runId: "r1", id: "cand-r1" });
+	const listed = run("checkpoint", "list", dir);
+	assert.equal(listed.status, 0, listed.stderr);
+	assert.match(listed.stdout, /cand-r1\tcandidate/);
+	assert.match(listed.stdout, /ck-0001\taccepted/);
+
+	const early = run("accept", dir, "m1", "cand-r1", "--evidence", "r1", "--runs", runsDir);
+	assert.equal(early.status, 3);
+	assert.match(early.stderr, /promote it first/);
+
+	const promoted = run("checkpoint", "promote", dir, "cand-r1");
+	assert.equal(promoted.status, 0, promoted.stderr);
+	assert.match(promoted.stdout, /cand-r1 → ck-0002/);
+
+	// No packet on disk: the command synthesises one, and the executor checks it like any other.
+	const ok = run("accept", dir, "m1", "ck-0001", "--evidence", "r1", "--runs", runsDir);
+	assert.equal(ok.status, 0, ok.stderr);
+	assert.equal(JSON.parse(ok.stdout.trim()).verified, true);
+	assert.equal(loadTask(dir).current.milestone, "m2");
+	assert.equal(loadTask(dir).stateVersion, task.stateVersion + 1);
+
+	const again = run("accept", dir, "m1", "ck-0001", "--evidence", "r1", "--runs", runsDir);
+	assert.equal(again.status, 0, again.stderr);
+	assert.match(again.stdout, /already executed/, "the same acceptance twice is an acknowledgement");
+});
+
+test("a retried accept is acknowledged, not verified again", () => {
+	const { dir, runsDir, task } = acceptFixture();
+	const first = executeInstruction({ taskDir: dir, instr: acceptInstr(task), packet: acceptPacket(task), runsDir });
+	assert.equal(first.executed, true, first.refusal);
+	const again = executeInstruction({ taskDir: dir, instr: acceptInstr(task), packet: acceptPacket(task), runsDir });
+	assert.equal(again.duplicate, true);
+	assert.equal(loadTask(dir).stateVersion, task.stateVersion + 1, "and nothing is written a second time");
 });
