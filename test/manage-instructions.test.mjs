@@ -781,6 +781,31 @@ test("the batch child runs a checkpoint restore as one plain run and reports its
 	assert.equal(loadTask(dir).stateVersion, 5, "the child wrote no task state");
 });
 
+// A supervisor that refuses at startup — a WS_SOURCE that names nothing, a config it cannot read
+// — prints to stderr and exits before its audit stream exists, so it leaves no run directory and
+// nothing in the run records. That stderr is in the batch's own log and nothing else reads it:
+// without this, a mistyped path is a restore that fails silently from the next packet's view.
+test("a restore that produced no run says why in its outcome row", async () => {
+	const { dir, runsDir, task, config, checkpoint } = ckFixture();
+	const { calls, launchBatch } = recorder();
+	const i = instr({ verb: "restore", args: { checkpoint, approach: { config } } });
+	executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(task), instr: i });
+
+	await runBatchSpec({
+		taskDir: dir,
+		specFile: calls[0].specFile,
+		restoreRun: ({ logFile }) => {
+			fs.writeFileSync(logFile, "[supervisor] ARBITER_WS_SOURCE names a directory that does not exist: C:/typo\n");
+			return { code: 2, runId: null };
+		},
+	});
+
+	const { outcome } = readLedger(dir).find((r) => r.kind === "outcome" && r.forKey === i.idempotencyKey);
+	assert.equal(outcome.runId, null);
+	assert.equal(outcome.crashed, true);
+	assert.match(outcome.failed, /names a directory that does not exist/);
+});
+
 test("compare: spends branches × replicates, writes the spec both branches, and keeps the ids apart", () => {
 	const { dir, runsDir, task, config, checkpoint } = forkFixture();
 	const { calls, launchBatch } = recorder();

@@ -245,6 +245,17 @@ function cmdCheckpoint(argv) {
 const defaultRestoreRun = ({ config, wsSource, runsDir, logFile }) =>
 	runOnce(config, { ARBITER_WS_SOURCE: wsSource, ARBITER_FORK: "", ARBITER_FORK_FORCE: "", ARBITER_FORK_CONTROL: "" }, logFile, runsDir);
 
+/** The last few hundred characters of a child's log, for an outcome row that has to say why a
+ * run produced nothing. Bounded because the ledger is read into packets. */
+function logTail(file, chars = 600) {
+	try {
+		const text = fs.readFileSync(file, "utf8").trim();
+		return text ? text.slice(-chars) : "the run produced no output and no run directory";
+	} catch {
+		return "the run produced no run directory and no log";
+	}
+}
+
 const readJsonl = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l)) : []);
 /** A path as a finding's evidence should read it: relative to the repo root when it is inside. */
 const relRoot = (p) => (path.resolve(p).startsWith(path.resolve(ROOT) + path.sep) ? path.relative(ROOT, p).split(path.sep).join("/") : p);
@@ -294,11 +305,18 @@ export async function runBatchSpec({ taskDir, specFile, runner = runBatch, resto
 		// the id exists only once the run is over.
 		if (spec.wsSource) {
 			console.log(`[batch ${spec.compareId}] restore from ${spec.checkpoint} (${spec.wsSource})`);
-			const out = await restoreRun({ config: spec.config, wsSource: spec.wsSource, runsDir: spec.runsDir, logFile: path.join(dir, "restore.log") });
+			const logFile = path.join(dir, "restore.log");
+			const out = await restoreRun({ config: spec.config, wsSource: spec.wsSource, runsDir: spec.runsDir, logFile });
 			const row = { label: spec.branches[0]?.label ?? "restore", runId: out.runId ?? null, exit: out.code ?? null, crashed: out.code !== 0, checkpoint: spec.checkpoint };
 			rows.push(row);
 			fs.writeFileSync(path.join(dir, "rows.jsonl"), JSON.stringify(row) + "\n");
-			recordOutcome(taskDir, spec.idempotencyKey, { batchId: spec.compareId, runId: row.runId, crashed: row.crashed, checkpoint: spec.checkpoint });
+			// A run that never made a run directory left nothing in the run records to explain
+			// itself: the supervisor's startup refusals (a WS_SOURCE that names nothing, a config it
+			// cannot read) print to stderr and exit before the audit stream exists. That stderr is in
+			// this log and nothing else reads it, so its tail goes into the outcome row — otherwise a
+			// mistyped path is a restore that fails silently from the next packet's point of view.
+			const failed = row.runId ? null : logTail(logFile);
+			recordOutcome(taskDir, spec.idempotencyKey, { batchId: spec.compareId, runId: row.runId, crashed: row.crashed, checkpoint: spec.checkpoint, ...(failed ? { failed } : {}) });
 			console.log(`[batch ${spec.compareId}] restore → ${row.runId ?? "no run"} (exit ${row.exit})`);
 			status = "ready";
 			return { rows, runId: row.runId };
