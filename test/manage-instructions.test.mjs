@@ -407,9 +407,52 @@ test("continue cannot name a restored run: the id arrives after the run is dead"
 
 	// And while the batch IS pending, the same row does make it live — the rule holds for a
 	// runner that can publish an id mid-flight, which this one cannot.
-	const pending = saveTask(dir, setCurrent(task, { activeBranches: [{ batchId: 1, kind: "restore" }] }));
+	const pending = saveTask(dir, setCurrent(task, { activeBranches: [{ batchId: 1, kind: "restore", launchedAt: Date.now() }] }));
 	assert.equal(validateInstruction(instr({ idempotencyKey: "k3", basedOnStateVersion: pending.stateVersion, args: { runId: "run-from-a-batch", milestone: "m1" } }), { task: pending, packet: packetFor(pending), taskDir: dir, runsDir }).ok, true);
+
+	// A batch past the task's staleBatchMs is not pending any more, so neither is its run.
+	const old = saveTask(dir, setCurrent(pending, { activeBranches: [{ batchId: 1, kind: "restore", launchedAt: Date.now() - 3 * 60 * 60 * 1000 }] }));
+	assert.equal(validateInstruction(instr({ idempotencyKey: "k4", basedOnStateVersion: old.stateVersion, args: { runId: "run-from-a-batch", milestone: "m1" } }), { task: old, packet: packetFor(old), taskDir: dir, runsDir }).code, "precondition");
 	void p;
+});
+
+// task.json has one writer. The batch child says it is done by writing a marker in its own
+// directory, and the executor folds that out of activeBranches in the save it was making anyway.
+test("a batch whose child left a done marker stops blocking, and the executor drops it with a ledger note", () => {
+	const f = forkFixture();
+	const { calls, launchBatch } = recorder();
+	const first = instr({ verb: "restore", args: { checkpoint: f.checkpoint, approach: { config: f.config } } });
+	executeInstruction({ taskDir: f.dir, runsDir: f.runsDir, launchBatch, packet: packetFor(f.task), instr: first });
+
+	// The child's whole statement about the task: one file, no task.json write.
+	fs.writeFileSync(path.join(f.dir, "compares", "1", "done.json"), JSON.stringify({ batchId: 1, status: "ready", ts: Date.now() }));
+	const beforeVersion = loadTask(f.dir).stateVersion;
+
+	const second = executeInstruction({
+		taskDir: f.dir, runsDir: f.runsDir, launchBatch, packet: packetFor(loadTask(f.dir)),
+		instr: instr({ verb: "restore", idempotencyKey: "p7-v5", basedOnStateVersion: beforeVersion, args: { checkpoint: f.checkpoint, approach: { config: f.config } } }),
+	});
+	assert.equal(second.executed, true, second.refusal);
+	assert.deepEqual(loadTask(f.dir).current.activeBranches.map((b) => b.batchId), [2], "the cleared batch is gone, the new one is in");
+	assert.ok(readLedger(f.dir).some((r) => r.kind === "batch_cleared" && r.batchId === 1), "and the drop is a fact in the ledger");
+	assert.equal(calls.length, 2);
+});
+
+// A child killed outright writes no marker. Without this the task refuses every later restore
+// and compare until a human edits task.json — the one state a manager cannot escape from.
+test("a pending batch older than staleBatchMs stops counting, and is dropped as stale", () => {
+	const f = forkFixture();
+	const { launchBatch } = recorder();
+	const stale = saveTask(f.dir, setCurrent(f.task, { activeBranches: [{ batchId: 1, kind: "compare", checkpoint: f.checkpoint, launchedAt: Date.now() - 3 * 60 * 60 * 1000 }] }));
+	const fresh = { ...stale, current: { ...stale.current, activeBranches: [{ ...stale.current.activeBranches[0], launchedAt: Date.now() }] } };
+	assert.match(validateInstruction(instr({ verb: "restore", basedOnStateVersion: stale.stateVersion, args: { checkpoint: f.checkpoint, approach: { config: f.config } } }), { task: fresh, packet: packetFor(fresh), taskDir: f.dir, runsDir: f.runsDir }).refusal, /still in flight/, "the same entry, two hours younger, does block");
+
+	const r = executeInstruction({ taskDir: f.dir, runsDir: f.runsDir, launchBatch, packet: packetFor(stale), instr: instr({ verb: "restore", basedOnStateVersion: stale.stateVersion, args: { checkpoint: f.checkpoint, approach: { config: f.config } } }) });
+	assert.equal(r.executed, true, r.refusal);
+	assert.deepEqual(loadTask(f.dir).current.activeBranches.map((b) => b.batchId), [1], "the stale entry is gone; the id is free again");
+	const note = readLedger(f.dir).find((x) => x.kind === "batch_stale");
+	assert.ok(note, "dropping a batch nobody closed is a fact about the task, not bookkeeping");
+	assert.equal(note.batchId, 1);
 });
 
 test("compare: replicates must be a whole number — the budget is charged branches × replicates", () => {

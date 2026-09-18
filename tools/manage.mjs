@@ -7,7 +7,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-state.mjs";
+// No loadTask/saveTask here on purpose: the batch child never writes task.json (markBatchDone).
+import { createTask } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
 import { readLedger, readFindings, appendFinding, settleFinding, recordOutcome } from "../lib/manage/ledger.mjs";
 import { executeInstruction } from "../lib/manage/instructions.mjs";
@@ -132,9 +133,8 @@ const relRoot = (p) => (path.resolve(p).startsWith(path.resolve(ROOT) + path.sep
  * run is over, and a dead run in `activeRuns` would validate a `continue` whose grant is charged
  * against a control file nothing is tailing.
  *
- * Either way the batch's entry in `current.activeBranches` is removed before this returns —
- * success, abandonment or throw. A pending batch that is never cleared blocks the next restore
- * for good.
+ * Either way the batch says it is over before this returns — success, abandonment or throw — by
+ * writing `done.json` in its own directory. It never writes task.json: see markBatchDone.
  */
 export async function runBatchSpec({ taskDir, specFile, runner = runBatch }) {
 	const spec = JSON.parse(fs.readFileSync(specFile, "utf8"));
@@ -146,11 +146,13 @@ export async function runBatchSpec({ taskDir, specFile, runner = runBatch }) {
 	const readyFile = path.join(dir, "ready.json");
 	const rows = [];
 	let abandoned = null;
+	let status = "failed";
 	try {
 		if (fs.existsSync(readyFile)) {
-			// Inside the try, so the finally below still clears the pending batch: a first child
-			// that wrote ready.json and then died before clearing would otherwise leave this batch
-			// pending for good, and a pending batch refuses every later restore and compare.
+			// Inside the try, so the finally below still writes the clearance marker: a first child
+			// that wrote ready.json and then died before marking would otherwise leave this batch
+			// pending until staleBatchMs, refusing every restore and compare in between.
+			status = "ready";
 			const prior = JSON.parse(fs.readFileSync(readyFile, "utf8"));
 			console.log(`[batch ${spec.compareId}] already ready (packet ${prior.packetId ?? "none"}); nothing re-run`);
 			return { alreadyReady: true, ...prior };
@@ -186,9 +188,11 @@ export async function runBatchSpec({ taskDir, specFile, runner = runBatch }) {
 			const runId = rows.find((r) => r.runId)?.runId ?? null;
 			recordOutcome(taskDir, spec.idempotencyKey, { batchId: spec.compareId, runId, crashed: rows.every((r) => r.crashed) });
 			console.log(`[batch ${spec.compareId}] restore → ${runId ?? "no run"}`);
+			status = "ready";
 			return { rows, runId };
 		}
 		const out = compareReady({ taskDir, batchDir: dir });
+		status = "ready";
 		// §5's outcome slot, for the success case too: the packet says a comparison happened, but
 		// the ledger is what the next manager reads about the instruction it answered.
 		recordOutcome(taskDir, spec.idempotencyKey, { batchId: spec.compareId, packetId: out.packetId, findings: out.findings.map((f) => f.id), short: out.short ?? null, runs: rows.map((r) => r.runId).filter(Boolean) });
@@ -201,20 +205,27 @@ export async function runBatchSpec({ taskDir, specFile, runner = runBatch }) {
 		recordOutcome(taskDir, spec.idempotencyKey, { batchId: spec.compareId, failed: String(err?.message ?? err), branchesDone: new Set(rows.map((r) => r.label)).size });
 		throw err;
 	} finally {
-		clearPendingBatch(taskDir, spec.compareId);
+		markBatchDone(dir, spec.compareId, status);
 	}
 }
 
-/** Removes this batch from `current.activeBranches`. Loaded and saved here rather than from a
- * task read at the start of the batch: tens of minutes have passed and the task has moved. */
-function clearPendingBatch(taskDir, batchId) {
+/**
+ * The batch child's clearance: a marker file in its own directory, NOT a write to task.json.
+ *
+ * task.json has exactly one writer, the executor. This child runs in a separate process for tens
+ * of minutes, and if it did a read-modify-write of its own, the two would bump `stateVersion`
+ * from the same base — two different task states carrying one version, which is precisely what
+ * §3's staleness check trusts to be impossible, and either write could revert the other's spend.
+ * The executor folds this marker out of `current.activeBranches` on the next save it makes
+ * anyway (lib/manage/instructions.mjs, settledBatches).
+ */
+function markBatchDone(dir, batchId, status) {
 	try {
-		const task = loadTask(taskDir);
-		const left = (task.current.activeBranches ?? []).filter((b) => b.batchId !== batchId);
-		if (left.length !== (task.current.activeBranches ?? []).length) saveTask(taskDir, setCurrent(task, { activeBranches: left }));
+		fs.writeFileSync(path.join(dir, "done.json"), JSON.stringify({ batchId, status, ts: Date.now() }, null, 2));
 	} catch (err) {
-		// Never the reason a batch's own failure is lost: the outcome row is already down.
-		console.error(`[batch ${batchId}] could not clear the pending batch: ${err?.message ?? err}`);
+		// Never the reason a batch's own failure is lost: the outcome row is already down, and a
+		// batch with no marker ages out of activeBranches on staleBatchMs instead.
+		console.error(`[batch ${batchId}] could not write the clearance marker: ${err?.message ?? err}`);
 	}
 }
 
@@ -260,7 +271,7 @@ export function compareReady({ taskDir, batchDir }) {
 		compareId: spec.compareId, branches: spec.branches, rows,
 		recordedTool: spec.recordedTool ?? null, checkpoint: spec.checkpoint ?? null, evidence, scope: spec.scope ?? "harness:fork",
 	});
-	if (short.length) console.error(`[compare ${spec.compareId}] no finding: ${short.map((b) => `${b.label} finished ${b.complete}/${b.replicates}`).join(", ")}`);
+	if (short.length) console.error(`[compare ${spec.compareId}] no finding: ${short.map((b) => `${b.label} ran ${b.rows}/${b.replicates}, ${b.crashed} crashed`).join(", ")}`);
 
 	const written = [];
 	for (const finding of candidates) {
@@ -284,11 +295,11 @@ export function compareReady({ taskDir, batchDir }) {
 	// that wrote a summary is the one still on disk in full.
 	const withSummary = [...rows].reverse().find((r) => r.runId && fs.existsSync(path.join(spec.runsDir, r.runId, "summary.json")));
 	if (!withSummary) {
-		// Findings are already written, so this must not look like nothing happened — but no
-		// packet means nothing will ask the manager about this comparison, and that silence is
-		// the failure to report. Recorded as run, so a retry cannot double-write the findings.
+		// Whatever this batch produced is already on disk — but no packet means nothing will ask
+		// the manager about the comparison it paid for, and that silence is the failure to
+		// report. Recorded as run, so a retry cannot double-write the findings.
 		fs.writeFileSync(readyFile, JSON.stringify({ compareId: spec.compareId, packetId: null, findings: candidates.map((f) => f.id), short, reason: "no replicate wrote a summary.json — no run to assemble a packet over", ts: Date.now() }, null, 2));
-		throw new Error(`compare ${spec.compareId}: every replicate crashed before writing a summary; findings written, no comparison_ready packet assembled`);
+		throw new Error(`compare ${spec.compareId}: every replicate crashed before writing a summary; ${candidates.length ? `${candidates.length} finding(s) written` : "no finding written"}, no comparison_ready packet assembled`);
 	}
 	const packet = assemblePacket({
 		taskDir, runDir: path.join(spec.runsDir, withSummary.runId),

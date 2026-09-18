@@ -202,6 +202,7 @@ function fakeRunner(byLabel, { abandonAt = 0 } = {}) {
 test("run-batch drives one fork batch per branch, then the read-out, and records the outcome in the ledger", async () => {
 	const { dir, specFile, batchDir, tagged } = batchFixture({ finished: false });
 	const { calls, runner } = fakeRunner([tagged.filter((r) => r.label === "G"), tagged.filter((r) => r.label === "A")]);
+	const versionBefore = loadTask(dir).stateVersion;
 	const out = await runBatchSpec({ taskDir: dir, specFile, runner });
 
 	assert.deepEqual(calls.map((c) => [c.branch, c.action, c.replicates]), [["G", null, 3], ["A-natural", "done", 3]]);
@@ -215,7 +216,12 @@ test("run-batch drives one fork batch per branch, then the read-out, and records
 	const outcome = readLedger(dir).at(-1).outcome;
 	assert.equal(outcome.packetId, 1);
 	assert.deepEqual(outcome.findings, ["f-1-A"], "the ledger, not only the packet, says what the comparison produced");
-	assert.deepEqual(loadTask(dir).current.activeBranches, [], "the batch is no longer in flight");
+	// The child's only statement about the task is a marker in its own directory: task.json has
+	// one writer, and it is not this process — two writers would bump stateVersion from one base
+	// and hand two different states the same version.
+	assert.equal(JSON.parse(fs.readFileSync(path.join(batchDir, "done.json"), "utf8")).status, "ready");
+	assert.equal(loadTask(dir).stateVersion, versionBefore, "the batch child never writes task.json");
+	assert.deepEqual(loadTask(dir).current.activeBranches.map((b) => b.batchId), [1], "the entry leaves on the executor's next save, not here");
 });
 
 // Re-running a finished batch would re-spawn every replicate against a budget already charged,
@@ -247,7 +253,7 @@ test("a batch abandoned on the collision preflight stops, records the collision,
 	assert.deepEqual(readLedger(dir).at(-1).outcome, { batchId: 1, failed: "collision", branch: "G", rows: 1 });
 	assert.equal(fs.existsSync(path.join(batchDir, "ready.json")), false, "no comparison_ready, because there was no comparison");
 	assert.deepEqual(readFindings(dir), [], "and above all no finding");
-	assert.deepEqual(loadTask(dir).current.activeBranches, []);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(batchDir, "done.json"), "utf8")).status, "failed");
 });
 
 // The same guard one level in: a batch that limped to the end with fewer replicates than it was
@@ -256,18 +262,29 @@ test("a short batch produces the packet but no finding, and says which branch ca
 	const short = ROWS.filter((r) => r.label === "G" || r.replicate === 1);
 	const { dir, batchDir } = batchFixture({ rows: short });
 	const out = compareReady({ taskDir: dir, batchDir });
-	assert.deepEqual(out.short, [{ label: "A", complete: 1, replicates: 3 }]);
+	assert.deepEqual(out.short, [{ label: "A", rows: 1, crashed: 0, replicates: 3 }]);
 	assert.deepEqual(out.findings, [], "no claim from a branch that ran once");
 	assert.deepEqual(readFindings(dir), []);
 	assert.equal(out.packetId, 1, "the manager is still shown the read-out and decides whether to pay again");
 });
 
-test("a crashed branch is short even at full count: three crashes are not three replicates", () => {
+test("a branch that ran its full count and crashed every replicate delivered nothing", () => {
 	const crashed = ROWS.map((r) => (r.label === "A" ? { ...r, crashed: true } : r));
 	const { dir, batchDir } = batchFixture({ rows: crashed });
 	const out = compareReady({ taskDir: dir, batchDir });
-	assert.deepEqual(out.short, [{ label: "A", complete: 0, replicates: 3 }]);
+	assert.deepEqual(out.short, [{ label: "A", rows: 3, crashed: 3, replicates: 3 }]);
 	assert.deepEqual(readFindings(dir), []);
+});
+
+// The gate is not "every replicate finished". Crashes happen in these runs, and that stricter
+// rule would let one crashed replicate suppress every finding the batch paid for.
+test("one crashed replicate does not suppress the comparison; it stays in the denominator", () => {
+	const oneCrash = ROWS.map((r) => (r.label === "A" && r.replicate === 3 ? { ...r, crashed: true } : r));
+	const { dir, batchDir } = batchFixture({ rows: oneCrash });
+	const out = compareReady({ taskDir: dir, batchDir });
+	assert.deepEqual(out.short, null);
+	assert.equal(out.findings.length, 1);
+	assert.match(out.findings[0].claim, /first-try oracle 1\/3 vs 1\/3/, "three replicates, one of which crashed and passed nothing");
 });
 
 // Nothing watches this child. A branch that throws must still leave the instruction's fate in
@@ -280,7 +297,9 @@ test("a batch that dies mid-way records the failure as the instruction's outcome
 	assert.match(outcome.failed, /no decisions\.jsonl/);
 	assert.equal(outcome.branchesDone, 0);
 	assert.equal(fs.existsSync(path.join(batchDir, "ready.json")), false, "and no comparison is reported as ready");
-	assert.deepEqual(loadTask(dir).current.activeBranches, [], "a batch that died must not stay pending — it would block every later restore");
+	// A batch that died still says it is over: otherwise its entry blocks every later restore
+	// and compare until staleBatchMs runs out.
+	assert.equal(JSON.parse(fs.readFileSync(path.join(batchDir, "done.json"), "utf8")).status, "failed");
 });
 
 // The outcome row is the manager's handle on a restored run, NOT current.activeRuns: runOnce
@@ -293,6 +312,6 @@ test("a restore's batch reports its run in the ledger, leaves activeRuns alone, 
 	assert.equal(out.runId, "run-3");
 	assert.deepEqual(readLedger(dir).at(-1).outcome, { batchId: 1, runId: "run-3", crashed: false });
 	assert.deepEqual(loadTask(dir).current.activeRuns, [], "a run that has already exited is not live");
-	assert.deepEqual(loadTask(dir).current.activeBranches, []);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(path.dirname(specFile), "done.json"), "utf8")).status, "ready", "the marker is how the executor learns the batch is over");
 	assert.deepEqual(readFindings(dir), [], "one branch against nothing claims nothing");
 });

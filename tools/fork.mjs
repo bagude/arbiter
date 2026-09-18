@@ -28,7 +28,8 @@
 // <newId>`, a payload comparison of the fork's first captured request against the source's,
 // and a row built from the new run's decisions/summary/audit. Replicates run sequentially —
 // one model server slot. A-oracle's recorded arguments go to
-// runs/.batch-fork-<runId>-<call>/force-<branch>-<replicate>.json rather than inline in
+// runs/.batch-fork-<runId>-<call>-<label>/force-<branch>-<replicate>.json (the label is the
+// batch's own name, defaulting to the branch — see runBatch) rather than inline in
 // ARBITER_FORK_FORCE, which just points at it ("@<path>") — a recorded probe body can be
 // arbitrary JSON, and Windows caps a process's whole environment block at ~32 KB.
 //

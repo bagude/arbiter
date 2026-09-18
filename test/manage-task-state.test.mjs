@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createTask, loadTask, saveTask, acceptanceHash, spendBudget, budgetLeft, setCurrent, BUDGET_KEYS } from "../lib/manage/task-state.mjs";
+import { createTask, loadTask, saveTask, acceptanceHash, spendBudget, budgetLeft, setCurrent, BUDGET_KEYS, StaleVersion } from "../lib/manage/task-state.mjs";
 import { assemblePacket } from "../lib/manage/packet.mjs";
 import { validateInstruction } from "../lib/manage/instructions.mjs";
 
@@ -30,6 +30,28 @@ test("saveTask increments the version atomically and refuses a changed acceptanc
 	const tampered = { ...loadTask(dir), acceptance: { criteria: [{ id: "c1", text: "weaker", check: "oracle:x" }], hash: acceptanceHash(criteria) } };
 	assert.throws(() => saveTask(dir, tampered), /acceptance/);
 	assert.ok(!fs.existsSync(path.join(dir, "task.json.tmp")), "no temp file left behind");
+});
+
+// Two writers that loaded the same task both write, the second discards the first's change, and
+// both results carry the SAME stateVersion — which is what §3's staleness check trusts to be
+// impossible. expectedVersion makes the write a compare-and-swap for callers that hold a task.
+test("saveTask with an expectedVersion that no longer matches throws and writes nothing", () => {
+	const dir = mk();
+	const t = createTask({ dir, taskId: "t1", goal: "g", criteria, milestones: [{ id: "m1", title: "x", criteria: ["c1"] }], budget: {} });
+	const mine = setCurrent(t, { activeRuns: ["r1"] });
+
+	// Somebody else saves first.
+	saveTask(dir, setCurrent(t, { checkpoint: "ck-0001" }));
+	const onDisk = loadTask(dir);
+	assert.throws(() => saveTask(dir, mine, { expectedVersion: t.stateVersion }), StaleVersion);
+	assert.deepEqual(loadTask(dir), onDisk, "the file is untouched — the whole change was computed against a task that no longer exists");
+
+	// Against the current version it goes through, and the other writer's change survives.
+	const ok = saveTask(dir, setCurrent(onDisk, { activeRuns: ["r1"] }), { expectedVersion: onDisk.stateVersion });
+	assert.equal(ok.stateVersion, onDisk.stateVersion + 1);
+	assert.equal(ok.current.checkpoint, "ck-0001");
+	// Omitted, it behaves exactly as it always did.
+	assert.equal(saveTask(dir, loadTask(dir)).stateVersion, ok.stateVersion + 1);
 });
 
 test("saveTask refuses a self-consistent hash for weaker criteria — acceptance is immutable against the persisted task, not just against itself", () => {
