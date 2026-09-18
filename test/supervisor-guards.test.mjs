@@ -255,6 +255,11 @@ test("MANAGE is null unless the config turns it on, and carries the four documen
 	assert.ok(block.includes("raw.timeoutMs ?? 120_000"), "the decision timeout defaults to 120 000 ms (spec §4)");
 	assert.ok(block.includes("process.env.MANAGE_DECISION_TIMEOUT_MS"), "MANAGE_DECISION_TIMEOUT_MS must override the configured timeout");
 	assert.ok(block.includes("taskDir"), "the task directory travels on MANAGE");
+	// And it is resolved, not taken as written: every config in the repo names it relatively, and
+	// finish() writes the checkpoint candidate straight into it. Taken as given, a supervisor
+	// launched from anywhere but the repo root writes a candidate into <cwd> and logs it as a
+	// success nobody can find.
+	assert.ok(block.includes("path.isAbsolute(raw.taskDir) ? raw.taskDir : path.join(here, raw.taskDir)"), `manage.taskDir must be resolved against the arbiter root; found:\n${block}`);
 });
 
 test("every management site is behind the MANAGE gate", () => {

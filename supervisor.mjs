@@ -256,7 +256,12 @@ const MANAGE = (() => {
 		failThreshold: Number(raw.failThreshold ?? 2),
 		budgetFraction: Number(raw.budgetFraction ?? 0.75),
 		timeoutMs: Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : Number(raw.timeoutMs ?? 120_000),
-		taskDir: raw.taskDir ?? null,
+		// Resolved against the arbiter root, never left as written. Every config in the repo names
+		// it relatively (`tasks-live/pathnorm-night`), and finish() writes the checkpoint candidate
+		// straight into it: taken as given, a supervisor launched from anywhere but the root would
+		// create `<cwd>/tasks-live/...` and log the candidate as a success nobody can find. Same
+		// rule as the executor's resolveConfig, anchored to the same place.
+		taskDir: raw.taskDir ? (path.isAbsolute(raw.taskDir) ? raw.taskDir : path.join(here, raw.taskDir)) : null,
 	};
 })();
 // A threshold at or above the attempt cap can never pause: the attempt that would reach it is
