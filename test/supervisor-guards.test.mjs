@@ -356,7 +356,12 @@ test("finish() writes a MANAGE-gated checkpoint candidate from the archived work
 	// A run that produced a summary must not then die on the way out because a task directory
 	// moved or a disk filled up.
 	const block = body.slice(body.indexOf("if (MANAGE?.taskDir) {"));
-	assert.ok(block.slice(0, block.indexOf("\n\t// Same move for the session directories")).includes("} catch (err) {"), "the candidate must never throw out of finish()");
+	const candidate = block.slice(0, block.indexOf("\n\t// Same move for the session directories"));
+	assert.ok(candidate.includes("} catch (err) {"), "the candidate must never throw out of finish()");
+	// snapshotCheckpoint refuses a workspace containing a symbolic link or junction, and that
+	// refusal arrives here — as a manage line on a run that still finishes normally, not as a
+	// warning and not as a death on the way out.
+	assert.ok(candidate.includes('log({ type: "manage", msg: `no checkpoint candidate for this run:'), "a refused candidate is reported in the manage stream");
 });
 
 // The orchestrator is blocked on this verdict anyway, so holding it costs nothing and buys the

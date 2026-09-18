@@ -142,6 +142,28 @@ test("findSymlinks reports the links under a tree, skipping .pi, bounded", (t) =
 	assert.equal(findSymlinks(ws, 0).length, 0, "bounded — the reason goes into one log line");
 });
 
+test("a workspace with a link is refused at the moment it would be preserved, not when it is read", (t) => {
+	const taskDir = mkTask();
+	const ws = mkWorkspace();
+	const outside = tmp("manage-outside-");
+	fs.writeFileSync(path.join(outside, "notepad.exe"), "not really");
+	try {
+		fs.symlinkSync(outside, path.join(ws, "docs"), "junction");
+	} catch {
+		return t.skip("this environment allows neither a symlink nor a junction");
+	}
+	// Without this refusal the link is copied verbatim, treeHash cannot see out of it, and an
+	// `artifact:docs/notepad.exe` criterion resolves textually inside the checkpoint and passes on
+	// a file the run never produced.
+	assert.throws(() => snapshotCheckpoint({ taskDir, fromDir: ws, runId: "r1" }), /symbolic link|junction/);
+	assert.throws(() => snapshotCheckpoint({ taskDir, fromDir: ws, runId: "r1", id: "cand-r1" }), /docs/);
+	const ckDir = path.join(taskDir, "checkpoints");
+	assert.deepEqual(fs.existsSync(ckDir) ? fs.readdirSync(ckDir) : [], [], "nothing is left half-written — the refusal comes before anything is created");
+	// The same workspace without the link is preserved as it always was.
+	fs.rmSync(path.join(ws, "docs"), { recursive: true, force: true });
+	assert.ok(snapshotCheckpoint({ taskDir, fromDir: ws, runId: "r1" }).treeHash);
+});
+
 test("a checkpoint records the task it was taken from", () => {
 	const taskDir = mkTask();
 	const ck = snapshotCheckpoint({ taskDir, fromDir: mkWorkspace(), runId: "r1", task: "pathnorm" });

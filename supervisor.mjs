@@ -2240,7 +2240,13 @@ function finish(reason) {
 				log({ type: "manage", msg: `checkpoint candidate ${ck.id} (${ck.treeHash})${oracle ? ` at ${oracle.pass}/${oracle.total}` : ""}` });
 			}
 		} catch (err) {
-			log({ type: "warn", msg: `failed to write the checkpoint candidate: ${err?.message ?? err}` });
+			// Under `manage`, not `warn`: what this catches is a management fact. A workspace carrying
+			// a symbolic link or junction is refused by snapshotCheckpoint — a checkpoint is a
+			// self-contained tree and its hash cannot see out of one — as is a root manifest.json or a
+			// task directory that moved. The run is over and its summary is already written; there is
+			// simply no candidate to promote, and the manage stream is where whoever reads this run
+			// looks for that.
+			log({ type: "manage", msg: `no checkpoint candidate for this run: ${err?.message ?? err}` });
 		}
 	}
 	// Same move for the session directories, and for the same reason (see SESSIONS
