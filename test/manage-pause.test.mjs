@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createPause, suppressWhilePaused, DEFAULT_TIMEOUT_MS } from "../lib/manage/pause.mjs";
+import { createPause, suppressWhilePaused, classifyDelivery, DEFAULT_TIMEOUT_MS } from "../lib/manage/pause.mjs";
 
 const T0 = 1_000_000;
 const held = { what: "the failed verdict" };
@@ -162,4 +162,70 @@ test("only the release and the compaction path may reach a paused orchestrator",
 	assert.equal(suppressWhilePaused(undefined), true);
 	// Anchored: a longer label that merely begins with an allowed one is not allowed by accident.
 	assert.equal(suppressWhilePaused("oracle verdict (stale)"), true);
+});
+
+// Held is not one thing. The orchestrator is never told it is paused, so an answer to its own
+// call must arrive late rather than never — dropping a probe it paid for out of its own budget
+// would change its next decision for a reason belonging to the harness, not the experiment.
+// A nudge is the harness's own prompt and is stale the moment the real answer lands.
+test("a held delivery is queued when it is a reply, dropped when it is a nudge", () => {
+	for (const why of ["probe results", "probe error", "auto-probe results (tester)", "memory candidate recorded", "ack (no counterpart)", "jev done hold", "mail #7 from orchestrator"]) {
+		assert.equal(classifyDelivery(why), "queue", `${why} is an answer the orchestrator asked for`);
+	}
+	for (const why of ["silent turn (text but no tool call)", "idle nudge 1", "kickoff", "some new delivery site", undefined]) {
+		assert.equal(classifyDelivery(why), "drop", `${why} is not a reply to anything`);
+	}
+	for (const why of ["oracle verdict", "manager correction", "compaction done", "checkpoint request"]) {
+		assert.equal(classifyDelivery(why), "allow");
+	}
+});
+
+test("queued replies flush in order right after the released verdict; nudges never come back", () => {
+	const p = createPause({ timeoutMs: 1000 });
+	p.open("oracle_failed_repeatedly", T0, held);
+
+	assert.deepEqual(p.hold({ to: "orchestrator", text: "probe #1 says 25/25", why: "probe results" }), { action: "queue" });
+	assert.deepEqual(p.hold({ to: "orchestrator", text: "nudge", why: "silent turn (text but no tool call)" }), { action: "drop" });
+	assert.deepEqual(p.hold({ to: "orchestrator", text: "recorded", why: "memory candidate recorded" }), { action: "queue" });
+	assert.deepEqual(p.hold({ to: "orchestrator", text: "idle", why: "idle nudge 1" }), { action: "drop" });
+	assert.equal(p.queued().length, 2, "only the replies are kept");
+
+	const r = p.tick(T0 + 1000);
+	assert.deepEqual(
+		r.deliver.map((d) => d.kind),
+		["release", "queued", "queued"],
+		"the verdict first, then the held replies — the sequence the orchestrator would have seen unpaused",
+	);
+	assert.deepEqual(
+		r.deliver.slice(1).map((d) => d.item.why),
+		["probe results", "memory candidate recorded"],
+		"in the order they were produced",
+	);
+	assert.equal(r.deliver[1].item.to, "orchestrator", "each carries its own recipient and text");
+	assert.equal(r.deliver[1].item.text, "probe #1 says 25/25");
+	assert.match(r.log.join(" "), /flushing 2 reply/);
+	// The queue belongs to the pause that held it: nothing is left for the next one.
+	assert.deepEqual(p.queued(), []);
+	assert.deepEqual(p.tick(T0 + 99_999).deliver, []);
+});
+
+test("a decision flushes the queue too, and a pause with nothing held says nothing about it", () => {
+	const p = createPause({ timeoutMs: 1000 });
+	p.open("escalation", T0, held);
+	p.hold({ to: "orchestrator", text: "probe", why: "probe results" });
+	const r = p.onControl({ type: "decision", packetId: 7, verb: "continue" }, T0 + 5);
+	assert.deepEqual(r.deliver.map((d) => d.kind), ["release", "queued"]);
+
+	const quiet = createPause({ timeoutMs: 1000 });
+	quiet.open("escalation", T0, held);
+	const q = quiet.tick(T0 + 1000);
+	assert.deepEqual(q.deliver.map((d) => d.kind), ["release"]);
+	assert.ok(!q.log.join(" ").includes("flushing"), "no flush line when nothing was held");
+});
+
+test("hold() with no pause open always says allow — the guard is the caller's, the rule is ours", () => {
+	const p = createPause({ timeoutMs: 1000 });
+	assert.deepEqual(p.hold({ to: "orchestrator", text: "x", why: "probe results" }), { action: "allow" });
+	assert.deepEqual(p.hold({ to: "orchestrator", text: "x", why: "idle nudge 1" }), { action: "allow" });
+	assert.deepEqual(p.queued(), []);
 });

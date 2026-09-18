@@ -730,15 +730,20 @@ function deliver(to, text, why) {
 		log({ type: "warn", msg: `deliver to "${to}" dropped: no such agent in this run (${why})` });
 		return;
 	}
-	// One guard for every delivery made while a manager decision is owed (spec §4). The nudges
-	// exist to un-stick an agent that stopped on its own; during a pause the agent stopped
-	// because the harness is holding its answer, so a nudge is the harness prodding a model to
-	// work around the harness. The live check took the silent-turn nudge 0.9 s into the pause.
-	// Which labels are held is lib/manage/pause.mjs's rule, not a condition spelled out here,
-	// so it is unit-tested and stays in one place; everything else — the held verdict itself, a
-	// manager correction, compaction, probe results — goes through untouched.
+	// One guard for every delivery made while a manager decision is owed (spec §4). During a
+	// pause the orchestrator has stopped because the harness is holding its answer, so any
+	// prompt is the harness handing a blocked agent something to do — the live check took the
+	// silent-turn nudge 0.9 s into the pause, and a memory receipt on the run after that.
+	//
+	// What happens to a held delivery is lib/manage/pause.mjs's rule, not a condition spelled
+	// out here: a REPLY to something the orchestrator itself asked for (a probe answer, a mail
+	// acknowledgement) is queued and flushed right after the release, in order, because the
+	// orchestrator is never told it is paused and an answer it paid for out of its own budget
+	// must arrive late rather than never. A NUDGE is stale the moment the real answer lands, so
+	// it is dropped. The verdict, the correction and the compaction path are not held at all.
 	if (MANAGE && managePause.isOpen() && suppressWhilePaused(why)) {
-		log({ agent: to, type: "manage", msg: `held: manager decision pending (${why})` });
+		const { action } = managePause.hold({ to, text, why });
+		log({ agent: to, type: "manage", msg: `${action === "queue" ? "queued for the release" : "dropped"}: manager decision pending (${why})` });
 		return;
 	}
 	// A worker is not addressable by the supervisor at all: it has no RPC stdin, and
@@ -1533,6 +1538,10 @@ function applyPauseActions(r) {
 		try {
 			if (d.kind === "correction") deliver(VERIFIER, M.manage.correction(d.message), "manager correction");
 			else if (d.kind === "release") d.payload(d.correction ? M.manage.correction(d.correction) : null, d.defaulted);
+			// A reply held during the pause, redelivered after it. The pause is already closed
+			// by the time this runs, so it goes through deliver() like any other message — no
+			// recursion, and the ordering is the list's, held answers behind the verdict.
+			else if (d.kind === "queued") deliver(d.item.to, d.item.text, `${d.item.why} (held during the pause)`);
 		} catch (err) {
 			log({ type: "manage", msg: `pause action ${d.kind} threw: ${err?.stack ?? err}`.slice(0, 400) });
 		}

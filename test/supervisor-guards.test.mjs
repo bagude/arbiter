@@ -340,6 +340,11 @@ test("pumpControl drives the pause machine on every tick and survives a throw", 
 	assert.ok(applyBody.includes('jevEvent("manage:defaulted"'), "a timed-out decision must be recorded as manage:defaulted");
 	assert.ok(applyBody.includes("lastActivity = Date.now();"), "releasing a pause must refresh lastActivity — the wait was not idleness");
 	assert.ok(applyBody.includes("catch (err)"), "a held delivery that throws must not take the run down either");
+	// The replies held during the pause go out after the release, each redelivered as itself.
+	assert.ok(applyBody.includes('d.kind === "queued"'), "applyPauseActions must flush the queued replies");
+	assert.ok(applyBody.includes("deliver(d.item.to, d.item.text,"), "each queued reply keeps its own recipient and text");
+	assert.ok(applyBody.includes("(held during the pause)"), "and is labelled so the audit shows it arrived late");
+	assert.ok(applyBody.indexOf('d.kind === "release"') < applyBody.indexOf('d.kind === "queued"'), "the release is handled before the flush; the list's order is the delivery order");
 });
 
 // The live check died 2 s into a pause because its driver threw and closed the pipes the
@@ -394,7 +399,12 @@ test("nudges are held while a manager decision is owed, by one guard in deliver(
 	const body = src.slice(at + 1);
 	const fn = body.slice(0, body.indexOf("\n}\n"));
 	assert.ok(fn.includes("if (MANAGE && managePause.isOpen() && suppressWhilePaused(why)) {"), `deliver() must hold suppressed deliveries during a pause; found:\n${fn.slice(0, 600)}`);
-	assert.ok(fn.includes("held: manager decision pending"), "and say so in the audit rather than dropping silently");
+	// Held is not one thing: a reply the orchestrator asked for is queued for the release, a
+	// nudge is dropped, and the audit says which happened to which.
+	assert.ok(fn.includes("managePause.hold({ to, text, why })"), "the whole delivery is handed over, so a queued one can be redelivered verbatim");
+	assert.ok(fn.includes("queued for the release"), "a queued reply must say so in the audit");
+	assert.ok(fn.includes('"dropped"'), "and a dropped nudge must say that instead");
+	assert.ok(!/=== "probe|=== "memory/.test(fn), "which labels queue belongs to lib/manage/pause.mjs");
 	// Before the send, and before the compaction queue — a held nudge must not be queued for
 	// delivery after the compaction either.
 	assert.ok(fn.indexOf("suppressWhilePaused(why)") < fn.indexOf("compaction.phase ===") , "the guard precedes the compaction queue");
