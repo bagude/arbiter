@@ -3,13 +3,21 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-state.mjs";
 import { appendLedger } from "../lib/manage/ledger.mjs";
 import { writePacket } from "../lib/manage/packet.mjs";
 import {
-	DEFAULT_MANAGER_MODEL, INSTRUCT_TOOL, MESSAGES_URL, agrees, decide, decisionShape, defaultInstruction,
-	executedFor, fillInstruction, replay, requestBody, runsForTask, serve, systemPrompt, triggerEvents,
+	DEFAULT_MANAGER_MODEL, DEFAULT_TIMEOUT_MS, INSTRUCT_TOOL, MAX_DECISION_TOKENS, MESSAGES_URL,
+	SUPERVISOR_DEADLINE_MS, UNSUPPORTED_MODEL, acquireServeLock, agrees, decide, decisionShape,
+	defaultInstruction, driverTimeoutMs, executedFor, fillInstruction, lockFile, pidAlive, replay,
+	requestBody, runsForTask, serve, supervisorDeadlineMs, systemPrompt, triggerEvents,
+	unsupportedModelReason,
 } from "../lib/manage/manager.mjs";
+import { readApiKey, splitArgs } from "../tools/manage.mjs";
+
+const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "tools", "manage.mjs");
 
 const RUN_ID = "2026-09-18T01-02-03";
 
@@ -92,7 +100,10 @@ test("decide sends the packet as the user message under the system prompt and fo
 	assert.equal(init.headers["anthropic-version"], "2023-06-01");
 	assert.equal(init.headers["x-api-key"], "sk-test-key");
 	assert.equal(body.model, DEFAULT_MANAGER_MODEL);
-	assert.equal(body.max_tokens, 1024);
+	// Not the size of the answer: thinking is on by default and counts against the cap, so a cap
+	// sized for the instruction is one the model can hit before it emits the call at all.
+	assert.equal(body.max_tokens, 4096);
+	assert.equal(MAX_DECISION_TOKENS, 4096);
 	assert.equal(body.system, systemPrompt());
 	assert.deepEqual(body.messages, [{ role: "user", content: JSON.stringify(packet, null, 2) }]);
 	assert.deepEqual(body.tool_choice, { type: "tool", name: "instruct" });
@@ -348,4 +359,277 @@ test("serve never raises on an API failure: the default continue is executed and
 	assert.match(result.ledgerRow.manager.error, /ECONNREFUSED/);
 	// A zero grant spends nothing, so the task's budget is untouched and the version did not move.
 	assert.deepEqual(loadTask(dir).budget.wallSec, { total: 14400, used: 0 });
+});
+
+// ---------- the driver's budget (§4 headroom) ----------
+
+test("the driver's default budget is strictly inside the supervisor's deadline", () => {
+	assert.ok(DEFAULT_TIMEOUT_MS < SUPERVISOR_DEADLINE_MS, `${DEFAULT_TIMEOUT_MS} must leave headroom inside ${SUPERVISOR_DEADLINE_MS}`);
+	// Everything else in the round trip lives in the same window: up to pollMs to notice the
+	// event, packet assembly, the control append, and the supervisor's own 2 s control poll.
+	assert.equal(driverTimeoutMs({}), 90_000);
+	assert.equal(supervisorDeadlineMs({}), 120_000);
+});
+
+test("MANAGE_DECISION_TIMEOUT_MS moves both deadlines together; MANAGE_DRIVER_TIMEOUT_MS overrides the driver's alone", () => {
+	const env = { MANAGE_DECISION_TIMEOUT_MS: "300000" };
+	assert.equal(supervisorDeadlineMs(env), 300_000);
+	assert.equal(driverTimeoutMs(env), 225_000);
+	assert.ok(driverTimeoutMs(env) < supervisorDeadlineMs(env));
+	assert.equal(driverTimeoutMs({ ...env, MANAGE_DRIVER_TIMEOUT_MS: "60000" }), 60_000);
+	// A nonsense value falls back to the fraction rather than to zero, which would default instantly.
+	assert.equal(driverTimeoutMs({ MANAGE_DRIVER_TIMEOUT_MS: "nope" }), 90_000);
+});
+
+// ---------- the model families that cannot answer ----------
+
+test("decide refuses a forced-tool_choice-incompatible model without calling fetch", async () => {
+	const { task } = fixture();
+	const fetchImpl = fakeFetch(toolUse("continue", { runId: RUN_ID, milestone: "m1" }));
+	for (const model of ["claude-fable-5-1", "claude-mythos-5-1"]) {
+		const instr = await decide({ packet: packetFor(task), fetchImpl, apiKey: "k", model });
+		assert.equal(instr.verb, "continue");
+		assert.equal(instr.defaulted, true);
+		assert.match(instr.manager.error, /forced tool_choice/);
+		assert.match(instr.manager.error, new RegExp(model));
+	}
+	assert.equal(fetchImpl.calls.length, 0, "no request is made for a model that cannot answer one");
+	assert.ok(UNSUPPORTED_MODEL.test("claude-fable-5"));
+	assert.ok(!UNSUPPORTED_MODEL.test(DEFAULT_MANAGER_MODEL));
+	assert.match(unsupportedModelReason("x"), /400/);
+});
+
+test("the CLI refuses that model at exit 2, before it asks for a key", () => {
+	const { dir, task } = fixture();
+	writePacket(dir, packetFor(task));
+	const r = spawnSync(process.execPath, [CLI, "decide", dir, "7", "--model", "claude-fable-5-1"], {
+		encoding: "utf8",
+		env: { ...process.env, ANTHROPIC_API_KEY: "", ARBITER_DOTENV: path.join(dir, "no-such.env") },
+	});
+	assert.equal(r.status, 2);
+	assert.match(r.stderr, /forced tool_choice/);
+	assert.ok(!r.stderr.includes("ANTHROPIC_API_KEY"), "the model is refused before the key is looked for");
+});
+
+// ---------- transient answers ----------
+
+test("one 429 is retried inside the budget; a second failure defaults", async () => {
+	const { task } = fixture();
+	let n = 0;
+	const fetchImpl = async () => {
+		n++;
+		return n === 1
+			? { ok: false, status: 429, text: async () => '{"type":"error","error":{"type":"rate_limit_error"}}' }
+			: toolUse("continue", { runId: RUN_ID, milestone: "m1", budgetGrant: { wallSec: 0, toolCalls: 0 } });
+	};
+	const instr = await decide({ packet: packetFor(task), fetchImpl, apiKey: "k", retryDelayMs: 1 });
+	assert.equal(n, 2, "the rate limit is retried exactly once");
+	assert.equal(instr.defaulted, undefined);
+	assert.equal(instr.verb, "continue");
+
+	let m = 0;
+	const always429 = async () => { m++; return { ok: false, status: 429, text: async () => "rate limited" }; };
+	const gave = await decide({ packet: packetFor(task), fetchImpl: always429, apiKey: "k", retryDelayMs: 1 });
+	assert.equal(m, 2, "one retry, not a loop");
+	assert.equal(gave.defaulted, true);
+	assert.match(gave.error, /HTTP 429/);
+
+	// A 400 is the model or the request, not the weather: answered once.
+	let b = 0;
+	const bad = async () => { b++; return { ok: false, status: 400, text: async () => "bad request" }; };
+	await decide({ packet: packetFor(task), fetchImpl: bad, apiKey: "k", retryDelayMs: 1 });
+	assert.equal(b, 1);
+});
+
+test("a retry that would not fit the remaining budget is not attempted", async () => {
+	const { task } = fixture();
+	let n = 0;
+	const fetchImpl = async () => { n++; return { ok: false, status: 503, text: async () => "overloaded" }; };
+	const instr = await decide({ packet: packetFor(task), fetchImpl, apiKey: "k", timeoutMs: 30, retryDelayMs: 1000 });
+	assert.equal(n, 1, "the delay alone would outlive the decision window");
+	assert.equal(instr.defaulted, true);
+});
+
+test("the manager's token usage is kept, because §5's row has a usd slot and nothing else can feed it", async () => {
+	const { task } = fixture();
+	const fetchImpl = fakeFetch({
+		ok: true,
+		json: async () => ({ stop_reason: "tool_use", usage: { input_tokens: 9000, output_tokens: 300 }, content: [{ type: "tool_use", name: "instruct", input: { verb: "escalate", args: { reason: "r", wants: "budget" }, rationale: "r" } }] }),
+	});
+	const instr = await decide({ packet: packetFor(task), fetchImpl, apiKey: "k" });
+	assert.deepEqual(instr.manager.usage, { input_tokens: 9000, output_tokens: 300 });
+});
+
+test("a max_tokens answer with no tool call defaults, and says so", async () => {
+	const { task } = fixture();
+	const instr = await decide({ packet: packetFor(task), fetchImpl: fakeFetch({ ok: true, json: async () => ({ stop_reason: "max_tokens", content: [{ type: "thinking", thinking: "" }] }) }), apiKey: "k" });
+	assert.equal(instr.defaulted, true);
+	assert.match(instr.error, /max_tokens/);
+});
+
+test("a 400 body that echoes the key comes back redacted", async () => {
+	const { task } = fixture();
+	const key = "sk-ant-api03-0123456789abcdefghijklmnop";
+	const instr = await decide({
+		packet: packetFor(task), apiKey: key,
+		fetchImpl: fakeFetch({ ok: false, status: 401, text: async () => `{"error":{"message":"invalid x-api-key: ${key}"}}` }),
+	});
+	assert.match(instr.error, /HTTP 401/);
+	assert.ok(!JSON.stringify(instr).includes(key), "a body that echoes the key must be redacted before it reaches a ledger row");
+	assert.match(instr.error, /REDACTED/);
+});
+
+// ---------- the CLI's argument and key handling ----------
+
+test("splitArgs pairs flags with values, and treats a flag followed by a flag as a switch", () => {
+	assert.deepEqual(splitArgs(["dir", "--model", "m", "--once"]), { flags: { model: "m", once: true }, positionals: ["dir"] });
+	// The rule that matters: --once must not swallow --model, and m must not become a positional.
+	assert.deepEqual(splitArgs(["dir", "--once", "--model", "m"]), { flags: { once: true, model: "m" }, positionals: ["dir"] });
+	assert.deepEqual(splitArgs(["a", "b"]), { flags: {}, positionals: ["a", "b"] });
+	assert.deepEqual(splitArgs(["--trigger"]), { flags: { trigger: true }, positionals: [] });
+	// Pinned honestly, because it is a real consequence rather than an accident: a value that
+	// itself begins with "--" cannot be passed — it is read as the next flag, never dropped.
+	assert.deepEqual(splitArgs(["--rationale", "--not-a-flag", "x"]), { flags: { rationale: true, "not-a-flag": "x" }, positionals: [] });
+});
+
+test("readApiKey prefers the environment, reads a .env line, and strips matching quotes", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "manage-key-"));
+	fs.writeFileSync(path.join(dir, ".env"), 'OTHER=1\nANTHROPIC_API_KEY="sk-ant-from-file"\n');
+	assert.equal(readApiKey({ env: { ANTHROPIC_API_KEY: "sk-ant-from-env" }, root: dir }), "sk-ant-from-env");
+	assert.equal(readApiKey({ env: {}, root: dir }), "sk-ant-from-file");
+	assert.equal(readApiKey({ env: { ANTHROPIC_API_KEY: "'sk-ant-quoted'" }, root: dir }), "sk-ant-quoted");
+	fs.writeFileSync(path.join(dir, ".env"), "ANTHROPIC_API_KEY=sk-ant-plain\n");
+	assert.equal(readApiKey({ env: {}, root: dir }), "sk-ant-plain");
+	// A lone quote is not a quoted string, and a key is never rewritten on a guess.
+	assert.equal(readApiKey({ env: { ANTHROPIC_API_KEY: '"sk-ant-half' }, root: dir }), '"sk-ant-half');
+	const empty = fs.mkdtempSync(path.join(os.tmpdir(), "manage-key-none-"));
+	assert.equal(readApiKey({ env: {}, root: empty }), null);
+	// ARBITER_DOTENV names the file instead of the repo's own.
+	assert.equal(readApiKey({ env: { ARBITER_DOTENV: path.join(dir, ".env") }, root: empty }), "sk-ant-plain");
+});
+
+test("the CLI exits 2 when there is no key anywhere", () => {
+	const { dir, task } = fixture();
+	writePacket(dir, packetFor(task));
+	const r = spawnSync(process.execPath, [CLI, "decide", dir, "7"], {
+		encoding: "utf8",
+		env: { ...process.env, ANTHROPIC_API_KEY: "", ARBITER_DOTENV: path.join(dir, "no-such.env") },
+	});
+	assert.equal(r.status, 2);
+	assert.match(r.stderr, /no ANTHROPIC_API_KEY/);
+});
+
+test("--timeout must be a positive number of milliseconds", () => {
+	const { dir, task } = fixture();
+	writePacket(dir, packetFor(task));
+	const r = spawnSync(process.execPath, [CLI, "decide", dir, "7", "--timeout", "0"], {
+		encoding: "utf8",
+		env: { ...process.env, ANTHROPIC_API_KEY: "", ARBITER_DOTENV: path.join(dir, "no-such.env") },
+	});
+	assert.equal(r.status, 2);
+	assert.match(r.stderr, /--timeout must be a positive number/);
+});
+
+// ---------- the loop's durability ----------
+
+test("the correction is on disk before the decision that releases the pause", async () => {
+	const { dir, runsDir } = fixture({
+		lifecycle: [{ ts: 2, ev: "manage:trigger", data: { kind: "oracle_failed_repeatedly", pauses: true, packetRequest: { runId: RUN_ID, detail: {} } } }],
+	});
+	await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl: fakeFetch(toolUse("correct", { runId: RUN_ID, message: "probe the empty-string case" })) });
+	const control = fs.readFileSync(path.join(runsDir, RUN_ID, "control.jsonl"), "utf8").split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
+	const correct = control.findIndex((c) => c.type === "correct");
+	const decision = control.findIndex((c) => c.type === "decision");
+	assert.ok(correct >= 0 && decision >= 0);
+	// §4: the withheld verdict is delivered together with the correction, which only works if the
+	// correction is already on disk when the decision entry releases the pause.
+	assert.ok(correct < decision, `correct (${correct}) must precede decision (${decision})`);
+});
+
+test("a trigger whose packet was written is never answered twice, even if the executor died after it", async () => {
+	const { dir, runsDir } = fixture({
+		lifecycle: [{ ts: 2, ev: "manage:trigger", data: { kind: "budget_threshold", packetRequest: { runId: RUN_ID, detail: {} } } }],
+	});
+	const fetchImpl = fakeFetch(toolUse("continue", { runId: RUN_ID, milestone: "m1", budgetGrant: { wallSec: 0, toolCalls: 0 } }));
+	const died = await serve({
+		taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl,
+		execute: () => { throw new Error("killed between the packet and the row"); },
+	});
+	assert.equal(died.handled.length, 0);
+	// The packet is the marker: the pointer moved when it was written, so a restart skips the
+	// trigger and the supervisor defaults it, rather than assembling a second packet under a
+	// second idempotency key and launching the same work twice.
+	assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "serve.state.json"), "utf8")).handled[RUN_ID], 1);
+	const after = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
+	assert.equal(after.handled.length, 0);
+	assert.equal(fs.readdirSync(path.join(dir, "packets")).length, 1, "no second packet for the same trigger");
+});
+
+test("a thrown handler says what the skip costs", async () => {
+	const { dir, runsDir } = fixture({
+		lifecycle: [{ ts: 2, ev: "manage:trigger", data: { kind: "oracle_failed_repeatedly", packetRequest: { runId: RUN_ID, detail: {} } } }],
+	});
+	// A truncated record: the packet cannot be assembled over this run at all.
+	fs.writeFileSync(path.join(runsDir, RUN_ID, "summary.json"), '{ "runId": "trunca');
+	const out = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl: fakeFetch(toolUse("continue", {})), supervisorDeadline: 120_000 });
+	assert.equal(out.handled.length, 0);
+	const log = fs.readFileSync(path.join(dir, "serve.log"), "utf8");
+	assert.match(log, /skipped after a thrown handler/);
+	assert.match(log, /defaults after the supervisor's deadline \(120000 ms\)/);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "serve.state.json"), "utf8")).handled[RUN_ID], 1, "a thrown trigger is not retried every tick");
+});
+
+test("an event with no kind is skipped and logged, never given a kind of its own", async () => {
+	const { dir, runsDir } = fixture({
+		lifecycle: [{ ts: 2, ev: "manage:trigger", data: { pauses: false, packetRequest: { runId: RUN_ID, detail: {} } } }],
+	});
+	const fetchImpl = fakeFetch(toolUse("continue", {}));
+	const out = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
+	assert.equal(out.handled.length, 0);
+	assert.equal(fetchImpl.calls.length, 0, "no manager is asked about a packet that could not be built");
+	assert.match(fs.readFileSync(path.join(dir, "serve.log"), "utf8"), /carries no kind/);
+	assert.ok(!fs.existsSync(path.join(dir, "packets", "1.json")));
+});
+
+test("a second loop refuses while a live one holds the lock, and takes over a stale one", async () => {
+	const { dir, runsDir } = fixture({
+		lifecycle: [{ ts: 2, ev: "manage:trigger", data: { kind: "budget_threshold", packetRequest: { runId: RUN_ID, detail: {} } } }],
+	});
+	// This process is alive, so a lock naming it is a lock another loop must obey.
+	fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+	const fetchImpl = fakeFetch(toolUse("continue", { runId: RUN_ID, milestone: "m1", budgetGrant: { wallSec: 0, toolCalls: 0 } }));
+	const blocked = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
+	assert.equal(blocked.refused, "locked");
+	assert.equal(blocked.handled.length, 0);
+	assert.equal(fetchImpl.calls.length, 0);
+	assert.equal(blocked.owner.pid, process.pid);
+
+	// A lock whose owner is gone is taken over: Ctrl-C must not make a task unservable by hand.
+	fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: 2147483647, startedAt: 1 }));
+	assert.equal(pidAlive(2147483647), false);
+	const took = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
+	assert.equal(took.handled.length, 1);
+	assert.equal(fs.existsSync(lockFile(dir)), false, "the lock is released on the way out");
+});
+
+test("acquireServeLock is exclusive while its owner lives", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "manage-lock-"));
+	assert.deepEqual(acquireServeLock(dir), { ok: true });
+	const second = acquireServeLock(dir);
+	assert.equal(second.ok, false);
+	assert.equal(second.owner.pid, process.pid);
+	assert.equal(JSON.parse(fs.readFileSync(lockFile(dir), "utf8")).pid, process.pid);
+});
+
+test("the admission memo re-checks a run whose lifecycle has grown", () => {
+	const { dir, runsDir } = fixture({ activeRuns: [] });
+	const later = "2026-09-18T09-09-09";
+	mkRun(runsDir, later, { lifecycle: [{ ts: 1, ev: "jev:done_claimed", data: {} }] });
+	const admitCache = new Map();
+	assert.deepEqual(runsForTask({ taskDir: dir, runsDir, admitCache }), []);
+	assert.equal(admitCache.get(later).admitted, false);
+	// The run now says which task it belongs to. A memo keyed on the file's size and mtime sees it.
+	fs.appendFileSync(path.join(runsDir, later, "lifecycle.jsonl"), JSON.stringify({ ts: 2, ev: "manage:trigger", data: { kind: "escalation", packetRequest: { runId: later, taskDir: dir, detail: {} } } }) + "\n");
+	assert.deepEqual(runsForTask({ taskDir: dir, runsDir, admitCache }), [later]);
+	assert.equal(admitCache.get(later).admitted, true);
 });

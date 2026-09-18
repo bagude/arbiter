@@ -44,7 +44,30 @@ The compare table and the finding ids go here.
 ## 4. First live manager (Task 5, step 4)
 
 One pathnorm task with `manage.enabled` on a config that fails at least once, with
-`node tools/manage.mjs serve <taskDir> --run <runId>` driving the decisions.
+`node tools/manage.mjs serve <taskDir>` driving the decisions (`--run <runId>` adopts a run whose
+trigger events and config both fail to name the task).
+
+**The two deadlines, and why they are not the same number.** The supervisor holds a paused
+delivery for `manage.timeoutMs` / `MANAGE_DECISION_TIMEOUT_MS`, default 120 000 ms, then defaults
+and closes the pause. The driver's own budget for one decision is `--timeout <ms>`, else
+`MANAGE_DRIVER_TIMEOUT_MS`, else **0.75 of the supervisor's deadline — 90 000 ms by default**.
+The difference is not slack. Noticing the lifecycle event costs up to `pollMs` (2 000 ms), the
+supervisor reads the control file on its own 2 s poll, and packet assembly and the executor sit
+in between. An answer that arrives at the deadline arrives at a pause that has already closed:
+the withheld verdict has gone out alone and the correction lands behind it, which is what §4
+forbids. Raise one and you raise both — set `MANAGE_DECISION_TIMEOUT_MS` and the driver follows
+at 0.75; set `MANAGE_DRIVER_TIMEOUT_MS` only to shrink the driver's share further. One retry on a
+429 / 529 / 5xx fits inside the driver's budget and is skipped when it would not.
+
+**The model matters.** Forced `tool_choice` is a hard 400 on the fable and mythos families, and
+every packet forces the `instruct` call, so `decide`, `replay` and `serve` refuse those ids rather
+than spend a run writing defaults. The live manager is `claude-opus-5`.
+
+**One loop per task.** `serve` takes `serve.lock` (an exclusive create holding `{ pid, startedAt }`)
+and a second loop refuses with exit 3 while the first is alive; a lock whose owner is gone is
+taken over. It answers each trigger once, durably, and the marker is the packet: a crash after the
+packet is written skips the trigger and lets the supervisor default it, rather than launching the
+same `restore` or `compare` twice.
 
 | packet | trigger | verb | rationale (abridged) | outcome | manager ms |
 |---|---|---|---|---|---|

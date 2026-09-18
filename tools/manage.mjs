@@ -20,7 +20,7 @@ import { readLedger, readFindings, appendFinding, settleFinding, recordOutcome, 
 import { executeInstruction, registerRunForTrigger } from "../lib/manage/instructions.mjs";
 import { listCheckpoints, promoteCandidate, isCandidateId } from "../lib/manage/checkpoint.mjs";
 import { compareTable, findingsFromCompare, incompleteBranches, settleOrAppend } from "../lib/manage/compare.mjs";
-import { decide, replay, serve, DEFAULT_MANAGER_MODEL } from "../lib/manage/manager.mjs";
+import { decide, replay, serve, DEFAULT_MANAGER_MODEL, DEFAULT_TIMEOUT_MS, UNSUPPORTED_MODEL, unsupportedModelReason } from "../lib/manage/manager.mjs";
 import { runBatch, runOnce } from "./fork.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -37,9 +37,9 @@ const USAGE = `usage:
   node tools/manage.mjs run-batch <taskDir> <compares/<n>/spec.json>
   node tools/manage.mjs compare-ready <taskDir> <compares/<n>>
   node tools/manage.mjs ledger <taskDir>
-  node tools/manage.mjs decide <taskDir> <packetId> [--model <m>] [--execute] [--runs <dir>]
-  node tools/manage.mjs replay <taskDir> --model <m> [--packets 1,2,3]
-  node tools/manage.mjs serve <taskDir> [--model <m>] [--runs <dir>] [--run <runId>] [--once]`;
+  node tools/manage.mjs decide <taskDir> <packetId> [--model <m>] [--timeout <ms>] [--execute] [--runs <dir>]
+  node tools/manage.mjs replay <taskDir> --model <m> [--packets 1,2,3] [--timeout <ms>]
+  node tools/manage.mjs serve <taskDir> [--model <m>] [--timeout <ms>] [--runs <dir>] [--run <runId>] [--once]`;
 
 /** Splits argv into --flag value pairs and the remaining positionals, in order. */
 export function splitArgs(argv) {
@@ -513,14 +513,21 @@ function cmdCompareReady(argv) {
  */
 export function readApiKey({ env = process.env, root = ROOT } = {}) {
 	const fromEnv = String(env.ANTHROPIC_API_KEY ?? "").trim();
-	if (fromEnv) return fromEnv;
-	const file = path.join(root, ".env");
+	if (fromEnv) return unquote(fromEnv);
+	// `ARBITER_DOTENV` names the file instead of the repo's own: a seam for tests, and for an
+	// operator whose key lives somewhere other than beside the code.
+	const file = env.ARBITER_DOTENV ? String(env.ARBITER_DOTENV) : path.join(root, ".env");
 	if (fs.existsSync(file)) {
 		const m = fs.readFileSync(file, "utf8").match(/^ANTHROPIC_API_KEY=(\S+)/m);
-		if (m) return m[1];
+		if (m) return unquote(m[1]);
 	}
 	return null;
 }
+
+/** `KEY="sk-…"` in a .env file is a key with two quotes attached, and what it produces is a 401
+ * that arrives as a defaulted packet rather than as the operator error it is. Only matching
+ * quotes are stripped — a key that genuinely starts with one is not silently rewritten. */
+const unquote = (s) => (/^"(.*)"$/.test(s) || /^'(.*)'$/.test(s) ? s.slice(1, -1) : s);
 
 /** Exit 2 with a clear message rather than a 401 from the API — a missing key is an operator's
  * mistake, and the run on the other side would otherwise be told the manager failed. */
@@ -531,6 +538,36 @@ function requireApiKey() {
 		process.exit(2);
 	}
 	return key;
+}
+
+/**
+ * The model, refused here as well as in `decide`.
+ *
+ * Every packet forces the `instruct` tool call, and forced `tool_choice` is a hard 400 on the
+ * fable and mythos families — so a loop pointed at one of them runs to completion writing
+ * nothing but defaulted zero-grant continues. `decide` refuses it too (a library caller gets the
+ * default with the reason on `manager.error`); at a terminal it is an operator's typo, and the
+ * honest answer is to stop before spending a run.
+ */
+function requireSupportedModel(flags) {
+	const model = flags.model ?? DEFAULT_MANAGER_MODEL;
+	if (UNSUPPORTED_MODEL.test(String(model))) {
+		console.error(unsupportedModelReason(model));
+		process.exit(2);
+	}
+	return model;
+}
+
+/** `--timeout <ms>`, the driver's budget for one decision. Left alone it is 0.75 of the
+ * supervisor's deadline (lib/manage/manager.mjs), which is what keeps an answer from arriving at
+ * a pause that has already closed. */
+function timeoutFlag(flags) {
+	const raw = Number(flags.timeout ?? "");
+	if (flags.timeout != null && !(raw > 0)) {
+		console.error(`--timeout must be a positive number of milliseconds (got ${JSON.stringify(flags.timeout)})`);
+		process.exit(2);
+	}
+	return raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
 }
 
 /**
@@ -547,8 +584,10 @@ async function cmdDecide(argv) {
 		console.error(`no packet at ${packetFile}`);
 		process.exit(2);
 	}
+	const model = requireSupportedModel(flags);
+	const timeoutMs = timeoutFlag(flags);
 	const packet = JSON.parse(fs.readFileSync(packetFile, "utf8"));
-	const decision = await decide({ packet, model: flags.model ?? DEFAULT_MANAGER_MODEL, apiKey: requireApiKey() });
+	const decision = await decide({ packet, model, timeoutMs, apiKey: requireApiKey() });
 	const { manager, ...instr } = decision;
 	console.log(JSON.stringify({ ...instr, manager }, null, 2));
 	if (!("execute" in flags)) return;
@@ -563,31 +602,36 @@ async function cmdReplay(argv) {
 	const { flags, positionals } = splitArgs(argv);
 	const [taskDir] = positionals;
 	if (!taskDir) return usageExit();
+	const model = requireSupportedModel(flags);
+	const timeoutMs = timeoutFlag(flags);
 	const packetIds = flags.packets ? String(flags.packets).split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n)) : null;
-	await replay({ taskDir, packetIds, model: flags.model ?? DEFAULT_MANAGER_MODEL, apiKey: requireApiKey() });
+	await replay({ taskDir, packetIds, model, timeoutMs, apiKey: requireApiKey() });
 }
 
 /**
  * `serve <taskDir>` — the loop the first live manager runs in: watch this task's live runs for
  * `manage:trigger`, and for each one assemble a packet, decide and execute.
  *
- * `--run <runId>` adopts a run explicitly. It earns its place because a run is not in
- * `current.activeRuns` until its first trigger is registered, and a live run's config is
- * recorded nowhere the harness can read (see runsForTask): without it the first trigger of a
- * brand-new run has no way to be attributed to this task.
+ * `--run <runId>` adopts a run explicitly — a belt-and-braces handle for a run whose trigger
+ * events and config both fail to name this task (see runsForTask, which admits by either).
  */
 async function cmdServe(argv) {
 	const { flags, positionals } = splitArgs(argv);
 	const [taskDir] = positionals;
 	if (!taskDir) return usageExit();
 	const runsDir = flags.runs ?? path.join(here, "..", "runs");
-	await serve({
-		taskDir, runsDir,
-		model: flags.model ?? DEFAULT_MANAGER_MODEL,
+	const model = requireSupportedModel(flags);
+	const timeoutMs = timeoutFlag(flags);
+	const out = await serve({
+		taskDir, runsDir, model, timeoutMs,
 		apiKey: requireApiKey(),
 		once: "once" in flags,
 		adopt: flags.run ? [flags.run] : [],
 	});
+	// A loop that answered nothing because another one holds the lock is not a successful run of
+	// this command, and an operator who started a second one by mistake must be told at the exit
+	// code, not only in a log line.
+	if (out?.refused === "locked") process.exit(3);
 }
 
 function cmdLedger(argv) {
