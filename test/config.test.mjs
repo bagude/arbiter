@@ -282,3 +282,14 @@ test("configs/orch-pathnorm-27b-topology.json loads: tester then implementer, nu
 	assert.equal(c.memory.mode, "search");
 	assert.equal(c.memory.retrievalChars, 9000);
 });
+
+test("loadConfig passes the jev block through unchanged (the supervisor normalises it)", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-jev-"));
+	const f = path.join(dir, "c.json");
+	fs.writeFileSync(f, JSON.stringify({ task: "pathnorm", pattern: "orchestrator", roles: { orchestrator: { provider: "llama.cpp", model: "m" } }, workers: { default: { provider: "llama.cpp", model: "m" } }, jev: { enabled: true, doneGuard: "shadow", transcriptEgress: true } }));
+	const cfg = loadConfig({ configPath: f, env: {} });
+	assert.deepEqual(cfg.jev, { enabled: true, doneGuard: "shadow", transcriptEgress: true });
+	fs.writeFileSync(f, JSON.stringify({ task: "pathnorm", pattern: "orchestrator", roles: { orchestrator: { provider: "llama.cpp", model: "m" } }, workers: { default: { provider: "llama.cpp", model: "m" } } }));
+	assert.equal(loadConfig({ configPath: f, env: {} }).jev, null, "absent → null, so the supervisor's default (off) applies");
+	fs.rmSync(dir, { recursive: true, force: true });
+});
