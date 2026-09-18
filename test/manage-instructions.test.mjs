@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createTask, loadTask, saveTask, setCurrent } from "../lib/manage/task-state.mjs";
-import { readLedger, appendLedger } from "../lib/manage/ledger.mjs";
+import { readLedger, appendLedger, recordOutcome } from "../lib/manage/ledger.mjs";
 import { INSTRUCTION_VERBS, validateInstruction, executeInstruction, controlAppend, NotYetImplemented } from "../lib/manage/instructions.mjs";
 
 const RUN_ID = "2026-09-18T01-02-03";
@@ -16,7 +16,7 @@ const RUN_ID = "2026-09-18T01-02-03";
  * says 4 rather than by writing the number: saveTask bumps on every write (createTask persists
  * 1), so a hand-set version would be a fixture that could never exist on disk.
  */
-function fixture({ budget = { wallSec: 14400, runs: 20, forkReplicates: 24 } } = {}) {
+function fixture({ budget = { wallSec: 14400, runs: 20, forkReplicates: 24 }, activeRuns = [RUN_ID] } = {}) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "manage-instr-"));
 	const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), "manage-runs-"));
 	let task = createTask({
@@ -27,7 +27,7 @@ function fixture({ budget = { wallSec: 14400, runs: 20, forkReplicates: 24 } } =
 		milestones: [{ id: "m1", title: "first", criteria: ["c1"] }],
 		budget,
 	});
-	task = saveTask(dir, setCurrent(task, { activeRuns: [RUN_ID], checkpoint: "ck-0007" }));
+	task = saveTask(dir, setCurrent(task, { activeRuns, checkpoint: "ck-0007" }));
 	while (loadTask(dir).stateVersion < 4) task = saveTask(dir, task);
 	assert.equal(loadTask(dir).stateVersion, 4, "fixture must be at version 4");
 	return { dir, runsDir, task: loadTask(dir) };
@@ -295,9 +295,10 @@ const CALL = 4;
 
 /** The fixture above, plus what a `run:` checkpoint needs on disk: a captured inference and a
  * config to spawn it with. `manage` says whether that config enables the management block a
- * delivered message can only arrive through. */
-function forkFixture({ manage = true, captured = true, budget } = {}) {
-	const f = fixture(budget ? { budget } : undefined);
+ * delivered message can only arrive through. No live run by default: §3 refuses a restore while
+ * one is going, and the trigger a restore answers is almost always a run that has ENDED. */
+function forkFixture({ manage = true, captured = true, budget, live = false } = {}) {
+	const f = fixture({ ...(budget ? { budget } : {}), activeRuns: live ? [RUN_ID] : [] });
 	const reqDir = path.join(f.runsDir, RUN_ID, "requests");
 	fs.mkdirSync(reqDir, { recursive: true });
 	if (captured) fs.writeFileSync(path.join(reqDir, "0004.json"), JSON.stringify({ payload: {}, ts: 1 }));
@@ -370,6 +371,54 @@ test("restore: the config must exist, and a message needs a run that reads a con
 	assert.equal(v({ config: withManage.config, message: "try the tester first" }, withManage).ok, true);
 });
 
+// §3's restore precondition. Every live run is on the current milestone — a task has one — and a
+// batch in flight is one or more supervisor runs against the single model-server slot, so it
+// counts as live too. Without this, two supervisors contend and the fork runner's collision
+// preflight resolves it by abandoning a batch the task has already been charged for.
+test("restore: refused while a run is live or a batch is in flight, unless parallel is asked for", () => {
+	const live = forkFixture({ live: true });
+	const v = (f, args, task = f.task, key = "p7-v4") => validateInstruction(instr({ verb: "restore", idempotencyKey: key, basedOnStateVersion: task.stateVersion, args: { checkpoint: f.checkpoint, approach: { config: f.config }, ...args } }), { task, packet: packetFor(task), taskDir: f.dir, runsDir: f.runsDir });
+	assert.match(v(live, {}).refusal, /a run is still live on milestone m1 \(2026-09-18T01-02-03\)/);
+	assert.equal(v(live, { parallel: true }).ok, true, "parallel: true is the manager saying it meant to");
+
+	// A batch the executor launched is pending until its child clears it.
+	const f = forkFixture();
+	const { launchBatch } = recorder();
+	executeInstruction({ taskDir: f.dir, runsDir: f.runsDir, launchBatch, packet: packetFor(f.task), instr: instr({ verb: "restore", args: { checkpoint: f.checkpoint, approach: { config: f.config } } }) });
+	const after = loadTask(f.dir);
+	assert.deepEqual(after.current.activeBranches, [{ batchId: 1, kind: "restore", checkpoint: f.checkpoint, launchedAt: after.current.activeBranches[0].launchedAt }]);
+	const second = v(f, {}, after, "p7-v5");
+	assert.equal(second.code, "precondition");
+	assert.match(second.refusal, /batch 1 is still in flight/);
+});
+
+// A restored run is over by the time its id exists (runOnce awaits the supervisor's exit), and
+// the child clears the pending batch in the same pass as the outcome row. So `continue` can
+// never name one, and must refuse rather than charge a grant into a control file nothing tails.
+test("continue cannot name a restored run: the id arrives after the run is dead", () => {
+	const { dir, runsDir, task } = fixture({ activeRuns: [] });
+	// Written by the producer, not hand-rolled: the reader matches on `kind` and `outcome.runId`,
+	// and a fixture row would pass even if recordOutcome wrote something else.
+	recordOutcome(dir, "p7-v4", { batchId: 1, runId: "run-from-a-batch" });
+	const p = packetFor(task);
+	const v = (t) => validateInstruction(instr({ idempotencyKey: "k2", args: { runId: "run-from-a-batch", milestone: "m1" } }), { task: t, packet: packetFor(t), taskDir: dir, runsDir });
+	assert.equal(v(task).code, "precondition", "no pending batch: the outcome row is history, not a live run");
+	assert.match(v(task).refusal, /not live/);
+
+	// And while the batch IS pending, the same row does make it live — the rule holds for a
+	// runner that can publish an id mid-flight, which this one cannot.
+	const pending = saveTask(dir, setCurrent(task, { activeBranches: [{ batchId: 1, kind: "restore" }] }));
+	assert.equal(validateInstruction(instr({ idempotencyKey: "k3", basedOnStateVersion: pending.stateVersion, args: { runId: "run-from-a-batch", milestone: "m1" } }), { task: pending, packet: packetFor(pending), taskDir: dir, runsDir }).ok, true);
+	void p;
+});
+
+test("compare: replicates must be a whole number — the budget is charged branches × replicates", () => {
+	const { dir, runsDir, task, config, checkpoint } = forkFixture();
+	const r = validateInstruction(instr({ verb: "compare", args: { checkpoint, config, branches: [{ label: "G" }, { label: "A", firstAction: "done" }], replicates: 2.5 } }), { task, packet: packetFor(task), taskDir: dir, runsDir });
+	assert.equal(r.code, "precondition");
+	assert.match(r.refusal, /whole number/);
+});
+
 test("restore: spends a run AND a replicate, writes a one-branch spec, and launches the batch detached", () => {
 	const { dir, runsDir, task, config, checkpoint } = forkFixture();
 	const { calls, launchBatch } = recorder();
@@ -429,8 +478,16 @@ test("compare: spends branches × replicates, writes the spec both branches, and
 	assert.equal(after.budget.forkReplicates.used, 6, "two branches × three replicates");
 	assert.equal(after.budget.runs.used, 0, "a comparison's replicates are fork budget, not run budget");
 
-	// A second compare takes the next id rather than writing over the first one's reports.
-	const second = executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(loadTask(dir)), instr: instr({ idempotencyKey: "p7-v6", basedOnStateVersion: loadTask(dir).stateVersion, verb: "compare", args: { checkpoint, config, branches: [{ label: "G" }, { label: "A", firstAction: "probe" }], replicates: 2 } }) });
+	// A second compare while the first is in flight is refused for the same reason a restore is:
+	// two batches contend for the one model-server slot and one of them is abandoned, after its
+	// whole budget is charged. With parallel it runs, and takes the next id rather than writing
+	// over the first one's reports.
+	const next = () => ({ idempotencyKey: `p7-v${loadTask(dir).stateVersion}`, basedOnStateVersion: loadTask(dir).stateVersion, verb: "compare" });
+	const refused = executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(loadTask(dir)), instr: instr({ ...next(), args: { checkpoint, config, branches: [{ label: "G" }, { label: "A", firstAction: "probe" }], replicates: 2 } }) });
+	assert.equal(refused.code, "precondition");
+	assert.match(refused.refusal, /batch 1 is still in flight/);
+
+	const second = executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(loadTask(dir)), instr: instr({ ...next(), args: { checkpoint, config, parallel: true, branches: [{ label: "G" }, { label: "A", firstAction: "probe" }], replicates: 2 } }) });
 	assert.equal(second.batchId, 2, second.refusal);
 	assert.deepEqual(fs.readdirSync(path.join(dir, "compares")).sort(), ["1", "2"]);
 });

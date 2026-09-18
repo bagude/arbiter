@@ -423,6 +423,22 @@ test("runBatch turns an unrunnable plan into a ForkBatchError with the preflight
 	assert.match(err2.message, /no .*0004\.json/, "a plan that would run still needs the captured request to compare against");
 });
 
+// Two forced branches of one compare are both branch A-natural, so without a label they share a
+// log directory and a report name and only the last survives — the fork-21 collision, one level
+// up. The label defaults to the branch, which is what the CLI passes.
+test("runBatch names its log directory by label, defaulting to the branch", async () => {
+	const { runsDir, runId, call } = runsFixture();
+	// Each call gets as far as the missing captured request, which is after the log directory
+	// is created and long before anything spawns.
+	const dirs = async (label) => {
+		await runBatch({ runId, call, branch: "A-natural", action: "spawn", label, replicates: 1, config: "c.json", runsDir }).catch(() => {});
+		return fs.readdirSync(runsDir).filter((d) => d.startsWith(".batch-fork-")).sort();
+	};
+	assert.deepEqual(await dirs("A1"), [`.batch-fork-${runId}-${call}-A1`]);
+	assert.deepEqual(await dirs("A2"), [`.batch-fork-${runId}-${call}-A1`, `.batch-fork-${runId}-${call}-A2`], "a second forced branch gets its own");
+	assert.ok((await dirs(undefined)).includes(`.batch-fork-${runId}-${call}-A-natural`), "the default label is the branch");
+});
+
 function forkSource() {
 	const here = path.dirname(fileURLToPath(import.meta.url));
 	return fs.readFileSync(path.join(here, "..", "tools", "fork.mjs"), "utf8").replace(/\r\n/g, "\n");
@@ -445,5 +461,7 @@ test("main only parses argv and calls runBatch, which plans the same spec and pa
 	const fn = batch.slice(0, batch.indexOf("\nasync function main()"));
 	assert.ok(fn.includes("planForks({ run: spec.runId, call: spec.call, branch: spec.branch, action: spec.action, replicates }, recorded, { forceDir: logDir })"), `runBatch must plan the spec main used to plan; found:\n${fn.slice(0, 2000)}`);
 	assert.ok(fn.includes("ARBITER_FORK_CONTROL: control ?? \"\""), "the control path is explicit on every replicate, empty when there is none");
+	assert.ok(fn.includes("const label = spec.label ?? (spec.nullMode ? \"null\" : spec.branch);"), "the label defaults to the branch, so the CLI's report names are unchanged");
+	assert.ok(fn.includes("`fork-${spec.runId}-${spec.call}-${label}.md`"), "and the report is named by it");
 });
 

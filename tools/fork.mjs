@@ -404,10 +404,18 @@ export class ForkBatchError extends Error {
 /**
  * One fork batch: every replicate of ONE branch, run to exit, plus the report.
  *
- * `spec` is { runId, call, branch, action?, replicates?, config, nullMode?, control?, runsDir? }
- * and the return is { rows, report, logDir, reportPath }. This is `main`'s body, lifted so the
- * management executor can run a batch in-process per branch instead of shelling out per
- * replicate; `main` now only parses argv and maps a ForkBatchError back onto an exit code.
+ * `spec` is { runId, call, branch, action?, replicates?, config, nullMode?, control?, runsDir?,
+ * label? } and the return is { rows, report, logDir, reportPath, abandoned }. This is `main`'s
+ * body, lifted so the management executor can run a batch in-process per branch instead of
+ * shelling out per replicate; `main` now only parses argv and maps a ForkBatchError back onto an
+ * exit code.
+ *
+ * `label` names the batch's report and its log directory, and defaults to the branch — which is
+ * what the CLI passes, so a hand-run fork is named exactly as it always was. A manager's compare
+ * can hold TWO forced branches (`spawn` and `probe`, say) and both are branch `A-natural` to the
+ * fork runner: without a label they would write the same docs/batch report and the same replicate
+ * logs, and only the last would survive. That is the one-file-per-comparison invariant the
+ * fork-21 note further down protects, one level up.
  *
  * `control` is a file copied into the NEW run's runs/<newId>/control.jsonl by the supervisor
  * (it reads the path from ARBITER_FORK_CONTROL), which is how a `restore` delivers the
@@ -429,7 +437,8 @@ export async function runBatch(spec) {
 	if (!point) throw new ForkBatchError(`${spec.runId}: no decision point at call ${spec.call} (${points.length} points recorded)`);
 	const sourceCls = point.action.cls;
 
-	const logDir = path.join(runsDir, `.batch-fork-${spec.runId}-${spec.call}`);
+	const label = spec.label ?? (spec.nullMode ? "null" : spec.branch);
+	const logDir = path.join(runsDir, `.batch-fork-${spec.runId}-${spec.call}-${label}`);
 	fs.mkdirSync(logDir, { recursive: true });
 
 	const recorded = spec.branch === "A-oracle" ? recordedAction(sourceDir, spec.call, point) : null;
@@ -492,9 +501,11 @@ export async function runBatch(spec) {
 		report += `\n**Batch abandoned** after ${abandoned.branch} replicate ${abandoned.replicate}: ${abandoned.collision}. ${plan.length - rows.length} replicate(s) of ${plan.length} were never run — every one of them would have failed the same way.\n`;
 	}
 	fs.mkdirSync(path.join(ROOT, "docs", "batch"), { recursive: true });
-	// One file per (run, call, branch): the branches of one fork are separate invocations, and
-	// a name without the branch let the A-natural batch overwrite the G batch (fork 21).
-	const reportName = `fork-${spec.runId}-${spec.call}-${spec.nullMode ? "null" : spec.branch}.md`;
+	// One file per (run, call, label): the branches of one fork are separate invocations, and
+	// a name without the branch let the A-natural batch overwrite the G batch (fork 21). The
+	// label defaults to the branch, so the CLI's names are unchanged; a compare's two forced
+	// branches differ only by label, and that is exactly what keeps their reports apart.
+	const reportName = `fork-${spec.runId}-${spec.call}-${label}.md`;
 	const reportPath = path.join(ROOT, "docs", "batch", reportName);
 	fs.writeFileSync(reportPath, report);
 	console.log(`[fork] report: docs/batch/${reportName}`);
