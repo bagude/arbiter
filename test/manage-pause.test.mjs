@@ -129,12 +129,37 @@ test("an absent, zero or unparseable timeout falls back to 120 000 ms", () => {
 	assert.equal(createPause({ timeoutMs: "30000" }).timeoutMs, 30000, "an env var arrives as a string");
 });
 
-test("nudges are suppressed while a decision is owed; real answers are not", () => {
-	for (const why of ["silent turn (text but no tool call)", "idle nudge 1", "idle nudge 12"]) {
-		assert.equal(suppressWhilePaused(why), true, `${why} must be held`);
-	}
-	for (const why of ["oracle verdict", "manager correction", "compaction done", "probe results", "checkpoint request", "jev done hold", "kickoff"]) {
+// An allow-list, so a delivery site added later defaults to being held. The deny-list version
+// of this rule named the two nudges and was outflanked on the very next live run by a memory
+// receipt — a label nobody had thought to name.
+test("only the release and the compaction path may reach a paused orchestrator", () => {
+	for (const why of ["oracle verdict", "manager correction", "escalation answered", "escalation defaulted", "compaction done", "compaction done (queued during compaction)", "checkpoint request"]) {
 		assert.equal(suppressWhilePaused(why), false, `${why} must still go through`);
 	}
-	assert.equal(suppressWhilePaused(undefined), false);
+	// Every other label deliver() is called with today. Each is a prompt, and a prompt is a turn
+	// the orchestrator should not have while waiting for an answer it was promised.
+	for (const why of [
+		"silent turn (text but no tool call)",
+		"idle nudge 1",
+		"memory candidate recorded",
+		"ack (no counterpart)",
+		"probe results",
+		"auto-probe results (tester)",
+		"probe bounced",
+		"probe error",
+		"probe crash",
+		"probe unsupported",
+		"probe body unparseable",
+		"probe fully blocked (all repeats)",
+		"jev done hold",
+		"kickoff",
+		"mail #7 from orchestrator",
+	]) {
+		assert.equal(suppressWhilePaused(why), true, `${why} must be held while a decision is owed`);
+	}
+	// A label nobody has invented yet is held by default. That inversion is the whole fix.
+	assert.equal(suppressWhilePaused("some new delivery site"), true);
+	assert.equal(suppressWhilePaused(undefined), true);
+	// Anchored: a longer label that merely begins with an allowed one is not allowed by accident.
+	assert.equal(suppressWhilePaused("oracle verdict (stale)"), true);
 });

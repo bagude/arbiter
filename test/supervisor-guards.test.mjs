@@ -403,6 +403,36 @@ test("nudges are held while a manager decision is owed, by one guard in deliver(
 	assert.ok(!src.includes('why === "silent turn'), "which labels are suppressed belongs to lib/manage/pause.mjs");
 	const imports = src.split("\n").filter((l) => /^import .* from "/.test(l));
 	assert.ok(imports.some((l) => l.includes('{ createPause, suppressWhilePaused } from "./lib/manage/pause.mjs"')), "both come from the pause module");
+	// One guard, one place: no delivery site may carry its own pause condition, or the rule
+	// stops being the rule. The memory acknowledgement is the site that proved this — it
+	// reached the orchestrator mid-pause on the second live check and it goes through deliver()
+	// like everything else, so the one guard now covers it.
+	const sites = src.split("\n").filter((l) => /\bdeliver\(/.test(l) && /managePause/.test(l));
+	assert.deepEqual(sites, [], `no deliver() call may carry its own pause condition; found:\n${sites.join("\n")}`);
+	const memLine = src.split("\n").find((l) => l.includes('"memory candidate recorded"'));
+	assert.ok(memLine && /\bdeliver\(/.test(memLine), "the memory acknowledgement must go through deliver(), not a path of its own");
+});
+
+// The claim that costs an attempt. Live twice (runs 2026-09-18T05-36-41 and 05-51-13): 5–8 s
+// into the pause the orchestrator re-sent `done`, the gate ran, the oracle ran, and attempt 2
+// of five went to the same tree already in front of the manager, for the same 68/70.
+test("a done claim made while a manager decision is owed consumes no attempt", () => {
+	const src = supervisorSource();
+	const at = src.indexOf("\nfunction handleApproval(msg = null) {");
+	assert.ok(at >= 0, "could not locate handleApproval in supervisor.mjs");
+	const body = src.slice(at + 1);
+	const fn = body.slice(0, body.indexOf("\n}\n"));
+	assert.ok(fn.includes("if (MANAGE && managePause.isOpen()) {"), `handleApproval must hold a claim while a decision is owed; found:\n${fn.slice(0, 500)}`);
+	assert.ok(/claim received while a .* decision is owed; held/.test(fn), "and say so in the audit, in the words the ruling asked for");
+	// Before the gate, and before anything that could reach the oracle.
+	const guardAt = fn.indexOf("managePause.isOpen()");
+	assert.ok(guardAt < fn.indexOf("decideApproval("), "the guard must precede the approval gate");
+	assert.ok(guardAt < fn.indexOf("jevDoneGate("), "and precede every path into runOracle");
+	assert.ok(guardAt < fn.indexOf("hashDir("), "and precede the workspace hash the gate reads");
+	// Nothing is delivered in reply: the release answers the original claim, and two verdicts
+	// for one claim is the confusion the pause exists to prevent.
+	const held = fn.slice(guardAt, fn.indexOf("\n\t}", guardAt));
+	assert.ok(!held.includes("deliver("), "a held claim gets no reply of its own — the release is the answer");
 });
 
 // §4's first row, and the one trigger that asks the manager to accept a milestone. It has to be

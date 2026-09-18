@@ -1431,6 +1431,20 @@ function runProbe(msg, { auto = null } = {}) {
 // supplies the current hashes/timestamp, then formats the rejection for the
 // verifying role's kind="done".
 function handleApproval(msg = null) {
+	// A claim made while a manager decision is owed must not consume an attempt (spec §4). The
+	// orchestrator is blocked on a verdict the supervisor is withholding, so a re-sent `done` is
+	// it asking again for the answer it has not been given — not a new claim about a new
+	// workspace. Live twice (runs 2026-09-18T05-36-41 and 05-51-13): 5–8 s into the pause the
+	// orchestrator re-sent `done`, the gate ran, the oracle ran, and attempt 2 of five went to
+	// the same tree already sitting in front of the manager, for the same 68/70.
+	//
+	// Held here rather than in the mail route so every path into the gate is covered, and
+	// nothing is delivered in reply: the release answers the original claim, which is the same
+	// answer this one would get. The duplicate is superseded, not queued.
+	if (MANAGE && managePause.isOpen()) {
+		log({ type: "manage", msg: `claim received while a ${managePause.kind()} decision is owed; held (no gate, no oracle — the release answers it)` });
+		return;
+	}
 	const srcDir = path.join(WS.workspace, "src");
 	const srcExists = fs.existsSync(srcDir);
 	const verdict = decideApproval({
