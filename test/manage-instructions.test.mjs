@@ -602,6 +602,53 @@ test("a live trigger registers its run; an ended trigger removes it; a second pa
 	assert.equal(registerRunForTrigger(dir, { kind: "escalation" }), null, "a trigger with no run is not about a run");
 });
 
+// §1 shows `used` as consumption. It was only ever a manager's explicit grant, so six half-hour
+// runs left the packet reporting the full budget — while `runs` and `forkReplicates` WERE charged
+// on consumption. One object, two meanings.
+test("an ended run is charged the wall seconds and tool calls it actually spent, once", () => {
+	const { dir, runsDir } = fixture({ activeRuns: [] });
+	mkRun(runsDir, RUN_ID);
+	fs.writeFileSync(path.join(runsDir, RUN_ID, "summary.json"), JSON.stringify({ runId: RUN_ID, reason: "FAILED: done attempts exhausted", wallSec: 1800.4, toolCalls: { orchestrator: 41, "worker:a": 12 } }));
+	registerRunForTrigger(dir, { kind: "oracle_failed_repeatedly", runId: RUN_ID, detail: {} }, { runsDir });
+
+	const before = loadTask(dir).budget;
+	assert.deepEqual([before.wallSec.used, before.toolCalls.used], [0, 0]);
+	const ended = registerRunForTrigger(dir, { kind: "run_ended_without_acceptance", runId: RUN_ID, detail: {} }, { runsDir });
+	assert.equal(ended.budget.wallSec.used, 1800, "the run's own wall seconds");
+	assert.equal(ended.budget.toolCalls.used, 53, "every agent's tool calls, summed");
+	const row = readLedger(dir).at(-1);
+	assert.equal(row.kind, "run_ended");
+	assert.deepEqual(row.charged, { wallSec: 1800, toolCalls: 53 });
+
+	// The fold is the charge. A second ended trigger for the same run does neither again.
+	assert.equal(registerRunForTrigger(dir, { kind: "milestone_candidate", runId: RUN_ID, detail: {} }, { runsDir }), null);
+	assert.equal(loadTask(dir).budget.wallSec.used, 1800, "a re-fold cannot double-charge");
+});
+
+test("a run that wrote no summary is charged nothing, and the ledger says its cost is unknown", () => {
+	const { dir, runsDir } = fixture({ activeRuns: [] });
+	mkRun(runsDir, RUN_ID); // audit only: killed before finish() wrote a summary
+	registerRunForTrigger(dir, { kind: "oracle_failed_repeatedly", runId: RUN_ID, detail: {} }, { runsDir });
+	const ended = registerRunForTrigger(dir, { kind: "run_ended_without_acceptance", runId: RUN_ID, detail: {} }, { runsDir });
+	assert.equal(ended.budget.wallSec.used, 0, "unknown is not zero, and is not guessed");
+	const row = readLedger(dir).at(-1);
+	assert.equal(row.charged, null);
+	assert.match(row.note, /no summary\.json/);
+});
+
+test("a run that overran the task's budget is charged what is left, and the overrun is named", () => {
+	const { dir, runsDir } = fixture({ activeRuns: [], budget: { wallSec: 100, toolCalls: 10, runs: 20, forkReplicates: 24 } });
+	mkRun(runsDir, RUN_ID);
+	fs.writeFileSync(path.join(runsDir, RUN_ID, "summary.json"), JSON.stringify({ runId: RUN_ID, reason: "done", wallSec: 900, toolCalls: 400 }));
+	registerRunForTrigger(dir, { kind: "oracle_failed_repeatedly", runId: RUN_ID, detail: {} }, { runsDir });
+	// Consumption is a measurement, not a request: it clamps rather than throwing, or an ended
+	// trigger's packet would die on the way to the manager.
+	const ended = registerRunForTrigger(dir, { kind: "run_ended_without_acceptance", runId: RUN_ID, detail: {} }, { runsDir });
+	assert.equal(ended.budget.wallSec.used, 100);
+	assert.equal(ended.budget.toolCalls.used, 10);
+	assert.match(readLedger(dir).at(-1).overran.join(" "), /900 consumed, 100 was left/);
+});
+
 // The trigger's runId is the harness's, but `packet` is also a command an operator types. An id
 // with no run directory would register as live and then refuse every restore and compare on
 // behalf of a run that never existed.

@@ -33,7 +33,9 @@ an instruction that breaks one is refused and recorded, not executed.
 - `options.verbsAllowed` — **the only verbs you may use in this packet.** The harness prunes the
   list when budget or state rules a verb out; naming one that is absent is refused.
 - `options.budgetLeft` — `wallSec`, `toolCalls`, `runs`, `forkReplicates`, `usd` left on the
-  task. `null` means that resource was never capped.
+  task. `null` means that resource was never capped. All five are **consumption**: a run's own
+  wall seconds and tool calls are charged against the task when the run ends, so `budgetLeft`
+  shrinks whether or not you ever granted anything. A grant is charged on top, when you make it.
 - `options.pendingRuns` — runs the harness still believes are alive. `continue` and `correct`
   are refused for any run not in this list.
 - `options.pendingBatches` — comparison or restore batches still in flight. While a run or a

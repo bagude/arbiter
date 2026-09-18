@@ -64,6 +64,22 @@ repo's `.env` (quotes stripped); `ARBITER_DOTENV=<file>` names another file inst
 repo's own. Missing → exit 2 before any request. A bare `--timeout`, `--model` or `--run` (the
 flag with no value) is exit 2 too, never a silent default.
 
+**`ARBITER_WS_SOURCE`** is the fourth environment variable in play, and the executor sets it
+rather than an operator: it names the accepted checkpoint a restored run builds its workspace
+from. It is MANAGE-gated inside the supervisor, so a config with no `manage` block ignores it and
+starts from the task's seed — which is why a `ck-` restore is refused unless its config enables
+`manage`. A workspace carrying a symbolic link or junction is refused on the way in and on the
+way out: neither a restore nor a checkpoint candidate will preserve one.
+
+**`budget.used` is consumption, for all five keys.** A run's own wall seconds and tool calls are
+charged against the task at the ended trigger, from that run's `summary.json`, in the same write
+that takes the run out of `current.activeRuns` — so a re-fold cannot charge twice. A run that
+wrote no summary is charged nothing and the ledger row says its cost is unknown, and a run that
+overran the task's ceiling is charged what was left with the overrun named in the row. A
+manager's grant is charged on top, when it is made. `usd` is the one key still uncharged: the
+manager's own token usage is recorded per row (`manager.usage`) and no price table converts it
+yet.
+
 **The model matters.** Forced `tool_choice` is a hard 400 on the fable and mythos families, and
 every packet forces the `instruct` call, so `decide`, `replay` and `serve` refuse those ids rather
 than spend a run writing defaults. The live manager is `claude-opus-5`.
