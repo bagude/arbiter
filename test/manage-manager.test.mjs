@@ -630,6 +630,25 @@ test("an event with no kind is skipped and logged, never given a kind of its own
 	assert.ok(!fs.existsSync(path.join(dir, "packets", "1.json")));
 });
 
+test("a paused task answers no trigger: §3's escalate stops the loop, not just the executor", async () => {
+	const { dir, runsDir, task } = fixture({
+		lifecycle: [{ ts: 2, ev: "manage:trigger", data: { kind: "oracle_failed_repeatedly", packetRequest: { runId: RUN_ID, detail: {} } } }],
+	});
+	saveTask(dir, { ...task, status: "paused", blockers: [{ id: "b1", text: "a criterion looks wrong", status: "open" }] });
+	const fetchImpl = fakeFetch(toolUse("continue", { runId: RUN_ID, milestone: "m1", budgetGrant: { wallSec: 0, toolCalls: 0 } }));
+	const out = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
+	assert.equal(out.refused, "task_paused");
+	assert.equal(out.handled.length, 0);
+	assert.equal(fetchImpl.calls.length, 0, "a paused task does not spend a manager call to produce a refusal");
+	assert.ok(!fs.existsSync(path.join(dir, "packets", "1.json")));
+	assert.match(fs.readFileSync(path.join(dir, "serve.log"), "utf8"), /is paused, not active/);
+
+	// A completed task is the same rule under a different name.
+	saveTask(dir, { ...loadTask(dir), status: "complete" });
+	const done = await serve({ taskDir: dir, runsDir, once: true, maxTicks: 1, apiKey: "k", fetchImpl });
+	assert.equal(done.refused, "task_complete");
+});
+
 test("a second loop refuses while a live one holds the lock, and takes over a stale one", async () => {
 	const { dir, runsDir } = fixture({
 		lifecycle: [{ ts: 2, ev: "manage:trigger", data: { kind: "budget_threshold", packetRequest: { runId: RUN_ID, detail: {} } } }],

@@ -88,6 +88,28 @@ test("an instruction based on an older state version is refused as stale, not ex
 	assert.match(r.refusal, /version 3.*at 4/);
 });
 
+test("a paused task accepts escalate and refuses every other verb", () => {
+	const { dir, task } = fixture();
+	const paused = { ...task, status: "paused", blockers: [{ id: "b1", text: "a criterion looks wrong", status: "open" }] };
+	const r = validateInstruction(instr(), { task: paused, packet: packetFor(paused), taskDir: dir });
+	assert.equal(r.ok, false);
+	assert.equal(r.code, "task_paused");
+	assert.match(r.refusal, /only escalate is accepted/);
+	assert.match(r.refusal, /open blockers: b1/);
+	// The escape hatch stays open: escalate is how the next thing reaches a human, and it moves
+	// nothing either way.
+	const esc = instr({ verb: "escalate", args: { reason: "still stuck", wants: "human_review" } });
+	assert.deepEqual(validateInstruction(esc, { task: paused, packet: packetFor(paused, { verbsAllowed: ["escalate"] }), taskDir: dir }), { ok: true });
+});
+
+test("a complete task is refused under its own code", () => {
+	const { dir, task } = fixture();
+	const done = { ...task, status: "complete" };
+	const r = validateInstruction(instr(), { task: done, packet: packetFor(done), taskDir: dir });
+	assert.equal(r.code, "task_complete");
+	assert.match(r.refusal, /the task is complete, not active/);
+});
+
 test("a key already in the ledger is a duplicate", () => {
 	const { dir, task } = fixture();
 	appendLedger(dir, { packetId: 7, instruction: { idempotencyKey: "p7-v4", verb: "continue" }, verified: true });
