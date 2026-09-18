@@ -102,3 +102,30 @@ test("default verbsAllowed prunes accept off milestone_candidate/comparison_read
 	assert.ok(!exhausted.options.verbsAllowed.includes("compare"));
 	assert.ok(exhausted.options.verbsAllowed.includes("accept"), "accept is unaffected by the fork/run budget rule");
 });
+
+test("bounding ladder drops tail, then chain, in order, and the FINAL rendered packet (bounded field included) always fits maxChars", () => {
+	const taskDir = mkTaskDir();
+	const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "run-"));
+	fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify({ reason: "x", wallSec: 1, task: "pathnorm", guards: {}, doneAttempts: 1 }));
+	// 40+ chain-eligible lines so the chain fills its 40-line cap with real bulk, and a long
+	// tail, so a tight maxChars has to drop both — not just the first thing it tries.
+	const auditRows = [];
+	for (let i = 0; i < 50; i++) auditRows.push({ t: String(i), type: "oracle", msg: `Oracle run #${i}: 68/70 passed. padding ${"z".repeat(80)}` });
+	fs.writeFileSync(path.join(runDir, "audit.jsonl"), auditRows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+	fs.writeFileSync(path.join(runDir, "decisions.jsonl"), "");
+	const sessDir = path.join(runDir, "sessions", "orchestrator");
+	fs.mkdirSync(sessDir, { recursive: true });
+	fs.writeFileSync(path.join(sessDir, "s.jsonl"), JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "x".repeat(3000) }] } }) + "\n");
+
+	const full = assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended", runId: "r1" } });
+	assert.equal(full.run.tail.length, 2000, "unbounded, the tail is the full 2 000-char slice");
+	assert.equal(full.run.chain.length, 40, "unbounded, the chain keeps its 40-line cap");
+	assert.equal(full.bounded, null);
+	assert.ok(JSON.stringify(full).length > 8000, "the fixture is big enough that 8 000 chars forces real drops");
+
+	const tight = assemblePacket({ taskDir, runDir, trigger: { kind: "run_ended", runId: "r1" }, maxChars: 8000 });
+	assert.equal(tight.run.tail, "", "tail goes first");
+	assert.deepEqual(tight.run.chain, [], "chain goes second, because tail alone was not enough");
+	assert.deepEqual(tight.bounded, ["tail", "chain"]);
+	assert.ok(JSON.stringify(tight).length <= 8000, "the size check must include packet.bounded itself, not just the pre-assignment render");
+});
