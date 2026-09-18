@@ -268,7 +268,10 @@ test("every management site is behind the MANAGE gate", () => {
 	assert.ok(budget.slice(0, budget.indexOf("\n}\n")).includes("if (!MANAGE || budgetThresholdFired) return;"), "the budget trigger must be gated and fire once");
 	// …and every call site is guarded too, so a manage-free run never reaches one.
 	assert.ok(src.includes("if (MANAGE) manageBudgetCheck(t);"), "checkCaps must call the budget check only under MANAGE");
-	assert.ok(src.includes("if (MANAGE) setInterval(pumpControl, 2000);"), "the control tailer is only polled under MANAGE");
+	// Line-anchored: the poll must be registered at top level, so a fork run — which is how the
+	// live check runs — reaches it exactly as an ordinary run does. Nested inside any block, a
+	// paused fork would have no clock at all and could never default.
+	assert.ok(src.split("\n").some((l) => l === "if (MANAGE) setInterval(pumpControl, 2000);"), "the control poll must be registered unindented, at top level, under MANAGE");
 	assert.ok(src.includes('const controlTail = MANAGE ? new JsonlTailer(path.join(RUN, "control.jsonl")) : null;'), "the control file is runs/<id>/control.jsonl, tailed like every other run file");
 	assert.ok(src.includes('ARBITER_MANAGE: MANAGE && PATTERN === "orchestrator" && name === "orchestrator" ? "1" : "",'), "the escalate kind must only exist in the orchestrator's tool when management is on");
 	assert.ok(src.includes("if (!MANAGE) { deliver(VERIFIER, M.ack()"), "an escalate mail with no manager configured is acknowledged, not dropped");
@@ -308,31 +311,60 @@ test("the escalation acknowledgement distinguishes an answer from a timeout", ()
 	assert.ok(thunk.includes("else if (defaulted) deliver(VERIFIER, M.manage.escalationDefaulted()"), "only a timeout may use the defaulted text");
 	assert.ok(thunk.includes("else deliver(VERIFIER, M.manage.escalationAnswered()"), "a decision with no correction must still read as answered");
 	// And the flag has to come from the release, not from a guess at the call site.
-	assert.ok(src.includes("held.deliver(held.correction, defaulted)"), "releasePause passes the reason through to the held delivery");
-	assert.ok(src.includes('releasePause("decision timeout", { defaulted: true })'), "the timeout is the one release that sets it");
+	assert.ok(src.includes("d.payload(d.correction ? M.manage.correction(d.correction) : null, d.defaulted)"), "the held delivery is called with the correction and the reason the pause machine reports");
 });
 
-test("a decision releases the held delivery; a silent manager defaults after the timeout", () => {
+// The supervisor is an ADAPTER over lib/manage/pause.mjs now: what the rules are is that
+// module's business, unit-tested without a run. What has to be true here is that the adapter
+// asks it on every poll, performs what it answers, and cannot die doing so.
+test("pumpControl drives the pause machine on every tick and survives a throw", () => {
 	const src = supervisorSource();
 	const pump = src.slice(src.indexOf("\nfunction pumpControl("));
 	const body = pump.slice(0, pump.indexOf("\n}\n"));
 	assert.ok(body.includes("fs.existsSync(controlTail.filePath)"), "control.jsonl does not exist until an executor writes it, and readNew() stats it unguarded");
-	for (const t of ["grant", "correct", "decision"]) assert.ok(body.includes(`entry.type === "${t}"`), `pumpControl must handle ${t} entries`);
-	assert.ok(body.includes("CAPS.wallSec += Number(entry.wallSec)"), "a grant raises the wall cap for the rest of the run");
-	assert.ok(body.includes("CAPS.toolCalls += Number(entry.toolCalls)"), "a grant raises the tool-call cap for the rest of the run");
-	assert.ok(body.includes("M.manage.correction(entry.message)"), "a correction is delivered through the pinned message text");
-	assert.ok(body.includes("unknown type"), "an unrecognised control entry is logged and ignored, never acted on");
-	assert.ok(body.includes("Date.now() >= managePause.deadline"), "the deadline must be checked on the same poll");
-	assert.ok(body.includes('jevEvent("manage:defaulted"'), "a timed-out decision must be recorded as manage:defaulted");
-	// The deadline is set once, where the pause is stored, and the second-trigger guard belongs
-	// to manageTrigger — both sliced to their own function rather than matched file-wide.
-	const trig = src.slice(src.indexOf("\nfunction manageTrigger("));
-	const trigBody = trig.slice(0, trig.indexOf("\n}\n"));
-	assert.ok(trigBody.includes("deadline: Date.now() + MANAGE.timeoutMs"), "the pause carries its own deadline");
-	assert.ok(trigBody.includes("if (managePause) {"), "a second trigger while a decision is owed must not pause again");
-	// The wait was not idleness: the clock the nudge reads restarts when the pause lifts.
-	const rel = src.slice(src.indexOf("\nfunction releasePause("));
-	assert.ok(rel.slice(0, rel.indexOf("\n}\n")).includes("lastActivity = Date.now();"), "releasing a pause must refresh lastActivity");
+	assert.ok(body.includes("applyPauseActions(managePause.onControl(entry, Date.now()));"), "every control entry goes to the pause machine");
+	assert.ok(body.includes("applyPauseActions(managePause.tick(Date.now()));"), "and the clock is offered on every poll, entries or not");
+	// The deadline check must NOT sit inside the file-exists branch: a run nobody ever answers
+	// has no control.jsonl at all, and that is precisely the run that must default.
+	assert.ok(body.indexOf("applyPauseActions(managePause.tick(") > body.indexOf("}\n\t\t}"), "the tick must be outside the control-file branch");
+	// A throw in an interval callback takes the process down. This is the one tick a paused run
+	// depends on, so it is wrapped whole and the next tick tries again.
+	assert.ok(body.includes("try {"), "pumpControl's body must be wrapped");
+	assert.ok(body.includes("pumpControl threw (the tick continues)"), "and a throw must be logged, not fatal");
+
+	const apply = src.slice(src.indexOf("\nfunction applyPauseActions("));
+	const applyBody = apply.slice(0, apply.indexOf("\n}\n"));
+	assert.ok(applyBody.includes("CAPS.wallSec += r.grant.wallSec"), "a grant raises the wall cap for the rest of the run");
+	assert.ok(applyBody.includes("CAPS.toolCalls += r.grant.toolCalls"), "a grant raises the tool-call cap for the rest of the run");
+	assert.ok(applyBody.includes("M.manage.correction("), "a correction is delivered through the pinned message text");
+	assert.ok(applyBody.includes('jevEvent("manage:defaulted"'), "a timed-out decision must be recorded as manage:defaulted");
+	assert.ok(applyBody.includes("lastActivity = Date.now();"), "releasing a pause must refresh lastActivity — the wait was not idleness");
+	assert.ok(applyBody.includes("catch (err)"), "a held delivery that throws must not take the run down either");
+});
+
+// The live check died 2 s into a pause because its driver threw and closed the pipes the
+// supervisor was writing its console output to. A supervisor must outlive whatever spawned it:
+// the run's record is the audit file, and losing the console is not a reason to lose the run.
+test("a closed stdout does not kill the run", () => {
+	const src = supervisorSource();
+	assert.ok(src.includes("for (const stream of [process.stdout, process.stderr]) {"), "both console streams need the guard");
+	assert.ok(src.includes('if (err?.code !== "EPIPE") throw err;'), "EPIPE is ignored; anything else still surfaces");
+});
+
+// A paused run must still be endable by its own caps. The wall cap lives in checkCaps — an
+// interval of its own, plus the call at the end of handle() — not in checkIdle, which the pause
+// guard skips. If it ever moved, a pause nobody answered would outlive the run's whole budget.
+test("the cap tests do not live behind the idle guard", () => {
+	const src = supervisorSource();
+	const idle = src.slice(src.indexOf("\nfunction checkIdle() {"));
+	const idleBody = idle.slice(0, idle.indexOf("\n}\n"));
+	assert.ok(!idleBody.includes("CAPS.wallSec"), "the wall cap must not be tested inside checkIdle");
+	assert.ok(!idleBody.includes("checkCaps("), "nor may checkIdle be the only thing that calls checkCaps");
+	const caps = src.slice(src.indexOf("\nfunction checkCaps() {"));
+	const capsBody = caps.slice(0, caps.indexOf("\n}\n"));
+	assert.ok(capsBody.includes("t.wallSec >= CAPS.wallSec"), "checkCaps owns the wall cap");
+	assert.ok(!capsBody.includes("managePause"), "and it is never skipped for a paused run");
+	assert.ok(src.includes("setInterval(checkCaps, 5000);"), "on a clock of its own");
 });
 
 // The orchestrator is blocked on a delivery the supervisor is deliberately withholding, and
@@ -347,8 +379,30 @@ test("a run holding a manager decision is not idle", () => {
 	assert.ok(at >= 0, "could not locate checkIdle in supervisor.mjs");
 	const body = src.slice(at + 1);
 	const fn = body.slice(0, body.indexOf("\n}\n"));
-	assert.ok(fn.includes("if (managePause) return;"), `checkIdle must treat a held decision as waiting, not idleness; found:\n${fn.slice(0, 400)}`);
-	assert.ok(fn.indexOf("if (managePause) return;") < fn.indexOf("a.ready && !a.busy"), "the guard must precede the readiness test that would otherwise call the run idle");
+	assert.ok(fn.includes("if (managePause.isOpen()) return;"), `checkIdle must treat a held decision as waiting, not idleness; found:\n${fn.slice(0, 400)}`);
+	assert.ok(fn.indexOf("if (managePause.isOpen()) return;") < fn.indexOf("a.ready && !a.busy"), "the guard must precede the readiness test that would otherwise call the run idle");
+});
+
+// Belt to checkIdle's braces, and the fix for what the live run actually did: the silent-turn
+// nudge reached the orchestrator 0.9 s into the pause. Every delivery goes through deliver(),
+// so the rule is applied there once rather than at each nudge site — and which labels are held
+// is the pause module's rule, unit-tested, not a condition restated in the supervisor.
+test("nudges are held while a manager decision is owed, by one guard in deliver()", () => {
+	const src = supervisorSource();
+	const at = src.indexOf("\nfunction deliver(to, text, why) {");
+	assert.ok(at >= 0, "could not locate deliver() in supervisor.mjs");
+	const body = src.slice(at + 1);
+	const fn = body.slice(0, body.indexOf("\n}\n"));
+	assert.ok(fn.includes("if (MANAGE && managePause.isOpen() && suppressWhilePaused(why)) {"), `deliver() must hold suppressed deliveries during a pause; found:\n${fn.slice(0, 600)}`);
+	assert.ok(fn.includes("held: manager decision pending"), "and say so in the audit rather than dropping silently");
+	// Before the send, and before the compaction queue — a held nudge must not be queued for
+	// delivery after the compaction either.
+	assert.ok(fn.indexOf("suppressWhilePaused(why)") < fn.indexOf("compaction.phase ===") , "the guard precedes the compaction queue");
+	assert.ok(fn.indexOf("suppressWhilePaused(why)") < fn.indexOf("s.busy = true"), "and precedes the send");
+	// The rule itself is not restated here.
+	assert.ok(!src.includes('why === "silent turn'), "which labels are suppressed belongs to lib/manage/pause.mjs");
+	const imports = src.split("\n").filter((l) => /^import .* from "/.test(l));
+	assert.ok(imports.some((l) => l.includes('{ createPause, suppressWhilePaused } from "./lib/manage/pause.mjs"')), "both come from the pause module");
 });
 
 // §4's first row, and the one trigger that asks the manager to accept a milestone. It has to be

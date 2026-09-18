@@ -29,6 +29,7 @@ import { messages } from "./lib/messages.mjs";
 // Trigger policy only (pure, §4). The instruction contract and the ledger deliberately stay on
 // the executor's side of the boundary — the supervisor never imports lib/manage/instructions.mjs.
 import { decideTrigger } from "./lib/manage/triggers.mjs";
+import { createPause, suppressWhilePaused } from "./lib/manage/pause.mjs";
 import { buildSummary, renderTranscript } from "./lib/transcript.mjs";
 import { makeRecord, foldLog, readLog, appendLog, recall, retainFromRun, retainSpecialists, lastOracleRunNumber, consolidate, memoryPaths, renderAll } from "./lib/memory.mjs";
 import { resolveLedger, buildIndex } from "./lib/memory-index.mjs";
@@ -262,6 +263,18 @@ const MANAGE = (() => {
 if (MANAGE && (MANAGE.failThreshold <= 0 || MANAGE.failThreshold >= CAPS.doneAttempts))
 	console.error(`[supervisor] manage.failThreshold ${MANAGE.failThreshold} against caps.doneAttempts ${CAPS.doneAttempts} — the oracle_failed_repeatedly pause can never fire (it needs 0 < failThreshold < doneAttempts)`);
 fs.writeFileSync(BUS, "");
+// A supervisor must outlive whatever spawned it. log() writes every line to stdout as well as
+// to the audit, so when a parent that piped our output dies, the next console.log raises EPIPE
+// — unhandled, that takes the run down mid-flight with no FINISH, no summary and nothing in the
+// audit to say why. That is exactly how the first live management check ended: the driver threw
+// on a packet, its pipes closed, and the supervisor died 2 s into a pause it was meant to hold
+// for 120 s. The run's record is the audit file, which is still open; losing the console is not
+// a reason to lose the run.
+for (const stream of [process.stdout, process.stderr]) {
+	stream.on("error", (err) => {
+		if (err?.code !== "EPIPE") throw err;
+	});
+}
 const audit = fs.createWriteStream(AUDIT, { flags: "a" });
 const startedAt = Date.now();
 
@@ -715,6 +728,17 @@ function deliver(to, text, why) {
 	const s = state[to];
 	if (!s) {
 		log({ type: "warn", msg: `deliver to "${to}" dropped: no such agent in this run (${why})` });
+		return;
+	}
+	// One guard for every delivery made while a manager decision is owed (spec §4). The nudges
+	// exist to un-stick an agent that stopped on its own; during a pause the agent stopped
+	// because the harness is holding its answer, so a nudge is the harness prodding a model to
+	// work around the harness. The live check took the silent-turn nudge 0.9 s into the pause.
+	// Which labels are held is lib/manage/pause.mjs's rule, not a condition spelled out here,
+	// so it is unit-tested and stays in one place; everything else — the held verdict itself, a
+	// manager correction, compaction, probe results — goes through untouched.
+	if (MANAGE && managePause.isOpen() && suppressWhilePaused(why)) {
+		log({ agent: to, type: "manage", msg: `held: manager decision pending (${why})` });
 		return;
 	}
 	// A worker is not addressable by the supervisor at all: it has no RPC stdin, and
@@ -1448,7 +1472,9 @@ function jevEvent(ev, data) {
 // One pause at a time, holding one delivery the orchestrator is already blocked on. A second
 // trigger while paused is logged and not re-paused: the manager has one packet open, and
 // stacking held deliveries would mean the orchestrator gets two answers to one question.
-let managePause = null; // { kind, deliver: () => void, deadline, correction: string|null }
+// The pause state machine (lib/manage/pause.mjs) — pure, unit-tested, and the same object for
+// the whole run whether or not anything is held. Everything below is an adapter over it.
+const managePause = createPause({ timeoutMs: MANAGE?.timeoutMs });
 let budgetThresholdFired = false;
 let milestoneCandidateFired = false; // the oracle passed: this run ends as a candidate, not unaccepted
 const controlTail = MANAGE ? new JsonlTailer(path.join(RUN, "control.jsonl")) : null;
@@ -1463,32 +1489,39 @@ function manageTrigger(kind, detail, pauses, pending) {
 	jevEvent("manage:trigger", { kind, pauses: Boolean(pauses), packetRequest: { runId, detail } });
 	log({ type: "manage", msg: `trigger ${kind}${pauses ? " (orchestrator paused)" : ""}: ${JSON.stringify(detail).slice(0, 200)}` });
 	if (!pauses || !pending) return false;
-	if (managePause) {
-		log({ type: "manage", msg: `${kind} arrived while a ${managePause.kind} decision is still owed; not paused again` });
-		return false;
-	}
-	managePause = { kind, deliver: pending, deadline: Date.now() + MANAGE.timeoutMs, correction: null };
-	return true;
+	const r = managePause.open(kind, Date.now(), pending);
+	for (const line of r.log) log({ type: "manage", msg: line });
+	return r.opened;
 }
 
 /**
- * Releases the held delivery, attaching any correction that arrived with the decision.
- * `defaulted` travels with it because "no correction" and "no decision" are different facts and
- * a held delivery may have to say which one happened — a manager that answers with a bare verb
- * sends no correction, and must not be reported to the orchestrator as silence.
+ * Performs one action set from the pause machine: its log lines, any correction it says to
+ * deliver on its own, and the held delivery when it releases.
+ *
+ * `defaulted` travels with the release because "no correction" and "no decision" are different
+ * facts and a held delivery may have to say which happened — a manager that answers with a bare
+ * verb sends no correction, and must not be reported to the orchestrator as silence.
  */
-function releasePause(why, { defaulted = false } = {}) {
-	if (!managePause) return;
-	const held = managePause;
-	managePause = null;
-	// The wait was not idleness, and the turn that follows is fresh work: without this the
-	// whole pause counts against idleNudgeSec the moment the pause lifts.
-	lastActivity = Date.now();
-	log({ type: "manage", msg: `releasing the held ${held.kind} delivery (${why})` });
-	try {
-		held.deliver(held.correction, defaulted);
-	} catch (err) {
-		log({ type: "manage", msg: `held delivery threw: ${err?.stack ?? err}`.slice(0, 400) });
+function applyPauseActions(r) {
+	for (const line of r.log) log({ type: "manage", msg: line });
+	if (r.grant) {
+		if (r.grant.wallSec) CAPS.wallSec += r.grant.wallSec;
+		if (r.grant.toolCalls) CAPS.toolCalls += r.grant.toolCalls;
+		log({ type: "manage", msg: `caps raised: now ${CAPS.wallSec}s wall / ${CAPS.toolCalls} tool calls` });
+	}
+	if (r.released) {
+		// The wait was not idleness, and the turn that follows is fresh work: without this the
+		// whole pause counts against idleNudgeSec the moment the pause lifts.
+		lastActivity = Date.now();
+		if (r.defaulted) jevEvent("manage:defaulted", { kind: r.kind, afterMs: managePause.timeoutMs });
+	}
+	for (const d of r.deliver) {
+		try {
+			if (d.kind === "correction") deliver(VERIFIER, M.manage.correction(d.message), "manager correction");
+			else if (d.kind === "release") d.payload(d.correction ? M.manage.correction(d.correction) : null, d.defaulted);
+		} catch (err) {
+			log({ type: "manage", msg: `pause action ${d.kind} threw: ${err?.stack ?? err}`.slice(0, 400) });
+		}
 	}
 }
 
@@ -1503,37 +1536,25 @@ function releasePause(why, { defaulted = false } = {}) {
  */
 function pumpControl() {
 	if (!MANAGE || finished) return;
-	// control.jsonl does not exist until an executor writes to it, and JsonlTailer.readNew()
-	// stats the file unguarded.
-	if (fs.existsSync(controlTail.filePath)) {
-		for (const entry of controlTail.readNew()) {
-			lastActivity = Date.now();
-			if (entry.type === "grant") {
-				if (entry.wallSec) CAPS.wallSec += Number(entry.wallSec);
-				if (entry.toolCalls) CAPS.toolCalls += Number(entry.toolCalls);
-				log({ type: "manage", msg: `grant from packet ${entry.packetId}: +${entry.wallSec ?? 0}s wall, +${entry.toolCalls ?? 0} tool calls (now ${CAPS.wallSec}s / ${CAPS.toolCalls})` });
-			} else if (entry.type === "correct") {
-				const text = M.manage.correction(entry.message);
-				// Held back if a pause is open: the correction is meant to arrive WITH the
-				// verdict the manager was answering, not a beat before it in its own turn.
-				if (managePause) managePause.correction = text;
-				else deliver(VERIFIER, text, "manager correction");
-				log({ type: "manage", msg: `correction from packet ${entry.packetId}${managePause ? " (held for the paused delivery)" : ""}` });
-			} else if (entry.type === "decision") {
-				log({ type: "manage", msg: `decision on packet ${entry.packetId}: ${entry.verb}` });
-				releasePause(`decision ${entry.verb}`);
-			} else {
-				log({ type: "manage", msg: `control entry ignored: unknown type ${JSON.stringify(entry.type)}` });
+	// Wrapped whole. This is the one tick that has to keep running for a paused run to ever
+	// come unstuck, and a throw inside an interval callback takes the process down with it —
+	// the run would then sit paused for ever with nothing in the audit to say why. Whatever
+	// breaks in here, the next tick tries again.
+	try {
+		// control.jsonl does not exist until an executor writes to it, and JsonlTailer.readNew()
+		// stats the file unguarded.
+		if (fs.existsSync(controlTail.filePath)) {
+			for (const entry of controlTail.readNew()) {
+				lastActivity = Date.now();
+				applyPauseActions(managePause.onControl(entry, Date.now()));
 			}
 		}
-	}
-	// A slow or absent manager must degrade to today's behaviour, never deadlock the run: on
-	// timeout the default instruction is a continue with a zero grant, which is exactly
-	// "deliver what was held and carry on" (spec §4).
-	if (managePause && Date.now() >= managePause.deadline) {
-		jevEvent("manage:defaulted", { kind: managePause.kind, afterMs: MANAGE.timeoutMs });
-		log({ type: "manage", msg: `no decision within ${MANAGE.timeoutMs}ms — defaulting to continue with a zero grant` });
-		releasePause("decision timeout", { defaulted: true });
+		// A slow or absent manager must degrade to today's behaviour, never deadlock the run: on
+		// timeout the default instruction is a continue with a zero grant, which is exactly
+		// "deliver what was held and carry on" (spec §4).
+		applyPauseActions(managePause.tick(Date.now()));
+	} catch (err) {
+		log({ type: "manage", msg: `pumpControl threw (the tick continues): ${err?.stack ?? err}`.slice(0, 600) });
 	}
 }
 function latestOrchestratorRequest() {
@@ -1832,7 +1853,7 @@ function checkIdle() {
 	// doneAttempts unconditionally and delivers that verdict at once, while the held one arrives
 	// on release — two verdicts for one claim, and an attempt burnt on the very question the
 	// manager was being asked about.
-	if (managePause) return;
+	if (managePause.isOpen()) return;
 	const agents = Object.values(state);
 	if (!agents.every((a) => a.ready && !a.busy)) return;
 	// An orchestrator run has the same host-derived terminal signal a solo run does:
@@ -1937,7 +1958,7 @@ function finish(reason) {
 		// put two contradictory readings of the same ending in the ledger.
 		const t0 = milestoneCandidateFired ? null : decideTrigger({ runEnded: { reason, accepted: false } });
 		if (t0) manageTrigger(t0.kind, { reason, doneAttempts }, t0.pauses, null);
-		if (managePause) log({ type: "manage", msg: `run ended with a ${managePause.kind} decision still owed; the held delivery is dropped` });
+		if (managePause.isOpen()) log({ type: "manage", msg: `run ended with a ${managePause.kind()} decision still owed; the held delivery is dropped` });
 	}
 	finished = true;
 	const t = totals();
