@@ -83,6 +83,17 @@ test("a snapshot of a workspace that is not there says so", () => {
 	assert.throws(() => snapshotCheckpoint({ taskDir: mkTask(), fromDir: path.join(os.tmpdir(), "no-such-ws-9f3"), runId: "r" }), /no workspace to snapshot/);
 });
 
+// The manifest written by the snapshot would overwrite the run's own file, and an `evidence/`
+// the agents wrote would read as playthrough logs this harness produced.
+test("a workspace whose root holds what a checkpoint records about itself is refused", () => {
+	for (const own of ["manifest.json", "evidence"]) {
+		const ws = mkWorkspace({ pi: false });
+		if (own === "evidence") fs.mkdirSync(path.join(ws, own));
+		else fs.writeFileSync(path.join(ws, own), "{}");
+		assert.throws(() => snapshotCheckpoint({ taskDir: mkTask(), fromDir: ws, runId: "r" }), new RegExp(`root ${own}`), `a root ${own} must be refused`);
+	}
+});
+
 test("promote renames a candidate to the next ck id and rewrites its manifest", () => {
 	const taskDir = mkTask();
 	const ws = mkWorkspace();
@@ -121,6 +132,11 @@ test("the id predicates tell an accepted checkpoint from a candidate", () => {
 	assert.equal(isCandidateId("cand-2026-09-18T01-02-03"), true);
 	assert.equal(isCandidateId("ck-0007"), false);
 	assert.equal(isCheckpointId(null), false);
+	// Anchored over a filename alphabet: promoteCandidate RENAMES what this admits, so a
+	// traversal typed at a terminal would move a directory out of the task.
+	assert.equal(isCandidateId("cand-../../x"), false);
+	assert.equal(isCandidateId("cand-a/b"), false);
+	assert.equal(isCandidateId("cand-"), false);
 });
 
 // The archive finish() writes comes first; the live workspace is the fallback for a run whose

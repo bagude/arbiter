@@ -149,6 +149,41 @@ test("artifact validators: exists, nonempty, json and grep", () => {
 	assert.equal(at("artifact:docs/b.md:grep=[").ok, false, "an unparseable regex is a refusal, not a throw");
 });
 
+/**
+ * A checkpoint is a copy of an agent's workspace, and this repo treats that workspace as
+ * adversarial everywhere else. A builder that cannot produce docs/a.md can plant a link to
+ * something that exists: cpSync copies the link verbatim, treeHash counts regular files only so
+ * the link is invisible to the oracle tie-back, and every reader would follow it.
+ *
+ * A file symlink needs developer mode on Windows, so the fallback is a directory junction, which
+ * does not and which `lstat` reports as a link just the same. Skipped only if neither can be made.
+ */
+test("a symlinked artifact is refused, not followed", (t) => {
+	const f = fixture({ files: { "docs/real.md": "the real thing\n" } });
+	const link = path.join(f.taskDir, "checkpoints", "ck-0001", "docs", "a.md");
+	const outside = path.join(f.taskDir, "outside.txt");
+	fs.writeFileSync(outside, "not the run's work\n");
+	try {
+		fs.symlinkSync(outside, link);
+	} catch {
+		try {
+			const dir = path.join(f.taskDir, "outside-dir");
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(path.join(dir, "inside.txt"), "not the run's work\n");
+			fs.symlinkSync(dir, link, "junction");
+		} catch {
+			return t.skip("this environment allows neither a symlink nor a junction");
+		}
+	}
+	const ctx = { taskDir: f.taskDir, checkpoint: f.checkpoint, runsDir: f.runsDir, evidence: [] };
+	for (const check of ["artifact:docs/a.md", "artifact:docs/a.md:nonempty", "artifact:docs/a.md:grep=not the run"]) {
+		const r = checkEvidence(criterion(check), ctx);
+		assert.equal(r.ok, false, `${check} must be refused`);
+		assert.match(r.reason, /symbolic link/);
+	}
+	assert.equal(checkEvidence(criterion("artifact:docs/real.md:nonempty"), ctx).ok, true, "a real file is unaffected");
+});
+
 // A criterion is human-written, but the checkpoint is the only tree this kind may speak about.
 test("an artifact path outside the checkpoint is refused", () => {
 	const f = fixture();
@@ -159,13 +194,22 @@ test("an artifact path outside the checkpoint is refused", () => {
 
 // ---------- playthrough: ----------
 
-test("a playthrough runs the script against the checkpoint and keeps its log", () => {
+// The script gets a COPY. A playthrough is not guaranteed read-only — a build step, a save file,
+// an install — and an accepted checkpoint is the state a later restore starts from, so a script
+// that writes would silently redefine what was accepted. The manifest and any earlier evidence
+// logs stay out of the copy: they are the checkpoint's record of itself, not the tree under test.
+test("a playthrough runs the script against a copy of the checkpoint, never the checkpoint", () => {
 	const f = fixture();
 	const script = path.join(f.taskDir, "play.mjs");
 	fs.writeFileSync(script, "console.log('played');\n");
+	fs.mkdirSync(path.join(f.ck.dir, "evidence"), { recursive: true });
+	fs.writeFileSync(path.join(f.ck.dir, "evidence", "c1.log"), "an earlier criterion\n");
 	const calls = [];
 	const spawn = (cmd, args, opts) => {
-		calls.push({ cmd, args, opts });
+		const handed = args[1];
+		calls.push({ cmd, args, opts, saw: fs.readdirSync(handed).sort(), src: fs.readFileSync(path.join(handed, "src", "x.mjs"), "utf8") });
+		// What a careless playthrough does. The checkpoint must be untouched by it.
+		fs.writeFileSync(path.join(handed, "src", "x.mjs"), "rewritten by the playthrough\n");
 		return { status: 0, stdout: "played\n", stderr: "" };
 	};
 	const r = checkEvidence(criterion(`playthrough:${script}`, "c2"), { taskDir: f.taskDir, checkpoint: f.checkpoint, runsDir: f.runsDir, evidence: [], spawn });
@@ -173,7 +217,12 @@ test("a playthrough runs the script against the checkpoint and keeps its log", (
 	assert.equal(r.ok, true, r.reason);
 	assert.equal(calls.length, 1);
 	assert.equal(calls[0].cmd, process.execPath);
-	assert.deepEqual(calls[0].args, [script, f.ck.dir], "the script is handed the checkpoint directory");
+	assert.equal(calls[0].args[0], script);
+	assert.notEqual(calls[0].args[1], f.ck.dir, "the checkpoint itself is never handed to a script");
+	assert.deepEqual(calls[0].saw, ["src"], "the copy carries the tree, not the manifest or the earlier logs");
+	assert.equal(calls[0].src, "export const x = 1;\n");
+	assert.equal(fs.readFileSync(path.join(f.ck.dir, "src", "x.mjs"), "utf8"), "export const x = 1;\n", "a writing playthrough must not reach the checkpoint");
+	assert.equal(fs.existsSync(calls[0].args[1]), false, "and the copy is cleaned up afterwards");
 	assert.equal(calls[0].opts.timeout, 10 * 60 * 1000);
 	const log = path.join(f.ck.dir, "evidence", "c2.log");
 	assert.equal(fs.readFileSync(log, "utf8"), "played\n");

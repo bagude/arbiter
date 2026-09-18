@@ -987,3 +987,86 @@ test("a retried accept is acknowledged, not verified again", () => {
 	assert.equal(again.duplicate, true);
 	assert.equal(loadTask(dir).stateVersion, task.stateVersion + 1, "and nothing is written a second time");
 });
+
+// A precondition that THROWS is still a precondition that failed. executeInstruction's own
+// try/catch begins after validation, so an exception raised in there escaped as a stack trace
+// with no ledger row, no code and no reason — the one thing this contract says never happens. A
+// truncated manifest.json is the cheapest way in; a live run hashed while it writes is the real
+// one.
+test("a throw while verifying evidence is a refusal with a ledger row, not a stack trace", () => {
+	const { dir, runsDir, task } = acceptFixture();
+	fs.writeFileSync(path.join(dir, "checkpoints", "ck-0001", "manifest.json"), '{"id":"ck-0001","treeHa');
+	const before = fs.readFileSync(path.join(dir, "task.json"), "utf8");
+
+	const out = executeInstruction({ taskDir: dir, instr: acceptInstr(task), packet: acceptPacket(task), runsDir });
+	assert.equal(out.executed, false);
+	assert.equal(out.code, "precondition");
+	assert.match(out.refusal, /accept could not be verified:/);
+	assert.equal(out.ledgerRow.verified, false);
+	assert.equal(fs.readFileSync(path.join(dir, "task.json"), "utf8"), before, "and nothing moved");
+});
+
+// A playthrough spawns a child before anything is written. Killed at minute five of ten, it
+// would otherwise leave a partial log inside the checkpoint and nothing anywhere saying an
+// acceptance had been attempted.
+test("an attempted acceptance leaves an evidence_check row before any criterion is verified", () => {
+	const { dir, runsDir, task, ck } = acceptFixture();
+	fs.writeFileSync(path.join(ck.dir, "docs", "a.md"), "");
+	const out = executeInstruction({ taskDir: dir, instr: acceptInstr(task), packet: acceptPacket(task), runsDir });
+	assert.equal(out.executed, false, "refused — and the record of the attempt is still there");
+
+	const row = readLedger(dir).find((r) => r.kind === "evidence_check");
+	assert.ok(row, "the attempt must be recorded");
+	assert.equal(row.milestone, "m1");
+	assert.equal(row.checkpoint, "ck-0001");
+	assert.deepEqual(row.criteria, ["c1", "c2"]);
+	assert.deepEqual(row.evidence, ["r1"]);
+	assert.ok(row.seq < out.ledgerRow.seq, "and recorded before the instruction's own row");
+});
+
+// Run ids are read by `oracle:` alone. A milestone of artifact:, playthrough: and review: checks
+// is satisfied by the checkpoint and the ledger, and demanding a run id anyway made the honest
+// instruction name a run nothing would look at.
+test("evidence may be empty for a milestone with no oracle criterion, and may not otherwise", () => {
+	const { dir, runsDir, task } = acceptFixture();
+	const noRuns = executeInstruction({ taskDir: dir, instr: acceptInstr(task, { args: { milestone: "m1", checkpoint: "ck-0001", evidence: [] } }), packet: acceptPacket(task), runsDir });
+	assert.equal(noRuns.executed, false);
+	assert.match(noRuns.refusal, /at least one run id as evidence for c1/);
+
+	appendLedger(dir, { kind: "review", criterion: "c3", checkpoint: "ck-0001", by: "david", signed: true });
+	const first = executeInstruction({ taskDir: dir, instr: acceptInstr(task, { idempotencyKey: "k1" }), packet: acceptPacket(task), runsDir });
+	assert.equal(first.executed, true, first.refusal);
+	// m2 names review:human only, so it takes no run ids at all.
+	const t = loadTask(dir);
+	const out = executeInstruction({ taskDir: dir, instr: acceptInstr(t, { idempotencyKey: "k2", args: { milestone: "m2", checkpoint: "ck-0001", evidence: [] } }), packet: acceptPacket(t), runsDir });
+	assert.equal(out.executed, true, out.refusal);
+	assert.deepEqual(loadTask(dir).milestones[1].evidence, ["review:david"]);
+});
+
+test("tools/manage.mjs review signs a row the harness accepts, and refuses the ways it would be void", () => {
+	const { dir, runsDir, task, ws } = acceptFixture();
+	const run = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: "utf8" });
+	snapshotCheckpoint({ taskDir: dir, fromDir: ws, runId: "r1", id: "cand-r1" });
+
+	// A signature on a candidate is void the moment it is promoted: the rename changes the id.
+	const cand = run("review", dir, "c3", "cand-r1", "--by", "david");
+	assert.equal(cand.status, 3);
+	assert.match(cand.stderr, /promote it first/);
+	const wrongKind = run("review", dir, "c1", "ck-0001", "--by", "david");
+	assert.equal(wrongKind.status, 3);
+	assert.match(wrongKind.stderr, /only a review: criterion takes a signature/);
+	assert.equal(run("review", dir, "c9", "ck-0001", "--by", "david").status, 3, "an unknown criterion is refused");
+	assert.equal(run("review", dir, "c3", "ck-0099", "--by", "david").status, 3, "as is a checkpoint that is not there");
+
+	const ok = run("review", dir, "c3", "ck-0001", "--by", "david");
+	assert.equal(ok.status, 0, ok.stderr);
+	assert.equal(JSON.parse(ok.stdout.trim()).signed, true);
+
+	// The point of the command: the row it writes is the row checkEvidence accepts.
+	const m1 = executeInstruction({ taskDir: dir, instr: acceptInstr(task), packet: acceptPacket(task), runsDir });
+	assert.equal(m1.executed, true, m1.refusal);
+	const t = loadTask(dir);
+	const m2 = executeInstruction({ taskDir: dir, instr: acceptInstr(t, { idempotencyKey: "k2", args: { milestone: "m2", checkpoint: "ck-0001", evidence: [] } }), packet: acceptPacket(t), runsDir });
+	assert.equal(m2.executed, true, m2.refusal);
+	assert.deepEqual(loadTask(dir).milestones[1].evidence, ["review:david"]);
+});

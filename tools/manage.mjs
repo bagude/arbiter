@@ -11,9 +11,9 @@ import { fileURLToPath } from "node:url";
 // reading is not writing — the batch child still never writes task.json (markBatchDone).
 import { createTask, loadTask, budgetLeft } from "../lib/manage/task-state.mjs";
 import { assemblePacket, writePacket } from "../lib/manage/packet.mjs";
-import { readLedger, readFindings, appendFinding, settleFinding, recordOutcome } from "../lib/manage/ledger.mjs";
+import { readLedger, readFindings, appendFinding, settleFinding, recordOutcome, appendLedger } from "../lib/manage/ledger.mjs";
 import { executeInstruction, registerRunForTrigger } from "../lib/manage/instructions.mjs";
-import { listCheckpoints, promoteCandidate } from "../lib/manage/checkpoint.mjs";
+import { listCheckpoints, promoteCandidate, isCandidateId } from "../lib/manage/checkpoint.mjs";
 import { compareTable, findingsFromCompare, incompleteBranches, settleOrAppend } from "../lib/manage/compare.mjs";
 import { runBatch } from "./fork.mjs";
 
@@ -25,6 +25,7 @@ const USAGE = `usage:
   node tools/manage.mjs packet <taskDir> <runId> --trigger <kind> [--detail <json>] [--runs <dir>]
   node tools/manage.mjs execute <taskDir> <instruction.json> [--packet <n|file>] [--runs <dir>]
   node tools/manage.mjs accept <taskDir> <milestone> <checkpoint> --evidence <runId,...> [--packet <n|file>] [--runs <dir>]
+  node tools/manage.mjs review <taskDir> <criterionId> <checkpoint> --by <name>
   node tools/manage.mjs checkpoint promote <taskDir> cand-<runId>
   node tools/manage.mjs checkpoint list <taskDir>
   node tools/manage.mjs run-batch <taskDir> <compares/<n>/spec.json>
@@ -147,8 +148,11 @@ function reportResult(result) {
 function cmdAccept(argv) {
 	const { flags, positionals } = splitArgs(argv);
 	const [taskDir, milestone, checkpoint] = positionals;
-	if (!taskDir || !milestone || !checkpoint || !flags.evidence) return usageExit();
-	const evidence = String(flags.evidence).split(",").map((s) => s.trim()).filter(Boolean);
+	if (!taskDir || !milestone || !checkpoint) return usageExit();
+	// Optional: run ids are read by `oracle:` criteria alone, and a milestone made of artifact:,
+	// playthrough: and review: checks is satisfied by the checkpoint and the ledger. The executor
+	// refuses an empty list only when the milestone actually names an oracle criterion.
+	const evidence = String(flags.evidence ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 	const runsDir = flags.runs ?? path.join(here, "..", "runs");
 	const task = loadTask(taskDir);
 	const packetFile = flags.packet && /^\d+$/.test(flags.packet) ? path.join(taskDir, "packets", `${flags.packet}.json`) : flags.packet;
@@ -171,6 +175,39 @@ function cmdAccept(argv) {
 		rationale: flags.rationale ?? "accepted by an operator at the command line",
 	};
 	reportResult(executeInstruction({ taskDir, instr, packet, runsDir }));
+}
+
+/**
+ * `review <taskDir> <criterionId> <checkpoint> --by <name>` — the producer of §6's one kind of
+ * evidence a human must write, and the reason `review:human` is not a thing to hand-append.
+ *
+ * Two refusals earn their place. A review against a `cand-` id is void by construction: promotion
+ * RENAMES the directory, so the row would name a checkpoint that no longer exists, and the CLI's
+ * own list → promote → accept order invites signing too early. And a criterion whose check is not
+ * `review:` is a signature nothing will ever read — `checkEvidence` looks at the ledger only for
+ * that kind.
+ */
+function cmdReview(argv) {
+	const { flags, positionals } = splitArgs(argv);
+	const [taskDir, criterionId, checkpoint] = positionals;
+	if (!taskDir || !criterionId || !checkpoint || !flags.by) return usageExit();
+	const task = loadTask(taskDir);
+	const criterion = (task.acceptance?.criteria ?? []).find((c) => c.id === criterionId);
+	const bad = !criterion
+		? `no criterion ${criterionId} in this task (${(task.acceptance?.criteria ?? []).map((c) => c.id).join(", ") || "none"})`
+		: !String(criterion.check).startsWith("review:")
+			? `criterion ${criterionId} is ${criterion.check}, which the harness verifies itself — only a review: criterion takes a signature`
+			: isCandidateId(checkpoint)
+				? `${checkpoint} is a candidate; promote it first and sign the ck- id it becomes, or the row names a checkpoint that no longer exists`
+				: !fs.existsSync(path.join(taskDir, "checkpoints", checkpoint))
+					? `no checkpoint ${checkpoint} in ${path.join(taskDir, "checkpoints")}`
+					: null;
+	if (bad) {
+		console.error(bad);
+		process.exit(3);
+	}
+	const row = appendLedger(taskDir, { kind: "review", criterion: criterionId, checkpoint, by: flags.by, signed: true, note: flags.note ?? null });
+	console.log(JSON.stringify(row));
 }
 
 /** `checkpoint promote|list` — the two things a human does with checkpoints. Promotion is
@@ -419,6 +456,7 @@ export function main(argv = process.argv.slice(2)) {
 	if (cmd === "execute") return cmdExecute(rest);
 	if (cmd === "accept") return cmdAccept(rest);
 	if (cmd === "checkpoint") return cmdCheckpoint(rest);
+	if (cmd === "review") return cmdReview(rest);
 	if (cmd === "run-batch") return cmdRunBatch(rest);
 	if (cmd === "compare-ready") return cmdCompareReady(rest);
 	if (cmd === "ledger") return cmdLedger(rest);
