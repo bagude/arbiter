@@ -6,7 +6,12 @@
 // docs/superpowers/specs/2026-09-17-fork-runner-design.md.
 //
 //   node tools/fork.mjs <runId> <call> --config <config.json> --branch G|A-natural|A-oracle
-//                        [--action <cls>] [--replicates N] [--null]
+//                        [--action <cls>] [--replicates N] [--null] [--control <file>]
+//
+// --control names a control file (the management channel's runs/<id>/control.jsonl shape) that
+// every replicate starts with: the runner passes the path as ARBITER_FORK_CONTROL and the
+// supervisor's fork path copies it into the new run before resuming the orchestrator. That is
+// how a manager's `restore` delivers a message to a restored run.
 //
 // <call> is the 1-based inference number in runs/<runId>/decisions.jsonl (point i = call-1)
 // that the fork restores. --null runs branch G and reports the null-gate read-out: how often
@@ -298,7 +303,7 @@ export function renderReport(source, rows, { nullMode = false } = {}) {
 
 function usage(msg) {
 	if (msg) console.error(msg);
-	console.error("usage: node tools/fork.mjs <runId> <call> --config <config.json> --branch G|A-natural|A-oracle [--action <cls>] [--replicates N] [--null]");
+	console.error("usage: node tools/fork.mjs <runId> <call> --config <config.json> --branch G|A-natural|A-oracle [--action <cls>] [--replicates N] [--null] [--control <file>]");
 	process.exit(1);
 }
 
@@ -307,7 +312,7 @@ function parseArgs(argv) {
 	if (!runId || !callStr) usage();
 	const call = Number(callStr);
 	if (!Number.isInteger(call) || call < 1) usage(`<call> must be a positive integer, got ${callStr}`);
-	const opts = { config: null, branch: null, action: null, replicates: 1, nullMode: false };
+	const opts = { config: null, branch: null, action: null, replicates: 1, nullMode: false, control: null };
 	for (let i = 0; i < rest.length; i++) {
 		const a = rest[i];
 		if (a === "--config") opts.config = rest[++i];
@@ -315,6 +320,7 @@ function parseArgs(argv) {
 		else if (a === "--action") opts.action = rest[++i];
 		else if (a === "--replicates") opts.replicates = Number(rest[++i]);
 		else if (a === "--null") opts.nullMode = true;
+		else if (a === "--control") opts.control = rest[++i];
 		else usage(`unknown flag ${a}`);
 	}
 	if (!opts.config) usage("--config is required");
@@ -359,16 +365,16 @@ function headPickFor(runDir, call) {
 	return { pickClass: row.head.pickClass, confidence: row.head.confidence };
 }
 
-function runOnce(config, env, logFile) {
+function runOnce(config, env, logFile, runsRoot) {
 	return new Promise((resolve) => {
-		const before = new Set(fs.readdirSync(path.join(ROOT, "runs")));
+		const before = new Set(fs.readdirSync(runsRoot));
 		const log = fs.openSync(logFile, "w");
 		const child = spawn(process.execPath, [path.join(ROOT, "supervisor.mjs"), "--config", config], {
 			cwd: ROOT, stdio: ["ignore", log, log], env: { ...process.env, ...env },
 		});
 		child.on("exit", (code) => {
 			fs.closeSync(log);
-			const after = fs.readdirSync(path.join(ROOT, "runs")).filter((d) => !before.has(d) && /^\d{4}-/.test(d));
+			const after = fs.readdirSync(runsRoot).filter((d) => !before.has(d) && /^\d{4}-/.test(d));
 			resolve({ code, runId: after.sort().pop() ?? null });
 		});
 	});
@@ -384,17 +390,46 @@ function oracleScores(runDir) {
 	return (fs.readFileSync(file, "utf8").match(/Oracle run #\d+: (\d+\/\d+)/g) ?? []).map((m) => m.replace(/.*: /, "")).join(", ");
 }
 
-async function main() {
-	const spec = parseArgs(process.argv.slice(2));
-	const sourceDir = path.join(ROOT, "runs", spec.runId);
+/** A refusal that carries the exit code the CLI uses for it: 1 for "this batch cannot be
+ * described" (a missing run record), 2 for "this batch must not start" — the same code the
+ * supervisor's own fork preflight uses. `runBatch` throws these instead of exiting, so a caller
+ * inside another process (the manager's batch child) can report them rather than die. */
+export class ForkBatchError extends Error {
+	constructor(message, exitCode = 1) {
+		super(message);
+		this.exitCode = exitCode;
+	}
+}
+
+/**
+ * One fork batch: every replicate of ONE branch, run to exit, plus the report.
+ *
+ * `spec` is { runId, call, branch, action?, replicates?, config, nullMode?, control?, runsDir? }
+ * and the return is { rows, report, logDir, reportPath }. This is `main`'s body, lifted so the
+ * management executor can run a batch in-process per branch instead of shelling out per
+ * replicate; `main` now only parses argv and maps a ForkBatchError back onto an exit code.
+ *
+ * `control` is a file copied into the NEW run's runs/<newId>/control.jsonl by the supervisor
+ * (it reads the path from ARBITER_FORK_CONTROL), which is how a `restore` delivers the
+ * manager's message to a restored orchestrator. It is set EXPLICITLY on every replicate's env,
+ * empty when there is none: runOnce spreads process.env under the plan's env, so an omitted key
+ * would let a stale value in the operator's shell replay someone else's correction into every
+ * replicate — the same trap planForks documents for ARBITER_FORK_FORCE.
+ */
+export async function runBatch(spec) {
+	const runsDir = spec.runsDir ?? path.join(ROOT, "runs");
+	const replicates = spec.replicates ?? 1;
+	const control = spec.control ?? null;
+	if (control && !fs.existsSync(control)) throw new ForkBatchError(`--control ${control}: no such file`, 2);
+	const sourceDir = path.join(runsDir, spec.runId);
 	const decisionsPath = path.join(sourceDir, "decisions.jsonl");
-	if (!fs.existsSync(decisionsPath)) usage(`${spec.runId}: no decisions.jsonl (run node tools/decision-points.mjs ${spec.runId} first)`);
+	if (!fs.existsSync(decisionsPath)) throw new ForkBatchError(`${spec.runId}: no decisions.jsonl (run node tools/decision-points.mjs ${spec.runId} first)`);
 	const points = readJsonlSync(decisionsPath);
 	const point = points.find((p) => p.i === spec.call - 1);
-	if (!point) usage(`${spec.runId}: no decision point at call ${spec.call} (${points.length} points recorded)`);
+	if (!point) throw new ForkBatchError(`${spec.runId}: no decision point at call ${spec.call} (${points.length} points recorded)`);
 	const sourceCls = point.action.cls;
 
-	const logDir = path.join(ROOT, "runs", `.batch-fork-${spec.runId}-${spec.call}`);
+	const logDir = path.join(runsDir, `.batch-fork-${spec.runId}-${spec.call}`);
 	fs.mkdirSync(logDir, { recursive: true });
 
 	const recorded = spec.branch === "A-oracle" ? recordedAction(sourceDir, spec.call, point) : null;
@@ -403,14 +438,13 @@ async function main() {
 	// of the run and the replicate would burn a full run whose report row looks ordinary.
 	let plan;
 	try {
-		plan = planForks({ run: spec.runId, call: spec.call, branch: spec.branch, action: spec.action, replicates: spec.replicates }, recorded, { forceDir: logDir });
+		plan = planForks({ run: spec.runId, call: spec.call, branch: spec.branch, action: spec.action, replicates }, recorded, { forceDir: logDir });
 	} catch (err) {
-		console.error(`[fork] ${err?.message ?? err}`);
-		process.exit(2);
+		throw new ForkBatchError(err?.message ?? String(err), 2);
 	}
 
 	const sourceReqFile = path.join(sourceDir, "requests", `${String(spec.call).padStart(4, "0")}.json`);
-	if (!fs.existsSync(sourceReqFile)) usage(`${spec.runId}: no ${sourceReqFile} (this run has no captured request for call ${spec.call})`);
+	if (!fs.existsSync(sourceReqFile)) throw new ForkBatchError(`${spec.runId}: no ${sourceReqFile} (this run has no captured request for call ${spec.call})`);
 	const sourceReq = JSON.parse(fs.readFileSync(sourceReqFile, "utf8"));
 
 	const rows = [];
@@ -419,7 +453,7 @@ async function main() {
 		if (forceFile) fs.writeFileSync(forceFile, JSON.stringify(forcePayload));
 		console.log(`[fork ${spec.runId}#${spec.call}] ${branch} replicate ${replicate}/${plan.filter((p) => p.branch === branch).length}: starting`);
 		const logFile = path.join(logDir, `${branch}-${replicate}.log`);
-		const { code, runId } = await runOnce(spec.config, env, logFile);
+		const { code, runId } = await runOnce(spec.config, { ...env, ARBITER_FORK_CONTROL: control ?? "" }, logFile, runsDir);
 		// The collision preflight is not this replicate's problem: a fork reuses the source
 		// run's out-of-tree paths, so a leftover runs/.ws-<src> refuses this replicate and
 		// every one after it. Stop and say which directory is held, rather than spending the
@@ -440,7 +474,7 @@ async function main() {
 		const dp = spawnSync(process.execPath, [path.join(ROOT, "tools", "decision-points.mjs"), runId], { cwd: ROOT, stdio: "ignore" });
 		const decisionsMissing = dp.status !== 0;
 		if (decisionsMissing) console.error(`[fork] ${branch}-${replicate}: tools/decision-points.mjs exited ${dp.status} for ${runId}`);
-		const runDir = path.join(ROOT, "runs", runId);
+		const runDir = path.join(runsDir, runId);
 		const forkReqFile = path.join(runDir, "requests", "0001.json");
 		const forkReq = fs.existsSync(forkReqFile) ? JSON.parse(fs.readFileSync(forkReqFile, "utf8")) : null;
 		const compare = compareFirstRequest(sourceReq, forkReq);
@@ -461,9 +495,29 @@ async function main() {
 	// One file per (run, call, branch): the branches of one fork are separate invocations, and
 	// a name without the branch let the A-natural batch overwrite the G batch (fork 21).
 	const reportName = `fork-${spec.runId}-${spec.call}-${spec.nullMode ? "null" : spec.branch}.md`;
-	fs.writeFileSync(path.join(ROOT, "docs", "batch", reportName), report);
+	const reportPath = path.join(ROOT, "docs", "batch", reportName);
+	fs.writeFileSync(reportPath, report);
 	console.log(`[fork] report: docs/batch/${reportName}`);
-	if (abandoned) process.exit(2);
+	// Not an exit: a caller running several branches in one process decides what an abandoned
+	// batch means for the rest of them. The CLI below still exits 2 on it, as it always did.
+	return { rows, report, logDir, reportPath, abandoned };
+}
+
+async function main() {
+	const spec = parseArgs(process.argv.slice(2));
+	let out;
+	try {
+		out = await runBatch(spec);
+	} catch (err) {
+		if (!(err instanceof ForkBatchError)) throw err;
+		if (err.exitCode === 2) {
+			console.error(`[fork] ${err.message}`);
+			process.exit(2);
+		}
+		usage(err.message);
+		return;
+	}
+	if (out.abandoned) process.exit(2);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { planForks, compareFirstRequest, forkRow, renderReport, collisionMessage, ownDecisions } from "../tools/fork.mjs";
+import { fileURLToPath } from "node:url";
+import { planForks, compareFirstRequest, forkRow, renderReport, collisionMessage, ownDecisions, runBatch, ForkBatchError } from "../tools/fork.mjs";
 
 test("planForks: G branch carries no action, and blanks ARBITER_FORK_FORCE rather than omitting it", () => {
 	const plans = planForks({ run: "r1", call: 5, branch: "G", replicates: 2 });
@@ -377,3 +380,70 @@ test("renderReport in null mode excludes crashed replicates from the reproductio
 	assert.match(report, /null fork: state match 1\/2, recorded class reproduced 1\/2 \(1 crashed, excluded\)/);
 	assert.match(report, /\| G \| 3 \| run-3 \| 1 \| yes \|/, "the crashed replicate still appears in the table, marked crashed");
 });
+
+// ---------- runBatch: main's body, lifted so the manager's executor can call it ----------
+//
+// Nothing below may spawn a supervisor: every case is one runBatch refuses BEFORE the first
+// replicate. A test that got as far as runOnce would start a real run against the model server.
+
+/** A runs/ directory with one recorded point at `call` and, optionally, its captured request. */
+function runsFixture({ runId = "2026-09-18T00-01-44", call = 4, decisions = true, request = false } = {}) {
+	const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), "fork-runs-"));
+	fs.mkdirSync(path.join(runsDir, runId, "requests"), { recursive: true });
+	if (decisions) fs.writeFileSync(path.join(runsDir, runId, "decisions.jsonl"), JSON.stringify({ i: call - 1, action: { cls: "inspect", tool: "ls" } }) + "\n");
+	if (request) fs.writeFileSync(path.join(runsDir, runId, "requests", `${String(call).padStart(4, "0")}.json`), JSON.stringify({ payload: {} }));
+	return { runsDir, runId, call };
+}
+
+test("runBatch is exported, and refuses a run whose decision points were never extracted (exit 1, nothing spawned)", async () => {
+	const { runsDir, runId, call } = runsFixture({ decisions: false });
+	assert.equal(typeof runBatch, "function");
+	const err = await runBatch({ runId, call, branch: "G", replicates: 1, config: "c.json", runsDir }).then(() => null, (e) => e);
+	assert.ok(err instanceof ForkBatchError, `expected a ForkBatchError, got ${err}`);
+	assert.equal(err.exitCode, 1);
+	assert.match(err.message, /no decisions\.jsonl/);
+});
+
+test("runBatch refuses a control file that does not exist before it looks at anything else", async () => {
+	const { runsDir, runId, call } = runsFixture();
+	const err = await runBatch({ runId, call, branch: "G", replicates: 1, config: "c.json", control: path.join(runsDir, "nope.jsonl"), runsDir }).then(() => null, (e) => e);
+	assert.equal(err.exitCode, 2, err.message);
+	assert.match(err.message, /--control .*no such file/);
+});
+
+// planForks' refusals were an exit(2) inside main; as a throw they reach a caller that has other
+// branches to run and a ledger to write.
+test("runBatch turns an unrunnable plan into a ForkBatchError with the preflight's own exit code", async () => {
+	const { runsDir, runId, call } = runsFixture();
+	const err = await runBatch({ runId, call, branch: "A-natural", action: "dnoe", replicates: 1, config: "c.json", runsDir }).then(() => null, (e) => e);
+	assert.equal(err.exitCode, 2);
+	assert.match(err.message, /unknown action class "dnoe"/);
+	const err2 = await runBatch({ runId, call, branch: "G", replicates: 1, config: "c.json", runsDir }).then(() => null, (e) => e);
+	assert.equal(err2.exitCode, 1);
+	assert.match(err2.message, /no .*0004\.json/, "a plan that would run still needs the captured request to compare against");
+});
+
+function forkSource() {
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	return fs.readFileSync(path.join(here, "..", "tools", "fork.mjs"), "utf8").replace(/\r\n/g, "\n");
+}
+
+// The CLI must keep building exactly the spec it always did — runBatch is a refactor, not a
+// change of behaviour — and the control path must be set on EVERY replicate's env. runOnce
+// spreads process.env under the plan's env, so an omitted key lets a stale ARBITER_FORK_CONTROL
+// in the operator's shell replay someone else's correction into an unrelated fork (the trap
+// planForks already documents for ARBITER_FORK_FORCE).
+test("main only parses argv and calls runBatch, which plans the same spec and passes the control path explicitly", () => {
+	const src = forkSource();
+	const main = src.slice(src.indexOf("\nasync function main() {"));
+	const body = main.slice(0, main.indexOf("\n}\n"));
+	assert.ok(body.includes("const spec = parseArgs(process.argv.slice(2));"), `main must still parse argv; found:\n${body}`);
+	assert.ok(body.includes("await runBatch(spec)"), "and then hand the parsed spec to runBatch");
+	assert.ok(!body.includes("planForks("), "the planning moved into runBatch");
+
+	const batch = src.slice(src.indexOf("\nexport async function runBatch(spec) {"));
+	const fn = batch.slice(0, batch.indexOf("\nasync function main()"));
+	assert.ok(fn.includes("planForks({ run: spec.runId, call: spec.call, branch: spec.branch, action: spec.action, replicates }, recorded, { forceDir: logDir })"), `runBatch must plan the spec main used to plan; found:\n${fn.slice(0, 2000)}`);
+	assert.ok(fn.includes("ARBITER_FORK_CONTROL: control ?? \"\""), "the control path is explicit on every replicate, empty when there is none");
+});
+

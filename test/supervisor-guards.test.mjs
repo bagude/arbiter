@@ -78,6 +78,24 @@ test("supervisor carries fork mode: forkSpec, --session, fork:continue, guarded 
 	assert.ok(guarded, `the orchestrator kickoff must be the else arm of the FORK branch; found:\n${lines[k - 1]}\n${line}`);
 });
 
+// A manager's `restore` delivers its message through the fork runner, which can only hand the
+// supervisor a path: the copy into runs/<newId>/control.jsonl has to happen HERE, inside the
+// fork block, after the run directory exists and before the `continue` resumes the
+// orchestrator. Copied later, the first inference would go out before the message; copied
+// outside the FORK branch, an ordinary run would inherit whatever that variable held.
+test("the fork path copies ARBITER_FORK_CONTROL into the new run, inside the fork block and before the continue", () => {
+	const src = supervisorSource();
+	const at = src.indexOf("\nif (FORK) {\n\t// Sessions: the recorded orchestrator tree");
+	assert.ok(at >= 0, "could not locate the fork restoration block in supervisor.mjs");
+	const block = src.slice(at, src.indexOf("\nconst readyTimer = setInterval(", at));
+	assert.ok(block.includes('const forkControl = (process.env.ARBITER_FORK_CONTROL ?? "").trim();'), `the copy must read ARBITER_FORK_CONTROL and treat empty as absent; found:\n${block.slice(0, 900)}`);
+	assert.ok(block.includes('fs.copyFileSync(forkControl, path.join(RUN, "control.jsonl"));'), "and copy it to the new run's control file");
+	assert.ok(block.includes("forkAbort(`ARBITER_FORK_CONTROL names a control file that does not exist"), "a named control file that is missing must abort the fork, not be ignored");
+	// Only there: an ordinary run must never read this variable.
+	assert.equal(src.split("ARBITER_FORK_CONTROL").length - 1, 3, "ARBITER_FORK_CONTROL belongs to the fork block alone");
+	assert.ok(src.indexOf("copyFileSync(forkControl") < src.indexOf('send("orchestrator", { id: "fork-continue", type: "continue" });'), "the control file must be in place before the orchestrator is resumed");
+});
+
 // The fork's failure modes are the part a live run is least likely to exercise and most
 // likely to be silently broken by: a bad spec must exit rather than start a half-run, the
 // counters and the recorded prompt must actually be restored, and the summary must record

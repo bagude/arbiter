@@ -2146,6 +2146,21 @@ if (FORK) {
 	// collision preflight would then refuse every retry, including the operator's corrected
 	// one. forkAbort releases both directories and exits 2 with the thrower's message.
 	try {
+		// The manager's message into a restored run (spec §3's `restore` with an
+		// `approach.message`). tools/fork.mjs hands the path in ARBITER_FORK_CONTROL and the copy
+		// lands here: after the run directory exists, before the `continue` that resumes the
+		// orchestrator, so pumpControl sees the entries on its first tick rather than after the
+		// first inference. Empty means absent — the runner sets the variable on EVERY replicate,
+		// because runOnce spreads process.env under the plan's env and a stale value in the
+		// operator's shell would otherwise replay someone else's correction into an unrelated fork.
+		const forkControl = (process.env.ARBITER_FORK_CONTROL ?? "").trim();
+		if (forkControl) {
+			if (!fs.existsSync(forkControl)) forkAbort(`ARBITER_FORK_CONTROL names a control file that does not exist: ${forkControl}`);
+			fs.copyFileSync(forkControl, path.join(RUN, "control.jsonl"));
+			// Said out loud when management is off, because the file is then copied and never read:
+			// the message silently vanishes and the restored run reads as a clean null result.
+			log({ type: "fork", msg: `control file restored from ${forkControl}${MANAGE ? "" : " — this config has no manage block, so nothing will read it"}` });
+		}
 		const srcDir = path.join(FORK_SRC, "sessions", "orchestrator");
 		const dstDir = path.join(SESSIONS, "orchestrator");
 		fs.cpSync(srcDir, dstDir, { recursive: true });

@@ -281,12 +281,169 @@ test("a retried delivery with the same key is acknowledged, not executed again: 
 	assert.equal(loadTask(dir).budget.wallSec.used, 300, "the grant is spent once");
 });
 
-test("restore, compare and accept validate but do not execute yet", () => {
+test("accept validates but does not execute yet", () => {
 	const { dir, runsDir, task } = fixture();
 	assert.throws(
-		() => executeInstruction({ taskDir: dir, instr: instr({ verb: "restore", args: { checkpoint: "ck-0007" } }), packet: packetFor(task), runsDir }),
+		() => executeInstruction({ taskDir: dir, instr: instr({ verb: "accept", args: { milestone: "m1", checkpoint: "ck-0007", evidence: ["oracle:x"] } }), packet: packetFor(task, { verbsAllowed: ["accept"] }), runsDir }),
 		NotYetImplemented,
 	);
+});
+
+// ---------- restore and compare (Task 3) ----------
+
+const CALL = 4;
+
+/** The fixture above, plus what a `run:` checkpoint needs on disk: a captured inference and a
+ * config to spawn it with. `manage` says whether that config enables the management block a
+ * delivered message can only arrive through. */
+function forkFixture({ manage = true, captured = true, budget } = {}) {
+	const f = fixture(budget ? { budget } : undefined);
+	const reqDir = path.join(f.runsDir, RUN_ID, "requests");
+	fs.mkdirSync(reqDir, { recursive: true });
+	if (captured) fs.writeFileSync(path.join(reqDir, "0004.json"), JSON.stringify({ payload: {}, ts: 1 }));
+	fs.writeFileSync(path.join(f.runsDir, RUN_ID, "decisions.jsonl"), JSON.stringify({ i: CALL - 1, action: { cls: "inspect", tool: "read" } }) + "\n");
+	const config = path.join(f.dir, "config.json");
+	fs.writeFileSync(config, JSON.stringify({ task: "x", manage: manage ? { enabled: true } : undefined }));
+	return { ...f, config, checkpoint: `run:${RUN_ID}#${CALL}` };
+}
+
+/** A launcher that records instead of spawning: no test may start a supervisor. */
+function recorder() {
+	const calls = [];
+	return { calls, launchBatch: (arg) => { calls.push(arg); return { pid: 1234 }; } };
+}
+
+const spawnsNothing = () => { throw new Error("a test must never launch a batch"); };
+
+test("compare: fewer than two branches, fewer than two replicates, and a budget that cannot pay are all refused", () => {
+	const { dir, runsDir, task, config, checkpoint } = forkFixture();
+	const p = packetFor(task);
+	const v = (args) => validateInstruction(instr({ verb: "compare", args: { checkpoint, config, ...args } }), { task, packet: p, taskDir: dir, runsDir });
+	const two = [{ label: "G" }, { label: "A", firstAction: "done" }];
+	assert.match(v({ branches: [{ label: "G" }], replicates: 3 }).refusal, /at least 2 branches/);
+	assert.match(v({ branches: two, replicates: 1 }).refusal, /replicates >= 2/);
+	assert.deepEqual(v({ branches: two, replicates: 3 }), { ok: true });
+
+	// 2 × 13 replicates against the 24 the fixture's budget allows.
+	const over = v({ branches: two, replicates: 13 });
+	assert.equal(over.code, "budget");
+	assert.match(over.refusal, /needs 26 replicates; 24 left/);
+});
+
+test("compare: a branch the fork runner could not run is refused here, not inside the batch child", () => {
+	const { dir, runsDir, task, config, checkpoint } = forkFixture();
+	const p = packetFor(task);
+	const v = (branches) => validateInstruction(instr({ verb: "compare", args: { checkpoint, config, branches, replicates: 2 } }), { task, packet: p, taskDir: dir, runsDir });
+	assert.match(v([{ label: "G" }, { label: "A", firstAction: "dnoe" }]).refusal, /unknown action class "dnoe"/);
+	assert.match(v([{ label: "G" }, { label: "A", firstAction: "answer" }]).refusal, /"answer" cannot be forced/);
+	assert.match(v([{ label: "G" }, { label: "G", firstAction: "done" }]).refusal, /labels must be unique/);
+	assert.match(v([{ label: "G" }, { label: "../evil", firstAction: "done" }]).refusal, /letters, digits, dot, dash or underscore/);
+});
+
+test("restore: a checkpoint whose captured inference is missing is a precondition, through execute as well as validate", () => {
+	const { dir, runsDir, task, config, checkpoint } = forkFixture({ captured: false });
+	const i = instr({ verb: "restore", args: { checkpoint, approach: { config } } });
+	assert.match(validateInstruction(i, { task, packet: packetFor(task), taskDir: dir, runsDir }).refusal, /no captured inference at run:/);
+	const r = executeInstruction({ taskDir: dir, instr: i, packet: packetFor(task), runsDir, launchBatch: spawnsNothing });
+	assert.equal(r.executed, false);
+	assert.equal(r.code, "precondition");
+	assert.equal(readLedger(dir)[0].refused, "precondition", "the refusal is recorded, and nothing was launched");
+});
+
+// ck-NNNN checkpoints arrive with Task 4. Refusing by name is the point: a restore that quietly
+// fell back to something else would start a run from a state nobody named.
+test("restore: a ck- checkpoint is refused as not yet available, and a malformed one by shape", () => {
+	const { dir, runsDir, task, config } = forkFixture();
+	const v = (checkpoint) => validateInstruction(instr({ verb: "restore", args: { checkpoint, approach: { config } } }), { task, packet: packetFor(task), taskDir: dir, runsDir });
+	assert.equal(v("ck-0007").refusal, "checkpoint restore not yet available");
+	assert.match(v("yesterday").refusal, /must be ck-NNNN or run:<runId>#<call>/);
+});
+
+test("restore: the config must exist, and a message needs a run that reads a control file", () => {
+	const noManage = forkFixture({ manage: false });
+	const v = (args, f) => validateInstruction(instr({ verb: "restore", args: { checkpoint: f.checkpoint, approach: args } }), { task: f.task, packet: packetFor(f.task), taskDir: f.dir, runsDir: f.runsDir });
+	assert.match(v({ config: "configs/nope.json" }, noManage).refusal, /does not exist/);
+	assert.match(v({}, noManage).refusal, /name one in args\.approach\.config/, "the packet's run carries no config in this fixture");
+	assert.equal(v({ config: noManage.config }, noManage).ok, true, "no message, no control file, no manage block needed");
+	assert.match(v({ config: noManage.config, message: "try the tester first" }, noManage).refusal, /no manage\.enabled block/);
+	const withManage = forkFixture();
+	assert.equal(v({ config: withManage.config, message: "try the tester first" }, withManage).ok, true);
+});
+
+test("restore: spends a run AND a replicate, writes a one-branch spec, and launches the batch detached", () => {
+	const { dir, runsDir, task, config, checkpoint } = forkFixture();
+	const { calls, launchBatch } = recorder();
+	const r = executeInstruction({
+		taskDir: dir, runsDir, launchBatch, packet: packetFor(task),
+		instr: instr({ verb: "restore", args: { checkpoint, approach: { config, firstAction: "done", message: "the tester's suite is the gate" } } }),
+	});
+	assert.equal(r.executed, true, r.refusal);
+	assert.equal(r.batchId, 1);
+	assert.deepEqual(r.ledgerRow.executed, { batchId: 1 }, "a batch names its batch, never the source run it forked from");
+
+	assert.equal(calls.length, 1, "launched exactly once");
+	assert.equal(calls[0].specFile, path.join(dir, "compares", "1", "spec.json"));
+
+	const spec = JSON.parse(fs.readFileSync(calls[0].specFile, "utf8"));
+	assert.equal(spec.kind, "restore");
+	assert.equal(spec.replicates, 1);
+	assert.equal(spec.runId, RUN_ID);
+	assert.equal(spec.call, CALL);
+	assert.equal(spec.recordedTool, "read", "the shape a finding settles under comes from the source run's own record");
+	assert.equal(spec.branches.length, 1);
+	assert.equal(spec.branches[0].forkBranch, "A-natural", "a forced first action is an A-natural fork; without one it is G");
+	assert.equal(spec.branches[0].label, "A-natural");
+	const ctl = JSON.parse(fs.readFileSync(spec.branches[0].controlFile, "utf8").trim());
+	assert.equal(ctl.type, "correct");
+	assert.match(ctl.message, /tester's suite/);
+
+	const after = loadTask(dir);
+	assert.equal(after.budget.runs.used, 1);
+	assert.equal(after.budget.forkReplicates.used, 1);
+	assert.equal(after.stateVersion, 5, "one instruction, one state version bump");
+});
+
+test("restore without a forced action is the G branch, and no control file is written", () => {
+	const { dir, runsDir, task, config, checkpoint } = forkFixture();
+	const { calls, launchBatch } = recorder();
+	executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(task), instr: instr({ verb: "restore", args: { checkpoint, approach: { config } } }) });
+	const spec = JSON.parse(fs.readFileSync(calls[0].specFile, "utf8"));
+	assert.equal(spec.branches[0].forkBranch, "G");
+	assert.equal(spec.branches[0].controlFile, null);
+	assert.deepEqual(fs.readdirSync(path.join(dir, "compares", "1")).sort(), ["spec.json"]);
+});
+
+test("compare: spends branches × replicates, writes the spec both branches, and keeps the ids apart", () => {
+	const { dir, runsDir, task, config, checkpoint } = forkFixture();
+	const { calls, launchBatch } = recorder();
+	const branches = [{ label: "G" }, { label: "A", firstAction: "done", message: "claim now" }];
+	const r = executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(task), instr: instr({ verb: "compare", args: { checkpoint, config, branches, replicates: 3 } }) });
+	assert.equal(r.executed, true, r.refusal);
+	const spec = JSON.parse(fs.readFileSync(calls[0].specFile, "utf8"));
+	assert.deepEqual(spec.branches.map((b) => [b.label, b.forkBranch, b.firstAction]), [["G", "G", null], ["A", "A-natural", "done"]]);
+	assert.equal(spec.branches[0].controlFile, null);
+	assert.ok(spec.branches[1].controlFile.endsWith("control-A.jsonl"));
+	assert.equal(spec.scope, "task:t1");
+
+	const after = loadTask(dir);
+	assert.equal(after.budget.forkReplicates.used, 6, "two branches × three replicates");
+	assert.equal(after.budget.runs.used, 0, "a comparison's replicates are fork budget, not run budget");
+
+	// A second compare takes the next id rather than writing over the first one's reports.
+	const second = executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(loadTask(dir)), instr: instr({ idempotencyKey: "p7-v6", basedOnStateVersion: loadTask(dir).stateVersion, verb: "compare", args: { checkpoint, config, branches: [{ label: "G" }, { label: "A", firstAction: "probe" }], replicates: 2 } }) });
+	assert.equal(second.batchId, 2, second.refusal);
+	assert.deepEqual(fs.readdirSync(path.join(dir, "compares")).sort(), ["1", "2"]);
+});
+
+test("a retried compare launches nothing a second time", () => {
+	const { dir, runsDir, task, config, checkpoint } = forkFixture();
+	const { calls, launchBatch } = recorder();
+	const i = instr({ verb: "compare", args: { checkpoint, config, branches: [{ label: "G" }, { label: "A", firstAction: "done" }], replicates: 2 } });
+	executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(task), instr: i });
+	const retry = executeInstruction({ taskDir: dir, runsDir, launchBatch, packet: packetFor(loadTask(dir)), instr: i });
+	assert.equal(retry.duplicate, true);
+	assert.equal(calls.length, 1, "§3: a restore or compare can never launch twice");
+	assert.deepEqual(fs.readdirSync(path.join(dir, "compares")), ["1"], "and no second batch directory is reserved");
 });
 
 // ---------- the CLI the manager's side actually calls ----------
