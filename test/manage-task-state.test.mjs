@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createTask, loadTask, saveTask, acceptanceHash, spendBudget, setCurrent } from "../lib/manage/task-state.mjs";
+import { createTask, loadTask, saveTask, acceptanceHash, spendBudget, budgetLeft, setCurrent, BUDGET_KEYS } from "../lib/manage/task-state.mjs";
+import { assemblePacket } from "../lib/manage/packet.mjs";
+import { validateInstruction } from "../lib/manage/instructions.mjs";
 
 const criteria = [{ id: "c1", text: "all 70 oracle cases pass", check: "oracle:tasks/pathnorm/oracle" }];
 const mk = () => fs.mkdtempSync(path.join(os.tmpdir(), "task-"));
@@ -46,4 +48,57 @@ test("spendBudget charges and refuses past the total", () => {
 	const t2 = spendBudget(t, { runs: 1 });
 	assert.equal(t2.budget.runs.used, 1);
 	assert.throws(() => spendBudget(t2, { runs: 2 }), /BudgetExceeded|budget/);
+});
+
+// A task.json outlives the code that wrote it — that is what the task directory is for — so
+// BUDGET_KEYS can gain a key while tasks written under the old list are still live. This
+// fixture is the shape tasks-live/pathnorm-night/task.json has on disk: no `toolCalls`. Before
+// the read-side normalisation, every path through budgetLeft threw a TypeError on it, so
+// assembling a packet or refusing an instruction CRASHED instead of answering.
+function legacyTaskDir() {
+	const dir = mk();
+	createTask({ dir, taskId: "t1", goal: "g", criteria, milestones: [{ id: "m1", title: "x", criteria: ["c1"] }], budget: { wallSec: 25200, runs: 6, forkReplicates: 24, usd: 5 } });
+	const file = path.join(dir, "task.json");
+	const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+	delete raw.budget.toolCalls; // as written before toolCalls joined BUDGET_KEYS
+	fs.writeFileSync(file, JSON.stringify(raw, null, 2));
+	return dir;
+}
+
+test("a task.json missing a budget key reads as unset, not as a crash", () => {
+	const dir = legacyTaskDir();
+	assert.ok(!("toolCalls" in JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8")).budget), "the fixture must really lack the key on disk");
+
+	const task = loadTask(dir);
+	for (const k of BUDGET_KEYS) assert.deepEqual(Object.keys(task.budget[k]).sort(), ["total", "used"], `loadTask must normalise ${k}`);
+	assert.equal(budgetLeft(task).toolCalls, null, "a key the file never had is unbounded, like one set to zero");
+	assert.equal(budgetLeft(task).wallSec, 25200, "and the keys it did have are untouched");
+	assert.equal(spendBudget(task, { toolCalls: 400 }).budget.toolCalls.used, 400, "an unbounded key is charged, never refused");
+
+	// The read must not rewrite the durable record: a load would otherwise bump the state
+	// version through saveTask and invalidate a packet already in flight.
+	assert.ok(!("toolCalls" in JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8")).budget), "loadTask must not write");
+
+	// Tolerant of a hand-built task object too, not only of what loadTask normalised.
+	const raw = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"));
+	assert.equal(budgetLeft(raw).toolCalls, null);
+	assert.equal(spendBudget(raw, { toolCalls: 1 }).budget.toolCalls.used, 1);
+});
+
+test("the two commands Step 9 runs against such a task answer instead of throwing", () => {
+	const dir = legacyTaskDir();
+	const task = loadTask(dir);
+
+	// `tools/manage.mjs packet` — assemblePacket over a minimal run record.
+	const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "run-"));
+	fs.writeFileSync(path.join(runDir, "summary.json"), JSON.stringify({ runId: "r1", wallSec: 10 }));
+	const packet = assemblePacket({ taskDir: dir, runDir, trigger: { kind: "oracle_failed_repeatedly", runId: "r1", detail: {} } });
+	assert.equal(packet.options.budgetLeft.toolCalls, null);
+	assert.ok(packet.options.verbsAllowed.includes("continue"));
+
+	// `tools/manage.mjs execute` — an instruction that should be cleanly REFUSED must be
+	// refused, not crash on its way through budgetRefusal.
+	const bad = validateInstruction({ packetId: packet.packetId, basedOnStateVersion: task.stateVersion, idempotencyKey: "k1", verb: "continue", args: { runId: "nope", milestone: "m1" } }, { task, packet, taskDir: dir });
+	assert.equal(bad.code, "precondition");
+	assert.match(bad.refusal, /not live/);
 });
