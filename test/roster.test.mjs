@@ -13,7 +13,8 @@ import { parseRosterFile, loadRoster, selectSpecialists, renderDefinition, roste
 // exports..." when renderDefinition emits description/model as unquoted scalars.
 // lib/roster.mjs's own hand-rolled parseFrontmatter (first-colon split) does not
 // catch this class of bug, so this test drives pi's real loader instead.
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 
 function tmpRoster(files) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "roster-"));

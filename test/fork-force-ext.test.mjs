@@ -9,7 +9,8 @@ import { spawnSync } from "node:child_process";
 // event carries its own toolName and input (unlike pre-spawn-compact, which always
 // calls `subagent`). The guard is opt-in — it registers nothing unless
 // ARBITER_FORK_FORCE is set, and only acts for the orchestrator role.
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 
 // `sessionFile` is what the role gate actually reads: pi-subagents workers run INSIDE the
 // orchestrator's process and so carry AGENT_NAME=orchestrator too, and guard-kit's roleFor

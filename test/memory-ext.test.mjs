@@ -13,7 +13,8 @@ import { resolveLedger, buildIndex } from "../lib/memory-index.mjs";
 // exercises the ext adapter's registration and lifecycle reporting for `remember`,
 // which needs the real pi.registerTool wiring (role detection via guard-kit, the
 // lifecycle file) that lib/memory-tools.mjs's rememberTool itself does not touch.
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 
 function buildIndexFile() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arbiter-memext-"));

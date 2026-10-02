@@ -8,7 +8,8 @@ import { spawnSync } from "node:child_process";
 // Drives ext/guards/bash-timeout.ts through tsx with a fake `pi`, the same way
 // test/path-guard-ext.test.mjs drives the path guard. The handler must mutate the
 // event's input in place (pi reads the mutated object) and report the rewrite.
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 
 function run(events, env = {}) {
 	const lifecycle = path.join(os.tmpdir(), `bash-timeout-${process.pid}-${Date.now()}.jsonl`);

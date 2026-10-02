@@ -15,7 +15,8 @@ import { installWorkspaceExtension } from "../lib/worker-def.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(here, "..");
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 const TSX = `${PI}/node_modules/tsx/dist/cli.mjs`;
 const CLI = `${PI}/packages/coding-agent/src/cli.ts`;
 const GUARDS = [path.join(ROOT, "ext", "path-guard.ts"), path.join(ROOT, "ext", "guards", "bash-timeout.ts")];

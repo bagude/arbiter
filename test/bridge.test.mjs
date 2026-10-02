@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 const TSX = `${PI}/node_modules/tsx/dist/cli.mjs`;
 
 test("bridge subscribes to every lifecycle event and appends JSON lines", () => {

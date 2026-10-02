@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 // ARBITER_MANAGE is passed explicitly (default "") rather than inherited: the env spread below
 // would otherwise let an ambient value decide whether kind="escalate" exists, and the
 // orchestrator's kind list is pinned exactly.

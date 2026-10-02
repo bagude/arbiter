@@ -20,6 +20,7 @@
 // valid set — P(a|s) and P(a|s, a ∈ valid) — since a confident pick among two legal
 // actions is not the same as one among nine.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ACTION_CLASSES, SYMBOLS, ACT, modeOf } from "./decision-points.mjs";
@@ -269,7 +270,7 @@ async function main() {
 	const args = process.argv.slice(2);
 	const opt = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : dflt; };
 	const server = opt("--server", "http://127.0.0.1:8080");
-	const keyFile = opt("--key", "C:/Users/user/Downloads/claude_playground/os/qwen-flash/.llama-api-key");
+	const keyFile = opt("--key", path.join(os.homedir(), "Downloads/claude_playground/os/qwen-flash/.llama-api-key"));
 	const limit = Number(opt("--limit", "Infinity"));
 	const thinking = args.includes("--thinking");
 	const horizon = args.includes("--substantive") ? "substantive" : "literal";

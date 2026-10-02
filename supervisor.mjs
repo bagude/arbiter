@@ -48,7 +48,8 @@ import { forkSpec, truncateSessionEntries, truncateEntriesAt, rewriteSessionHead
 import { readSessionFile } from "./lib/context-trace.mjs";
 
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
-const REPO = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "./lib/pi-root.mjs";
+const REPO = PI_ROOT;
 const TSX = path.join(REPO, "node_modules/tsx/dist/cli.mjs");
 const PI = path.join(REPO, "packages/coding-agent/src/cli.ts");
 

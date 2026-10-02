@@ -8,7 +8,8 @@ import { spawnSync } from "node:child_process";
 // Drives ext/guards/pre-spawn-compact.ts through tsx with a fake `pi`: a `context`
 // event caches the message list's size, then `tool_call` events are fed against it.
 // The guard is opt-in — it registers nothing unless ARBITER_PRE_SPAWN_COMPACT is set.
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 
 function run({ contextMessages, calls, env = {} }) {
 	const lifecycle = path.join(os.tmpdir(), `pre-spawn-compact-${process.pid}-${Date.now()}.jsonl`);

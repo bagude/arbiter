@@ -8,7 +8,8 @@ import { spawnSync } from "node:child_process";
 // Drives ext/report-ext.ts through tsx with a fake `pi` that captures registerTool,
 // then calls the tool's execute() the way a worker session would. Registers nothing
 // unless ARBITER_REPORT_FILE is set.
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 
 function run({ calls, on = false }) {
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "report-ext-"));

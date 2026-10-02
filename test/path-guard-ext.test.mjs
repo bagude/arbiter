@@ -9,7 +9,8 @@ import { spawnSync } from "node:child_process";
 // handler, then feeds it events and prints the results — the same shape as
 // test/mail-ext-render.test.mjs. The extension is host-side pi code; nothing here
 // starts a model.
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 
 function run(events, { root, role = "builder", env = {} }) {
 	const lifecycle = path.join(os.tmpdir(), `path-guard-${process.pid}-${Date.now()}.jsonl`);

@@ -8,7 +8,8 @@ import { spawnSync } from "node:child_process";
 // Drives ext/guards/topology.ts through tsx with a fake `pi`, a temp workspace as
 // ctx.cwd, and a scripted sequence of tool_call events. Opt-in: registers nothing
 // unless ARBITER_TOPOLOGY is set.
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 const NEEDS = { tester: ["api"], implementer: ["api", "tests"] };
 
 function run({ calls, env = {}, workspace }) {

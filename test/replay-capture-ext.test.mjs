@@ -7,7 +7,8 @@ import { spawnSync } from "node:child_process";
 
 // Drives ext/replay-capture.ts through tsx with a fake pi: fires before_provider_request
 // as the orchestrator and as a worker, then reads what landed in ARBITER_REQUESTS_DIR.
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 
 function run({ env = {}, calls, ws = "C:/ws-none" }) {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "replay-capture-"));

@@ -10,7 +10,8 @@ import { spawnSync } from "node:child_process";
 // executed and its text result captured. Copies the harness pattern from
 // test/pre-spawn-compact-ext.test.mjs, adding a registerTool collector (that fake
 // `pi` only has `on`/`events`).
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 
 function run({ contextMessages, env = {} }) {
 	const driver = path.join(os.tmpdir(), `context-usage-driver-${process.pid}.mjs`);

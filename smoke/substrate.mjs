@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(here, "..");
-const PI = "C:/Users/user/open_harnessess/pi/pi";
+import { PI_ROOT } from "../lib/pi-root.mjs";
+const PI = PI_ROOT;
 const TSX = `${PI}/node_modules/tsx/dist/cli.mjs`;
 const CLI = `${PI}/packages/coding-agent/src/cli.ts`;
 const FIXTURE = path.join(ROOT, "test", "fixtures", "smoke-agent.md");
