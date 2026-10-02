@@ -1,7 +1,30 @@
 {
 	"name": "arbiter",
+	"version": "0.1.0",
+	"description": "Model-free supervisor and test bench for multi-agent pi coding runs: hidden oracles, mail routing, guards, fork replay, evidence-gated memory.",
 	"private": true,
 	"type": "module",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/bagude/arbiter.git"
+	},
+	"homepage": "https://github.com/bagude/arbiter#readme",
+	"bugs": {
+		"url": "https://github.com/bagude/arbiter/issues"
+	},
+	"keywords": [
+		"agents",
+		"llm",
+		"harness",
+		"coding-agent",
+		"multi-agent",
+		"evaluation",
+		"pi"
+	],
+	"engines": {
+		"node": ">=22"
+	},
 	"scripts": {
 		"test": "node --test \"test/**/*.test.mjs\"",
 		"smoke:substrate": "node smoke/substrate.mjs",
