@@ -68,42 +68,13 @@ This answers a question a paired run cannot: did *this* choice, at *this* moment
 
 ## Topology is a graph
 
-Swapping `pattern` swaps the graph of agents. Agents are nodes, channels are edges, and every path to "done" goes through the supervisor's gate into the hidden oracle:
+Swapping `pattern` or the roster swaps the graph of agents. Agents are nodes, channels are edges, and every path to "done" goes through the supervisor's gate into the hidden oracle:
 
-```mermaid
-flowchart LR
-    subgraph solo
-        B1[builder] -- done --> G1{gate}
-    end
-    subgraph dyad
-        B2[builder] <-- mail --> C2[critic]
-        C2 -- probe --> P2[(live code)]
-        C2 -- approve --> G2{gate}
-    end
-    subgraph orchestrator
-        O3[orchestrator] -- brief --> W3a[worker]
-        O3 -- brief --> W3b[worker]
-        W3a -- report --> O3
-        W3b -- report --> O3
-        O3 -- probe --> P3[(live code)]
-        O3 -- done --> G3{gate}
-    end
-    G1 --> H((hidden oracle))
-    G2 --> H
-    G3 --> H
-```
+<p align="center">
+  <img src="docs/assets/topologies.png" alt="Four agent topologies, each with the config that selects it: solo (builder to gate to oracle), dyad (builder and critic exchange mail, the critic probes the live code and approves), orchestrator (an orchestrator briefs three workers, probes the live code, and claims done), and orchestrator plus roster (a brief feeds a tester and an implementer, a scout maps the workspace, and the orchestrator claims done)" width="900">
+</p>
 
-Inside the orchestrator pattern, the roster is a dependency graph of its own. Each specialist declares what it `needs` and `produces`. arbiter orders them topologically, rejects cycles, and a guard can hold back a spawn whose inputs don't exist yet:
-
-```mermaid
-flowchart LR
-    brief[/orchestrator brief: api/] --> tester
-    brief --> implementer
-    tester -- tests --> implementer
-    scout -- map --> O[orchestrator]
-    implementer -- code --> O
-    O -- done --> gate{gate} --> oracle((hidden oracle))
-```
+Inside the orchestrator pattern, the roster is a dependency graph of its own. Each specialist declares what it `needs` and `produces`. arbiter orders them topologically, rejects cycles, and a guard can hold back a spawn whose inputs don't exist yet.
 
 This is the shape of the multi-agent workflows people build by hand: pipelines, fan-out, and verify stages. Here each node and edge is instrumented, and each graph is scored against the same oracle, so adding a tester stage or replacing a critic with an orchestrator is a comparison you can run.
 

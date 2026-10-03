@@ -1,0 +1,185 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="700" viewBox="0 0 1100 700" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a8a29e"/>
+    </marker>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2dd4bf"/>
+    </marker>
+    <style>
+      .panel { fill: #171717; stroke: #2a2a2a; }
+      .title { fill: #e7e5e4; font-size: 16px; font-weight: 700; }
+      .sub { fill: #78716c; font-size: 12px; }
+      .code { fill: #d6d3d1; font-size: 12px; }
+      .codebg { fill: #0c0c0c; stroke: #2a2a2a; }
+      .doer { fill: #172036; stroke: #3b82f6; stroke-width: 1.5; }
+      .judge { fill: #2b2010; stroke: #f59e0b; stroke-width: 1.5; }
+      .label { fill: #e7e5e4; font-size: 13px; text-anchor: middle; dominant-baseline: central; }
+      .edge { stroke: #a8a29e; stroke-width: 1.5; fill: none; }
+      .edge-dash { stroke: #a8a29e; stroke-width: 1.5; fill: none; stroke-dasharray: 4 4; }
+      .final { stroke: #2dd4bf; stroke-width: 1.5; fill: none; }
+      .elabel { fill: #a8a29e; font-size: 11px; text-anchor: middle; }
+      .gate { fill: #262626; stroke: #e7e5e4; stroke-width: 1.5; }
+      .oracle { fill: #0f2a27; stroke: #2dd4bf; stroke-width: 1.5; }
+      .store { fill: #1c1917; stroke: #78716c; stroke-width: 1.5; }
+      .legend { fill: #a8a29e; font-size: 12px; }
+    </style>
+  </defs>
+
+  <rect width="1100" height="700" fill="#0f0f0f"/>
+
+  <!-- ============ Panel 1: solo ============ -->
+  <rect class="panel" x="20" y="20" width="520" height="300" rx="10"/>
+  <text class="title" x="40" y="52">solo</text>
+  <text class="sub" x="40" y="72">one agent builds and claims done</text>
+
+  <rect class="doer" x="60" y="150" width="130" height="44" rx="6"/>
+  <text class="label" x="125" y="172">builder</text>
+
+  <line class="edge" x1="190" y1="172" x2="292" y2="172" marker-end="url(#arrow)"/>
+  <text class="elabel" x="241" y="163">done</text>
+
+  <polygon class="gate" points="330,140 362,172 330,204 298,172"/>
+  <text class="label" x="330" y="172" style="font-size:11px">gate</text>
+
+  <line class="final" x1="362" y1="172" x2="428" y2="172" marker-end="url(#arrow-teal)"/>
+
+  <circle class="oracle" cx="462" cy="172" r="32"/>
+  <text class="label" x="462" y="172" style="font-size:12px">oracle</text>
+
+  <rect class="codebg" x="40" y="272" width="200" height="30" rx="5"/>
+  <text class="code" x="54" y="292">"pattern": "solo"</text>
+
+  <!-- ============ Panel 2: dyad ============ -->
+  <rect class="panel" x="560" y="20" width="520" height="300" rx="10"/>
+  <text class="title" x="580" y="52">dyad</text>
+  <text class="sub" x="580" y="72">a critic probes the code and approves</text>
+
+  <rect class="doer" x="580" y="150" width="110" height="44" rx="6"/>
+  <text class="label" x="635" y="172">builder</text>
+
+  <line class="edge" x1="690" y1="172" x2="756" y2="172" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text class="elabel" x="723" y="163">mail</text>
+
+  <rect class="judge" x="758" y="150" width="110" height="44" rx="6"/>
+  <text class="label" x="813" y="172">critic</text>
+
+  <line class="edge-dash" x1="813" y1="194" x2="813" y2="236" marker-end="url(#arrow)"/>
+  <text class="elabel" x="842" y="220">probe</text>
+  <ellipse class="store" cx="813" cy="244" rx="40" ry="7"/>
+  <path class="store" d="M773,244 v20 a40,7 0 0 0 80,0 v-20"/>
+  <text class="label" x="813" y="260" style="font-size:11px">live code</text>
+
+  <line class="edge" x1="868" y1="172" x2="926" y2="172" marker-end="url(#arrow)"/>
+  <text class="elabel" x="897" y="163">approve</text>
+
+  <polygon class="gate" points="962,142 992,172 962,202 932,172"/>
+  <text class="label" x="962" y="172" style="font-size:11px">gate</text>
+
+  <line class="final" x1="992" y1="172" x2="1016" y2="172" marker-end="url(#arrow-teal)"/>
+
+  <circle class="oracle" cx="1044" cy="172" r="26"/>
+  <text class="label" x="1044" y="172" style="font-size:11px">oracle</text>
+
+  <rect class="codebg" x="580" y="272" width="200" height="30" rx="5"/>
+  <text class="code" x="594" y="292">"pattern": "dyad"</text>
+
+  <!-- ============ Panel 3: orchestrator ============ -->
+  <rect class="panel" x="20" y="340" width="520" height="300" rx="10"/>
+  <text class="title" x="40" y="372">orchestrator</text>
+  <text class="sub" x="40" y="392">one agent plans, delegates, and verifies</text>
+
+  <rect class="judge" x="60" y="420" width="150" height="44" rx="6"/>
+  <text class="label" x="135" y="442">orchestrator</text>
+
+  <line class="edge" x1="210" y1="442" x2="292" y2="442" marker-end="url(#arrow)"/>
+  <text class="elabel" x="251" y="433">done</text>
+
+  <polygon class="gate" points="330,410 362,442 330,474 298,442"/>
+  <text class="label" x="330" y="442" style="font-size:11px">gate</text>
+
+  <line class="final" x1="362" y1="442" x2="428" y2="442" marker-end="url(#arrow-teal)"/>
+
+  <circle class="oracle" cx="462" cy="442" r="32"/>
+  <text class="label" x="462" y="442" style="font-size:12px">oracle</text>
+
+  <line class="edge" x1="105" y1="464" x2="75" y2="526" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <line class="edge" x1="135" y1="464" x2="175" y2="526" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <line class="edge" x1="165" y1="464" x2="270" y2="526" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+  <rect class="doer" x="40" y="528" width="80" height="36" rx="6"/>
+  <text class="label" x="80" y="546">worker</text>
+  <rect class="doer" x="135" y="528" width="80" height="36" rx="6"/>
+  <text class="label" x="175" y="546">worker</text>
+  <rect class="doer" x="230" y="528" width="80" height="36" rx="6"/>
+  <text class="label" x="270" y="546">worker</text>
+  <text class="elabel" x="175" y="582">brief ↓   report ↑</text>
+
+  <line class="edge-dash" x1="210" y1="458" x2="414" y2="522" marker-end="url(#arrow)"/>
+  <text class="elabel" x="292" y="500">probe</text>
+  <ellipse class="store" cx="440" cy="530" rx="40" ry="7"/>
+  <path class="store" d="M400,530 v20 a40,7 0 0 0 80,0 v-20"/>
+  <text class="label" x="440" y="546" style="font-size:11px">live code</text>
+
+  <rect class="codebg" x="40" y="596" width="250" height="30" rx="5"/>
+  <text class="code" x="54" y="616">"pattern": "orchestrator"</text>
+
+  <!-- ============ Panel 4: orchestrator + roster ============ -->
+  <rect class="panel" x="560" y="340" width="520" height="300" rx="10"/>
+  <text class="title" x="580" y="372">orchestrator + roster</text>
+  <text class="sub" x="580" y="392">specialists ordered by what they need and produce</text>
+
+  <path class="edge" d="M615,448 C615,424 855,424 855,446" marker-end="url(#arrow)"/>
+
+  <polygon class="store" points="590,448 650,448 640,484 580,484"/>
+  <text class="label" x="615" y="466" style="font-size:12px">brief</text>
+
+  <line class="edge" x1="646" y1="466" x2="676" y2="466" marker-end="url(#arrow)"/>
+  <text class="elabel" x="661" y="458">api</text>
+
+  <rect class="doer" x="678" y="448" width="80" height="36" rx="6"/>
+  <text class="label" x="718" y="466">tester</text>
+
+  <line class="edge" x1="758" y1="466" x2="798" y2="466" marker-end="url(#arrow)"/>
+  <text class="elabel" x="778" y="458">tests</text>
+
+  <rect class="doer" x="800" y="448" width="110" height="36" rx="6"/>
+  <text class="label" x="855" y="466">implementer</text>
+
+  <line class="edge" x1="855" y1="484" x2="855" y2="526" marker-end="url(#arrow)"/>
+  <text class="elabel" x="876" y="509">code</text>
+
+  <rect class="doer" x="580" y="528" width="90" height="36" rx="6"/>
+  <text class="label" x="625" y="546">scout</text>
+
+  <line class="edge" x1="670" y1="546" x2="788" y2="546" marker-end="url(#arrow)"/>
+  <text class="elabel" x="729" y="538">map</text>
+
+  <rect class="judge" x="790" y="528" width="130" height="36" rx="6"/>
+  <text class="label" x="855" y="546">orchestrator</text>
+
+  <line class="edge" x1="920" y1="546" x2="940" y2="546" marker-end="url(#arrow)"/>
+
+  <polygon class="gate" points="964,522 988,546 964,570 940,546"/>
+  <text class="label" x="964" y="546" style="font-size:10px">gate</text>
+
+  <line class="final" x1="988" y1="546" x2="1010" y2="546" marker-end="url(#arrow-teal)"/>
+
+  <circle class="oracle" cx="1036" cy="546" r="25"/>
+  <text class="label" x="1036" y="546" style="font-size:11px">oracle</text>
+
+  <rect class="codebg" x="580" y="596" width="480" height="30" rx="5"/>
+  <text class="code" x="594" y="616">"workers": { "use": ["scout", "tester", "implementer"] }</text>
+
+  <!-- ============ Legend ============ -->
+  <rect x="40" y="664" width="14" height="14" rx="3" class="doer"/>
+  <text class="legend" x="62" y="676">does the work</text>
+  <rect x="190" y="664" width="14" height="14" rx="3" class="judge"/>
+  <text class="legend" x="212" y="676">verifies and claims done</text>
+  <polygon class="gate" points="417,663 424,671 417,679 410,671"/>
+  <text class="legend" x="432" y="676">supervisor gate (no LLM)</text>
+  <circle class="oracle" cx="650" cy="671" r="7"/>
+  <text class="legend" x="664" y="676">hidden tests</text>
+  <line class="edge-dash" x1="790" y1="671" x2="820" y2="671"/>
+  <text class="legend" x="828" y="676">probe of the live code</text>
+</svg>
